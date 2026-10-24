@@ -1,3 +1,4 @@
+import { SUPABASE_KEY, SUPABASE_URL } from '@/lib/supabase/env';
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 import type { Database } from '@/types/database';
@@ -8,8 +9,8 @@ export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+    SUPABASE_URL,
+    SUPABASE_KEY,
     {
       cookies: {
         getAll() {
@@ -24,10 +25,18 @@ export async function updateSession(request: NextRequest) {
     },
   );
 
-  const { data } = await supabase.auth.getClaims();
+  // لو Supabase مش راد، منوقعش الموقع كله — الصفحة نفسها هتتعامل
+  let hasUser = false;
+  try {
+    const { data } = await supabase.auth.getClaims();
+    hasUser = !!data?.claims;
+  } catch (e) {
+    console.error('middleware getClaims failed', e);
+    return response;
+  }
   const isPublic = PUBLIC_PATHS.some((p) => request.nextUrl.pathname.startsWith(p));
 
-  if (!data?.claims && !isPublic) {
+  if (!hasUser && !isPublic) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     url.search = '';

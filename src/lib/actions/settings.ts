@@ -1,5 +1,6 @@
 'use server';
 
+import { SUPABASE_KEY, SUPABASE_URL } from '@/lib/supabase/env';
 import { headers } from 'next/headers';
 import { createClient as createStatelessClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
@@ -26,7 +27,7 @@ export async function inviteStaff(fd: FormData): Promise<ActionResult> {
   const h = await headers();
   const origin = h.get('origin') ?? `https://${h.get('host')}`;
   // client منفصل من غير cookies علشان جلسة الأدمن متتأثرش
-  const anon = createStatelessClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!, {
+  const anon = createStatelessClient(SUPABASE_URL, SUPABASE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, flowType: 'implicit' },
   });
   const { error: inv } = await anon.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: `${origin}/auth/callback` } });
