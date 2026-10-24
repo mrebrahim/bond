@@ -21,8 +21,8 @@ function Read-Plain($prompt) {
 $n8nKey = Read-Plain 'n8n API key'
 if (-not $EvId) { $evoKey = Read-Plain 'Evolution AUTHENTICATION_API_KEY' }
 if (-not $PgId) {
-  $pgHost = Read-Host 'Supabase Session pooler host (Enter = aws-1-eu-west-2.pooler.supabase.com)'
-  if (-not $pgHost) { $pgHost = 'aws-1-eu-west-2.pooler.supabase.com' }
+  $pgHost = Read-Host 'Supabase Session pooler host (Enter = aws-0-eu-west-2.pooler.supabase.com)'
+  if (-not $pgHost) { $pgHost = 'aws-0-eu-west-2.pooler.supabase.com' }
   $pgPass = Read-Plain 'Supabase database password'
 }
 

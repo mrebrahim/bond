@@ -21,7 +21,7 @@ powershell -ExecutionPolicy Bypass -c "iwr -UseBasicParsing https://raw.githubus
 
 ## 1) Credentials في n8n (يدوي)
 **Supabase bond (Postgres)** — النوع Postgres:
-- من Supabase → Project → Connect → **Session pooler**: Host `aws-…pooler.supabase.com` · Port `5432` · Database `postgres` · User `postgres.izpvbgzwiwyaoctdroxr` · Password = باسورد الداتابيز · SSL: require.
+- من Supabase → Project → Connect → **Session pooler**: Host `aws-0-eu-west-2.pooler.supabase.com` · Port `5432` · Database `postgres` · User `postgres.izpvbgzwiwyaoctdroxr` · Password = باسورد الداتابيز · SSL: require.
 - ده بيدخل كـ `postgres` (بيعدّي الـ RLS) — علشان كده يفضل في n8n بس.
 
 **Evolution API key (header: apikey)** — النوع Header Auth: Name = `apikey` · Value = الـ `AUTHENTICATION_API_KEY`.
