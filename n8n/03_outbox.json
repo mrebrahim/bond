@@ -36,7 +36,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "// ⚙️ عدّل القيم دي مرة واحدة\nreturn [{ json: {\n  evoUrl: 'http://evolutoin-api-evolution-api.4tqpgc.easypanel.host',   // من غير / في الآخر\n  instanceClients: 'dse-clients',   // رقم الرسايل للعملاء\n  instanceTeam: 'dse-team',         // رقم منفصل للفريق\n  formId: 'FORM_ID',                // Google Form للتقييم\n  entryClient: 'entry.111111',\n  entryDeliverable: 'entry.222222',\n  fromEmail: 'Digital Solution <notifications@digitalsolutionegy.com>',   // لازم يبقى نفس إيميل الـ SMTP\n  appUrl: 'https://YOUR-APP.vercel.app',   // رابط السيستم (بيتحط في إيميلات الفريق)\n}}];"
+        "jsCode": "// ⚙️ عدّل القيم دي مرة واحدة\nreturn [{ json: {\n  evoUrl: 'https://evolutoin-api-evolution-api.4tqpgc.easypanel.host',   // من غير / في الآخر\n  instanceClients: 'dse-clients',   // رقم الرسايل للعملاء\n  instanceTeam: 'dse-team',         // رقم منفصل للفريق\n  formId: 'FORM_ID',                // Google Form للتقييم\n  entryClient: 'entry.111111',\n  entryDeliverable: 'entry.222222',\n  fromEmail: 'Digital Solution <notifications@digitalsolutionegy.com>',   // لازم يبقى نفس إيميل الـ SMTP\n  appUrl: 'https://YOUR-APP.vercel.app',   // رابط السيستم (بيتحط في إيميلات الفريق)\n}}];"
       }
     },
     {
