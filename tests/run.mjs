@@ -420,6 +420,27 @@ await test('run_daily شغال', async () => {
   assert((await rows('select * from v_content_runway')).length === 1);
   assert((await rows('select * from v_schedule_package_check')).length === 1);
 });
+console.log('\nدوال الواجهة (008):');
+await test('preview_booking: المدة واللبسات والرصيد زي التريجر', async () => {
+  await as(team.am);
+  const p = await val(`select preview_booking($1, 'reel', 6, $2)`, [client, await at(4, 12)]);
+  await as(null);
+  assert(p.duration_minutes === 165 && p.outfits === 2 && p.locations === 2, JSON.stringify(p));
+  assert(p.cycle_id === cycle && typeof p.enough === 'boolean' && p.covers_until, JSON.stringify(p));
+});
+await test('schedule_package_diff: "الجدول محتاج 13 والباقة 10"', async () => {
+  const d = await val(`select schedule_package_diff('{"reel":3}', '[{"type":"reel","qty":10}]', 30)`);
+  assert(d.length === 1 && Number(d[0].needed) === 12.9, JSON.stringify(d));
+  const ok = await val(`select schedule_package_diff('{"reel":2}', '[{"type":"reel","qty":9}]', 30)`);
+  assert(ok.length === 0, JSON.stringify(ok));
+});
+await test('v_dashboard_kpis و v_slot_board', async () => {
+  const k = await one('select * from v_dashboard_kpis');
+  assert(Number(k.mrr) > 0 && Number(k.active_clients) === 1, JSON.stringify(k));
+  const s = await rows('select board_status from v_slot_board');
+  assert(s.length > 0 && s.some((x) => x.board_status === 'in_pipeline'), JSON.stringify(s.slice(0, 5)));
+});
+
 await test('انتهاء الدورة بيحسب الضايع', async () => {
   await db.query(`update cycles set start_date = start_date - 40, end_date = cairo_today() - 1 where id = $1`, [cycle]);
   await db.query(`update subscriptions set auto_renew = false where id = $1`, [sub]);

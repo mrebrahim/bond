@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-plex), ui-sans-serif, system-ui, sans-serif;
+  --color-brand-50: #eef6ff;
+  --color-brand-100: #d9eaff;
+  --color-brand-200: #bcdaff;
+  --color-brand-300: #8ec2ff;
+  --color-brand-400: #599fff;
+  --color-brand-500: #337bfb;
+  --color-brand-600: #1d5cf0;
+  --color-brand-700: #1647dc;
+  --color-brand-800: #183bb2;
+  --color-brand-900: #1a368c;
+}
+
+html, body {
+  background: #f6f7f9;
+  color: #0f172a;
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tabular-nums { font-variant-numeric: tabular-nums; }
