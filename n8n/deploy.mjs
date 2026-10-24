@@ -80,12 +80,15 @@ function prepare(wf) {
   return { name: wf.name, nodes, connections: wf.connections, settings: { executionOrder: 'v1', timezone: 'Africa/Cairo' } };
 }
 
+// المفتاح = الاسم قبل " (" — علشان لو اسم الـ workflow اتغيّر في نسخة جديدة يتحدّث القديم مش يتعمل واحد زيادة
+const keyOf = (name) => name.split(' (')[0].trim();
+
 async function existingByName() {
   const map = new Map();
   let cursor;
   do {
     const page = await api('GET', `/workflows?limit=100${cursor ? `&cursor=${cursor}` : ''}`);
-    for (const w of page.data ?? []) map.set(w.name, w.id);
+    for (const w of page.data ?? []) map.set(keyOf(w.name), w.id);
     cursor = page.nextCursor;
   } while (cursor);
   return map;
@@ -95,7 +98,7 @@ await ensureEvolutionCredential();
 const existing = await existingByName();
 for (const file of readdirSync(dir).filter((f) => /^\d\d_.*\.json$/.test(f)).sort()) {
   const wf = prepare(JSON.parse(readFileSync(join(dir, file), 'utf8')));
-  const id = existing.get(wf.name);
+  const id = existing.get(keyOf(wf.name));
   const saved = id ? await api('PUT', `/workflows/${id}`, wf) : await api('POST', '/workflows', wf);
   console.log(`${id ? '↻ اتحدّث' : '✚ اتعمل'}  ${wf.name}  (${saved.id})`);
   if (activate) {
