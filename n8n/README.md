@@ -32,7 +32,7 @@
 `evoUrl` · `instanceClients` · `instanceTeam` · `formId` · `entryClient` · `entryDeliverable` (أرقام الـ entry من "Get pre-filled link" في الفورم).
 
 ## 4) Feedback
-في node الـ **Map** عدّل أسماء الأعمدة حسب عناوين الأسئلة في الشيت. الفورم لازم يكون فيه حقل `deliverable_id` (بيتملى من اللينك).
+في node الـ **Map** عدّل أسماء الأعمدة حسب عناوين الأسئلة في الشيت. خانتين "كود العميل" و"رقم الريل" بيتملوا لوحدهم من اللينك اللي في رسالة الواتساب (pre-filled) — العميل مش بيكتبهم.
 
 ## 5) التشغيل
 شغّل الـ 5 workflows (Active). اختبر الأول: اعمل alert تجريبي لعميل رقمه رقمك، وتابع `alerts.status`.
