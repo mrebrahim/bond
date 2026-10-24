@@ -441,15 +441,30 @@ await test('v_dashboard_kpis و v_slot_board', async () => {
 });
 
 console.log('\nn8n (الـ SQL اللي في الـ workflows):');
+await test('مفتاح الإيقاف: outbox_enabled = false → مفيش رسايل خالص', async () => {
+  assert((await rows('select * from v_alert_outbox')).length === 0, 'paused by default');
+  await db.query(`update settings set value = 'true' where key = 'outbox_enabled'`);
+  assert((await rows('select * from v_alert_outbox')).length > 0, 'enabled');
+});
 const n8nSql = (file, nodeName) => JSON.parse(readFileSync(join(root, 'n8n', file), 'utf8')).nodes.find((n) => n.name === nodeName).parameters.query;
-await test('Outbox: v_alert_outbox + الرصيد + علّم sent', async () => {
-  await db.query(`update clients set phone_wa = phone_wa`);
-  const r = await rows(n8nSql('03_outbox.json', 'v_alert_outbox'));
-  assert(r.length > 0 && r.some((x) => x.alert_key === 'published' && x.balance_text), JSON.stringify(r[0]));
-  await db.query(n8nSql('03_outbox.json', 'علّم sent / failed'), ['sent', '', r[0].alert_id]);
-  assert((await val('select status from alerts where id = $1', [r[0].alert_id])) === 'sent');
+await test('Outbox: بيحجز قبل الإرسال — نفس الرسالة متتبعتش مرتين + 3 في اليوم للعميل', async () => {
+  // رسايل كتير لنفس العميل
+  for (let i = 0; i < 6; i++) await db.query(`select queue_alert('usage_high', 'qa-burst:' || $1::text, '{client}', $2)`, [i, client]);
+  const q = n8nSql('03_outbox.json', 'v_alert_outbox');
+  const first = await rows(q);
+  const second = await rows(q);
+  const ids1 = first.map((r) => r.alert_id);
+  assert(first.length > 0 && first.length <= 10, `first=${first.length}`);
+  assert(!second.some((r) => ids1.includes(r.alert_id)), 'اتبعتت مرتين');
+  assert(first.every((r) => r.channel === 'email' || r.phone), 'no phone');
+  const perPhone = await rows(`select cl.phone_wa, count(*)::int n from alerts a join clients cl on cl.id = a.client_id
+     where a.audience = 'client' and a.status = 'sent' and a.sent_at > now() - interval '24 hours' group by 1`);
+  assert(perPhone.every((p) => p.n <= 3), JSON.stringify(perPhone));
+  assert(Number(await val(`select count(*) from alerts where status = 'queued' and audience = 'client' and dedupe_key like 'qa-burst:%'`)) > 0, 'الزيادة لازم تستنى');
+  assert(first.some((r) => r.balance_text !== undefined && 'feedback_code' in r), 'columns');
 });
 await test('Outbox: الفريق بالإيميل والعميل بالواتساب', async () => {
+  await db.query(`select queue_alert('client_unhappy', 'qa-ch', '{client,sales}', $1)`, [client]);
   const r = await rows(`select channel, email, phone, audience from v_alert_outbox`);
   assert(r.some((x) => x.audience === 'client' && x.channel === 'whatsapp' && x.phone), 'client');
   assert(r.some((x) => x.audience !== 'client' && x.channel === 'email' && x.email?.endsWith('@x.com')), JSON.stringify(r.filter((x) => x.audience !== 'client')));

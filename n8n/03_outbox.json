@@ -50,7 +50,7 @@
       ],
       "parameters": {
         "operation": "executeQuery",
-        "query": "select o.*,\n       (select string_agg(b.name_ar || ' ' || trim_scale(b.remaining)::text, ' · ')\n          from v_cycle_balance b where b.cycle_id = o.cycle_id and b.unit_kind in ('count','hours')) as balance_text,\n       (select end_date from cycles where id = o.cycle_id) as cycle_end,\n       (select short_code from deliverables where id = o.deliverable_id) as feedback_code\n  from v_alert_outbox o\n limit 50;",
+        "query": "-- بنحجز الرسايل (sent) قبل الإرسال: مستحيل رسالة تتبعت مرتين حتى لو الـ workflow وقع\n-- حد أقصى 3 رسايل في اليوم لنفس رقم العميل (الزيادة بتستنى) + 10 في كل تشغيلة\nwith sent_today as (\n  select cl.phone_wa, count(*) as n from alerts a join clients cl on cl.id = a.client_id\n   where a.audience = 'client' and a.status = 'sent' and a.sent_at > now() - interval '24 hours'\n   group by cl.phone_wa),\nranked as (\n  select o.*, row_number() over (partition by o.channel, o.phone order by o.alert_id) as rn_phone\n    from v_alert_outbox o),\nbatch as (\n  select r.* from ranked r left join sent_today t on t.phone_wa = r.phone\n   where r.channel = 'email' or (coalesce(t.n, 0) + r.rn_phone) <= 3\n   order by (r.priority = 'urgent') desc, r.alert_id\n   limit 10),\nclaimed as (\n  update alerts a set status = 'sent', sent_at = now()\n   where a.id in (select alert_id from batch) and a.status = 'queued'\n  returning a.id)\nselect b.*,\n       (select string_agg(x.name_ar || ' ' || trim_scale(x.remaining)::text, ' · ')\n          from v_cycle_balance x where x.cycle_id = b.cycle_id and x.unit_kind in ('count','hours')) as balance_text,\n       (select end_date from cycles where id = b.cycle_id) as cycle_end,\n       (select short_code from deliverables where id = b.deliverable_id) as feedback_code\n  from batch b where b.alert_id in (select id from claimed);",
         "options": {}
       },
       "credentials": {
@@ -125,7 +125,7 @@
           "batching": {
             "batch": {
               "batchSize": 1,
-              "batchInterval": 1500
+              "batchInterval": 3000
             }
           }
         }
@@ -196,20 +196,49 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "fbff5c43-c391-54ef-826f-f020d6ca4239",
-      "name": "علّم sent / failed",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
+      "id": "016ec6c0-08cf-5947-895b-a97df692d0fa",
+      "name": "فشل؟",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
       "position": [
         1560,
         -100
       ],
       "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ !!$json.error }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a29844a9-ea6a-5933-9c8e-9935b2fbb5b8",
+      "name": "علّم failed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1780,
+        -160
+      ],
+      "parameters": {
         "operation": "executeQuery",
-        "query": "update alerts set status = $1, sent_at = case when $1 = 'sent' then now() end, error = nullif($2, '') where id = $3::bigint;",
-        "options": {
-          "queryReplacement": "={{ $json.error ? 'failed' : 'sent' }},={{ $json.error ? JSON.stringify($json.error).slice(0, 500) : '' }},={{ $('بناء الرسالة').item.json.alert_id }}"
-        }
+        "query": "=update alerts set status = 'failed', sent_at = null, error = 'send failed: ' || {{ \"'\" + String($json.error?.message ?? $json.error ?? '').replace(/[^\\p{L}\\p{N} .:_-]/gu, ' ').slice(0, 300) + \"'\" }} where id = {{ Number($('بناء الرسالة').item.json.alert_id) }};",
+        "options": {}
       },
       "credentials": {
         "postgres": {
@@ -229,10 +258,8 @@
       ],
       "parameters": {
         "operation": "executeQuery",
-        "query": "update alerts set status = 'skipped' where id = $1::bigint;",
-        "options": {
-          "queryReplacement": "={{ $json.alert_id }}"
-        }
+        "query": "=update alerts set status = 'skipped', sent_at = null where id = {{ Number($json.alert_id) }};",
+        "options": {}
       },
       "credentials": {
         "postgres": {
@@ -327,7 +354,7 @@
       "main": [
         [
           {
-            "node": "علّم sent / failed",
+            "node": "فشل؟",
             "type": "main",
             "index": 0
           }
@@ -338,11 +365,23 @@
       "main": [
         [
           {
-            "node": "علّم sent / failed",
+            "node": "فشل؟",
             "type": "main",
             "index": 0
           }
         ]
+      ]
+    },
+    "فشل؟": {
+      "main": [
+        [
+          {
+            "node": "علّم failed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
       ]
     }
   }

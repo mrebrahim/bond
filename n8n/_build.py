@@ -50,13 +50,30 @@ save("02_hourly.json", {"name": "DSE · Hourly (run_hourly)", "settings": SETTIN
 ], "connections": chain("كل ساعة", "run_hourly")})
 
 # 3) Outbox
-OUTBOX_SQL = """select o.*,
-       (select string_agg(b.name_ar || ' ' || trim_scale(b.remaining)::text, ' · ')
-          from v_cycle_balance b where b.cycle_id = o.cycle_id and b.unit_kind in ('count','hours')) as balance_text,
-       (select end_date from cycles where id = o.cycle_id) as cycle_end,
-       (select short_code from deliverables where id = o.deliverable_id) as feedback_code
-  from v_alert_outbox o
- limit 50;"""
+OUTBOX_SQL = """-- بنحجز الرسايل (sent) قبل الإرسال: مستحيل رسالة تتبعت مرتين حتى لو الـ workflow وقع
+-- حد أقصى 3 رسايل في اليوم لنفس رقم العميل (الزيادة بتستنى) + 10 في كل تشغيلة
+with sent_today as (
+  select cl.phone_wa, count(*) as n from alerts a join clients cl on cl.id = a.client_id
+   where a.audience = 'client' and a.status = 'sent' and a.sent_at > now() - interval '24 hours'
+   group by cl.phone_wa),
+ranked as (
+  select o.*, row_number() over (partition by o.channel, o.phone order by o.alert_id) as rn_phone
+    from v_alert_outbox o),
+batch as (
+  select r.* from ranked r left join sent_today t on t.phone_wa = r.phone
+   where r.channel = 'email' or (coalesce(t.n, 0) + r.rn_phone) <= 3
+   order by (r.priority = 'urgent') desc, r.alert_id
+   limit 10),
+claimed as (
+  update alerts a set status = 'sent', sent_at = now()
+   where a.id in (select alert_id from batch) and a.status = 'queued'
+  returning a.id)
+select b.*,
+       (select string_agg(x.name_ar || ' ' || trim_scale(x.remaining)::text, ' · ')
+          from v_cycle_balance x where x.cycle_id = b.cycle_id and x.unit_kind in ('count','hours')) as balance_text,
+       (select end_date from cycles where id = b.cycle_id) as cycle_end,
+       (select short_code from deliverables where id = b.deliverable_id) as feedback_code
+  from batch b where b.alert_id in (select id from claimed);"""
 
 BUILD_CODE = r"""// بيبني نص الرسالة لكل alert_key (utility — من غير عروض)
 const cfg = $('Config').first().json;
@@ -126,7 +143,7 @@ nodes = [
         "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth",
         "sendBody": True, "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ number: $json.number, text: $json.text }) }}",
-        "options": {"batching": {"batch": {"batchSize": 1, "batchInterval": 1500}}}},
+        "options": {"batching": {"batch": {"batchSize": 1, "batchInterval": 3000}}}},
         [1100, -100], 4.2, {"httpHeaderAuth": {"id": "EVO_KEY", "name": "Evolution API key (header: apikey)"}},
         onError="continueRegularOutput"),
     node("إيميل؟", "n8n-nodes-base.if", {"conditions": {"options": {"caseSensitive": True, "typeValidation": "loose"},
@@ -136,16 +153,18 @@ nodes = [
         "fromEmail": "={{ $json.from }}", "toEmail": "={{ $json.email }}", "subject": "={{ $json.subject }}",
         "emailFormat": "text", "text": "={{ $json.text }}", "options": {"appendAttribution": False}},
         [1320, -200], 2.1, {"smtp": {"id": "SMTP", "name": "SMTP (digitalsolutionegy.com)"}}, onError="continueRegularOutput"),
-    pg("علّم sent / failed",
-       "update alerts set status = $1, sent_at = case when $1 = 'sent' then now() end, error = nullif($2, '') where id = $3::bigint;",
-       [1560, -100], "={{ $json.error ? 'failed' : 'sent' }},={{ $json.error ? JSON.stringify($json.error).slice(0, 500) : '' }},={{ $('بناء الرسالة').item.json.alert_id }}"),
-    pg("علّم skipped", "update alerts set status = 'skipped' where id = $1::bigint;", [1100, 100], "={{ $json.alert_id }}"),
+    node("فشل؟", "n8n-nodes-base.if", {"conditions": {"options": {"caseSensitive": True, "typeValidation": "loose"},
+        "conditions": [{"leftValue": "={{ !!$json.error }}", "rightValue": True, "operator": {"type": "boolean", "operation": "true", "singleValue": True}}],
+        "combinator": "and"}, "options": {}}, [1560, -100], 2.2),
+    pg("علّم failed", "=update alerts set status = 'failed', sent_at = null, error = 'send failed: ' || {{ \"'\" + String($json.error?.message ?? $json.error ?? '').replace(/[^\\p{L}\\p{N} .:_-]/gu, ' ').slice(0, 300) + \"'\" }} where id = {{ Number($('بناء الرسالة').item.json.alert_id) }};", [1780, -160]),
+    pg("علّم skipped", "=update alerts set status = 'skipped', sent_at = null where id = {{ Number($json.alert_id) }};", [1100, 100]),
 ]
 conns = chain("كل دقيقتين", "Config", "v_alert_outbox", "بناء الرسالة", "فيه نص؟")
 conns["فيه نص؟"] = {"main": [[{"node": "إيميل؟", "type": "main", "index": 0}], [{"node": "علّم skipped", "type": "main", "index": 0}]]}
 conns["إيميل؟"] = {"main": [[{"node": "إيميل للفريق", "type": "main", "index": 0}], [{"node": "Evolution · sendText", "type": "main", "index": 0}]]}
-conns["إيميل للفريق"] = {"main": [[{"node": "علّم sent / failed", "type": "main", "index": 0}]]}
-conns["Evolution · sendText"] = {"main": [[{"node": "علّم sent / failed", "type": "main", "index": 0}]]}
+conns["إيميل للفريق"] = {"main": [[{"node": "فشل؟", "type": "main", "index": 0}]]}
+conns["Evolution · sendText"] = {"main": [[{"node": "فشل؟", "type": "main", "index": 0}]]}
+conns["فشل؟"] = {"main": [[{"node": "علّم failed", "type": "main", "index": 0}], []]}
 save("03_outbox.json", {"name": "DSE · Outbox (واتساب للعملاء · إيميل للفريق)", "settings": SETTINGS, "nodes": nodes, "connections": conns})
 
 # 4) Feedback (Google Sheets → feedback)
