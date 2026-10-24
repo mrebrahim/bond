@@ -466,6 +466,17 @@ await test('Inbound WhatsApp: "1" بيأكد و "2" بيطلب تغيير + تن
   assert(!(await one(q, ['201000000000', '1'])), 'رقم مش عميل');
 });
 
+await test('السكربت: "ابعت للعميل" بيحط رسالة واتساب (مرة لكل نسخة)', async () => {
+  await as(team.am);
+  const sc = await val(`insert into scripts (client_id, title, body, created_by) values ($1, 'افتتاح الفرع', 'أهلا بيكم...', $2) returning id`, [client, team.am]);
+  await db.query(`update scripts set status = 'sent_to_client' where id = $1`, [sc]);
+  await db.query(`update scripts set status = 'changes_requested' where id = $1`, [sc]);
+  await db.query(`update scripts set status = 'sent_to_client' where id = $1`, [sc]);
+  await as(null);
+  const a = await rows(`select payload from alerts where alert_key = 'script_sent' and client_id = $1`, [client]);
+  assert(a.length === 2 && a[0].payload.title === 'افتتاح الفرع', JSON.stringify(a));
+});
+
 await test('انتهاء الدورة بيحسب الضايع', async () => {
   await db.query(`update cycles set start_date = start_date - 40, end_date = cairo_today() - 1 where id = $1`, [cycle]);
   await db.query(`update subscriptions set auto_renew = false where id = $1`, [sub]);
