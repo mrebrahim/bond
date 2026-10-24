@@ -449,6 +449,12 @@ await test('Outbox: v_alert_outbox + الرصيد + علّم sent', async () => 
   await db.query(n8nSql('03_outbox.json', 'علّم sent / failed'), ['sent', '', r[0].alert_id]);
   assert((await val('select status from alerts where id = $1', [r[0].alert_id])) === 'sent');
 });
+await test('Outbox: الفريق بالإيميل والعميل بالواتساب', async () => {
+  const r = await rows(`select channel, email, phone, audience from v_alert_outbox`);
+  assert(r.some((x) => x.audience === 'client' && x.channel === 'whatsapp' && x.phone), 'client');
+  assert(r.some((x) => x.audience !== 'client' && x.channel === 'email' && x.email?.endsWith('@x.com')), JSON.stringify(r.filter((x) => x.audience !== 'client')));
+  assert(r.every((x) => x.audience === 'client' || x.channel === 'email'), 'staff over whatsapp');
+});
 await test('Feedback: insert من الشيت مرة واحدة بس', async () => {
   const q = n8nSql('04_feedback.json', 'insert feedback');
   const args = [reel, '4', '5', '', 'false', 'إضاءة|صوت', 'حلو', 'false', 'sheet-row-9'];

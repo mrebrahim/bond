@@ -6,7 +6,7 @@
 |---|---|---|
 | `01_daily.json` | كل يوم 00:05 (القاهرة) | `select run_daily()` |
 | `02_hourly.json` | كل ساعة | `select run_hourly()` |
-| `03_outbox.json` | كل دقيقتين | `v_alert_outbox` ← نص الرسالة ← Evolution `sendText` ← `alerts.status = sent/failed/skipped` |
+| `03_outbox.json` | كل دقيقتين | `v_alert_outbox` ← نص الرسالة ← **العملاء: واتساب** (Evolution) · **الفريق: إيميل** (SMTP) ← `alerts.status = sent/failed/skipped` |
 | `04_feedback.json` | صف جديد في شيت ردود الفورم | `insert into feedback` (مرة واحدة لكل صف بالـ `source_ref`) |
 | `05_inbound_whatsapp.json` | Webhook من Evolution | العميل كتب 1 ← الجلسة اتأكدت · كتب 2 ← `reschedule_requested` + تنبيه للدعم ← رد عليه |
 
@@ -19,6 +19,8 @@
 
 **Evolution API key (header: apikey)** — النوع Header Auth: Name = `apikey` · Value = الـ `AUTHENTICATION_API_KEY`.
 
+**SMTP (digitalsolutionegy.com)** — النوع SMTP، لإيميلات الفريق. Google Workspace: Host `smtp.gmail.com` · Port `465` · SSL · User = إيميل البعت · Password = App Password (مش باسورد الإيميل). وحط نفس الإيميل في `fromEmail` في node الـ Config.
+
 **Google Sheets** — OAuth2 للشيت بتاع ردود الفورم.
 
 بعد الـ Import افتح كل node عليه ⚠️ واختار الـ credential.
@@ -29,7 +31,7 @@
 3. لو الـ instance شغال بـ **WhatsApp Cloud API** (الرسمي): الرسايل الحرة بتوصل بس جوه 24 ساعة من آخر رسالة من العميل. برّه الـ 24 ساعة لازم Utility templates متوافق عليها من Meta (PRD §10) — ساعتها غيّر node الـ sendText لـ `sendTemplate` لكل `alert_key`.
 
 ## 3) node الـ Config (في 03 و 05)
-`evoUrl` · `instanceClients` · `instanceTeam` · `formId` · `entryClient` · `entryDeliverable` (أرقام الـ entry من "Get pre-filled link" في الفورم).
+`evoUrl` · `instanceClients` · `fromEmail` · `appUrl` · `formId` · `entryClient` · `entryDeliverable` (أرقام الـ entry من "Get pre-filled link" في الفورم).
 
 ## 4) Feedback
 في node الـ **Map** عدّل أسماء الأعمدة حسب عناوين الأسئلة في الشيت. خانتين "كود العميل" و"رقم الريل" بيتملوا لوحدهم من اللينك اللي في رسالة الواتساب (pre-filled) — العميل مش بيكتبهم.
