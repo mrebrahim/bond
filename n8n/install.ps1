@@ -1,6 +1,8 @@
 ﻿# Installs the bond workflows into n8n (run from cmd):
 #   powershell -ExecutionPolicy Bypass -c "iwr -UseBasicParsing https://raw.githubusercontent.com/mrebrahim/bond/claude/dreamy-babbage-t6r4kb/n8n/install.ps1 -OutFile $env:TEMP\bond-n8n.ps1; & $env:TEMP\bond-n8n.ps1"
 # Asks for the keys and the DB password; stores nothing on disk.
+# Re-run with existing credentials: ... bond-n8n.ps1 -PgId <id> -EvId <id>
+param([string]$PgId, [string]$EvId)
 
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -17,13 +19,16 @@ function Read-Plain($prompt) {
 }
 
 $n8nKey = Read-Plain 'n8n API key'
-$evoKey = Read-Plain 'Evolution AUTHENTICATION_API_KEY'
-$pgHost = Read-Host 'Supabase Session pooler host (Enter = aws-1-eu-west-2.pooler.supabase.com)'
-if (-not $pgHost) { $pgHost = 'aws-1-eu-west-2.pooler.supabase.com' }
-$pgPass = Read-Plain 'Supabase database password'
+if (-not $EvId) { $evoKey = Read-Plain 'Evolution AUTHENTICATION_API_KEY' }
+if (-not $PgId) {
+  $pgHost = Read-Host 'Supabase Session pooler host (Enter = aws-1-eu-west-2.pooler.supabase.com)'
+  if (-not $pgHost) { $pgHost = 'aws-1-eu-west-2.pooler.supabase.com' }
+  $pgPass = Read-Plain 'Supabase database password'
+}
 
 function Call($method, $path, $body) {
   $p = @{ Method = $method; Uri = "$N8N/api/v1$path"; Headers = @{ 'X-N8N-API-KEY' = $n8nKey }; UseBasicParsing = $true }
+  if ($null -eq $body -and $method -ne 'GET') { $body = '{}' }   # n8n rejects bodiless POSTs (415)
   if ($null -ne $body) {
     $p.Body = [Text.Encoding]::UTF8.GetBytes($body)
     $p.ContentType = 'application/json; charset=utf-8'
@@ -45,15 +50,15 @@ function Get-Raw($name) {
 }
 
 Write-Host '1) credentials' -ForegroundColor Cyan
-$pg = Call POST '/credentials' (@{
+if ($PgId) { $pg = @{ id = $PgId } } else { $pg = Call POST '/credentials' (@{
   name = $PGNAME; type = 'postgres'
   data = @{ host = $pgHost; port = 5432; database = 'postgres'; user = 'postgres.izpvbgzwiwyaoctdroxr'
             password = $pgPass; allowUnauthorizedCerts = $true; sshTunnel = $false }
-} | ConvertTo-Json -Depth 4)
+} | ConvertTo-Json -Depth 4) }
 Write-Host "   Postgres: $($pg.id)"
-$ev = Call POST '/credentials' (@{
+if ($EvId) { $ev = @{ id = $EvId } } else { $ev = Call POST '/credentials' (@{
   name = $EVNAME; type = 'httpHeaderAuth'; data = @{ name = 'apikey'; value = $evoKey }
-} | ConvertTo-Json -Depth 4)
+} | ConvertTo-Json -Depth 4) }
 Write-Host "   Evolution: $($ev.id)"
 
 Write-Host '2) workflows' -ForegroundColor Cyan
