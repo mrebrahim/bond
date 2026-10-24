@@ -40,6 +40,7 @@ powershell -ExecutionPolicy Bypass -c "iwr -UseBasicParsing https://raw.githubus
 `evoUrl` · `instanceClients` · `instanceTeam` · `formId` · `entryClient` · `entryDeliverable` (أرقام الـ entry من "Get pre-filled link" في الفورم).
 
 ## 4) Feedback
+الفورم والشيت بيتعملوا بـ `feedback_form.gs` (script.google.com ← الصق ← Run `createBondFeedbackForm`). بيطبع `formId` و `entryClient` و `entryDeliverable` ورابط الشيت والـ gid.
 في node الـ **Map** عدّل أسماء الأعمدة حسب عناوين الأسئلة في الشيت. الفورم لازم يكون فيه حقل `deliverable_id` (بيتملى من اللينك).
 
 ## 5) التشغيل
