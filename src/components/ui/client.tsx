@@ -52,10 +52,10 @@ export function ActionForm({
   );
 }
 
-export function SubmitButton({ children, variant = 'primary', size = 'md', className }: {
-  children: ReactNode; variant?: ButtonVariant; size?: 'sm' | 'md' | 'lg'; className?: string;
+export function SubmitButton({ children, variant = 'primary', size = 'md', className, disabled }: {
+  children: ReactNode; variant?: ButtonVariant; size?: 'sm' | 'md' | 'lg'; className?: string; disabled?: boolean;
 }) {
-  return <button type="submit" className={clsx(buttonClass(variant, size), className)}>{children}</button>;
+  return <button type="submit" disabled={disabled} className={clsx(buttonClass(variant, size), className)}>{children}</button>;
 }
 
 /** زرار بينادي action واحدة (مع تأكيد اختياري) */

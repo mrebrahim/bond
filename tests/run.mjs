@@ -81,7 +81,6 @@ const studioId = await val('select id from studios limit 1');
 const studio2 = await val(`insert into studios (name) values ('استوديو 2') returning id`);
 
 // تواريخ نسبية بتوقيت القاهرة
-const today = await val('select cairo_today()::text');
 const at = (days, hour) =>
   val(`select ((cairo_today() + $1::int)::timestamp + make_interval(hours => $2::int)) at time zone 'Africa/Cairo'`, [days, hour]);
 
