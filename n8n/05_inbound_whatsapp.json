@@ -20,7 +20,7 @@
         "path": "dse-evolution-inbound",
         "options": {}
       },
-      "webhookId": "fa893988-40e7-4286-8aae-f6dedcc39784"
+      "webhookId": "0545ccef-4a9e-42bc-92a6-7a48ef991223"
     },
     {
       "id": "89081f0a-e56e-5e82-b23d-2a60419f9208",
@@ -32,7 +32,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "// ⚙️ عدّل القيم دي مرة واحدة\nreturn [{ json: {\n  evoUrl: 'https://evolutoin-api-evolution-api.4tqpgc.easypanel.host',   // من غير / في الآخر\n  instanceClients: 'dse-clients',   // رقم الرسايل للعملاء\n  instanceTeam: 'dse-team',         // رقم منفصل للفريق\n  fromEmail: 'Digital Solution <notifications@digitalsolutionegy.com>',   // لازم يبقى نفس إيميل الـ SMTP\n  appUrl: 'https://bond-chi-tawny.vercel.app',   // رابط السيستم (لينك التقييم القصير + إيميلات الفريق)\n}}];"
+        "jsCode": "// ⚙️ عدّل القيم دي مرة واحدة\nreturn [{ json: {\n  evoUrl: 'https://evolutoin-api-evolution-api.4tqpgc.easypanel.host',   // من غير / في الآخر\n  instanceClients: 'dse-clients',   // رقم الرسايل للعملاء\n  instanceTeam: 'dse-team',         // رقم منفصل للفريق\n  fromEmail: 'Digital Solution <n8n.arabic@gmail.com>',   // لازم يبقى نفس إيميل الـ SMTP\n  appUrl: 'https://bond-chi-tawny.vercel.app',   // رابط السيستم (لينك التقييم القصير + إيميلات الفريق)\n}}];"
       }
     },
     {

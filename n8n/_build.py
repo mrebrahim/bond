@@ -29,7 +29,7 @@ return [{ json: {
   evoUrl: 'https://evolutoin-api-evolution-api.4tqpgc.easypanel.host',   // من غير / في الآخر
   instanceClients: 'dse-clients',   // رقم الرسايل للعملاء
   instanceTeam: 'dse-team',         // رقم منفصل للفريق
-  fromEmail: 'Digital Solution <notifications@digitalsolutionegy.com>',   // لازم يبقى نفس إيميل الـ SMTP
+  fromEmail: 'Digital Solution <n8n.arabic@gmail.com>',   // لازم يبقى نفس إيميل الـ SMTP
   appUrl: 'https://bond-chi-tawny.vercel.app',   // رابط السيستم (لينك التقييم القصير + إيميلات الفريق)
 }}];"""
 

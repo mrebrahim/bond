@@ -4,7 +4,7 @@
 //   set N8N_URL=https://comp.digitalsolutionegy.com
 //   set N8N_API_KEY=...            (n8n → Settings → n8n API)
 //   set APP_URL=https://bond-chi-tawny.vercel.app   (اختياري — ده الافتراضي)
-//   set FROM_EMAIL=notifications@digitalsolutionegy.com
+//   set FROM_EMAIL=Digital Solution <n8n.arabic@gmail.com>   (اختياري — ده الافتراضي)
 //   set EVO_URL=https://evolutoin-api-evolution-api.4tqpgc.easypanel.host
 //   set EVO_API_KEY=...            (اختياري: بيعمل credential الـ Evolution لو مش موجود)
 //   set CRED_PG=<id>  set CRED_SMTP=<id>  set CRED_SHEETS=<id>   (اختياري: id الـ credential من الرابط في n8n)
