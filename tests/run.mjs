@@ -463,12 +463,19 @@ await test('Outbox: بيحجز قبل الإرسال — نفس الرسالة �
   assert(Number(await val(`select count(*) from alerts where status = 'queued' and audience = 'client' and dedupe_key like 'qa-burst:%'`)) > 0, 'الزيادة لازم تستنى');
   assert(first.some((r) => r.balance_text !== undefined && 'feedback_code' in r), 'columns');
 });
-await test('Outbox: الفريق بالإيميل والعميل بالواتساب', async () => {
-  await db.query(`select queue_alert('client_unhappy', 'qa-ch', '{client,sales}', $1)`, [client]);
-  const r = await rows(`select channel, email, phone, audience from v_alert_outbox`);
-  assert(r.some((x) => x.audience === 'client' && x.channel === 'whatsapp' && x.phone), 'client');
-  assert(r.some((x) => x.audience !== 'client' && x.channel === 'email' && x.email?.endsWith('@x.com')), JSON.stringify(r.filter((x) => x.audience !== 'client')));
-  assert(r.every((x) => x.audience === 'client' || x.channel === 'email'), 'staff over whatsapp');
+await test('إيميلات الفريق: claim_staff_emails بيحجز ومبيكررش، والواتساب للعملاء بس', async () => {
+  await db.query(`select queue_alert('client_unhappy', 'qa-ch', '{client,sales,media_lead}', $1, '{"comment":"x"}')`, [client]);
+  const wa = await rows(`select channel, audience from v_alert_outbox`);
+  assert(wa.every((x) => x.audience === 'client' && x.channel === 'whatsapp'), JSON.stringify(wa));
+  const first = await rows(`select * from claim_staff_emails(50)`);
+  const second = await rows(`select * from claim_staff_emails(50)`);
+  assert(first.some((r) => r.alert_key === 'client_unhappy' && r.email.endsWith('@x.com')), JSON.stringify(first.slice(0, 3)));
+  assert(second.length === 0, 'اتبعت مرتين');
+  await db.query(`select mark_alert_failed($1, 'smtp down')`, [first[0].alert_id]);
+  assert((await val('select status from alerts where id = $1', [first[0].alert_id])) === 'failed');
+  await as(team.admin);
+  await throws(`select * from claim_staff_emails(1)`, [], 'permission denied');
+  await as(null);
 });
 await test('لينك التقييم القصير: بيتحوّل لفورم متملي (حتى من غير login)', async () => {
   const code = await val('select short_code from deliverables where id = $1', [reel]);
