@@ -9,7 +9,8 @@ $ErrorActionPreference = 'Stop'
 
 $N8N    = 'https://comp.digitalsolutionegy.com'
 $RAW    = 'https://raw.githubusercontent.com/mrebrahim/bond/claude/dreamy-babbage-t6r4kb/n8n'
-$FILES  = @('01_daily.json', '02_hourly.json', '03_outbox.json', '05_inbound_whatsapp.json')   # 04_feedback: after the Google Form is ready
+$FILES  = @('01_daily.json', '02_hourly.json', '03_outbox.json', '04_feedback.json', '05_inbound_whatsapp.json')
+$MANUAL = @('04_feedback.json')   # needs the Google Sheets OAuth credential picked in the n8n UI, then activate by hand
 $PGNAME = 'Supabase bond (Postgres)'
 $EVNAME = 'Evolution API key (header: apikey)'
 
@@ -67,12 +68,14 @@ foreach ($f in $FILES) {
   $json = (Get-Raw $f).Replace('"id": "SUPABASE_PG"', "`"id`": `"$($pg.id)`"").Replace('"id": "EVO_KEY"', "`"id`": `"$($ev.id)`"")
   $name = ($json | ConvertFrom-Json).name
   $old = $existing | Where-Object { $_.name -eq $name } | Select-Object -First 1
+  if ($old -and $MANUAL -contains $f) { Write-Host "   skip $($old.id)  (already there - keeps its Google credential)"; continue }
   if ($old) {
     if ($old.active) { Call POST "/workflows/$($old.id)/deactivate" $null | Out-Null }
     $wf = Call PUT "/workflows/$($old.id)" $json
   } else {
     $wf = Call POST '/workflows' $json
   }
+  if ($MANUAL -contains $f) { Write-Host "   OK  $($wf.id)  (open it in n8n, pick the Google Sheets credential, activate)"; continue }
   Call POST "/workflows/$($wf.id)/activate" $null | Out-Null
   Write-Host "   OK  $($wf.id)  active"
 }

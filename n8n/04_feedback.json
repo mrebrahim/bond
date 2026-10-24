@@ -26,21 +26,16 @@
         "documentId": {
           "__rl": true,
           "mode": "url",
-          "value": "PASTE_SHEET_URL"
+          "value": "https://docs.google.com/spreadsheets/d/1Se7duaVgg38calhJhanv6WO_Pgtx3NY3c8N4bRDJBbo/edit"
         },
         "sheetName": {
           "__rl": true,
           "mode": "list",
-          "value": "gid=0"
+          "value": "gid=1760884367",
+          "cachedResultName": "Form Responses 1"
         },
         "event": "rowAdded",
         "options": {}
-      },
-      "credentials": {
-        "googleSheetsTriggerOAuth2Api": {
-          "id": "GSHEETS",
-          "name": "Google Sheets"
-        }
       }
     },
     {
