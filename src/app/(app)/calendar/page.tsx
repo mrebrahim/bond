@@ -55,7 +55,8 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
             <LinkButton size="sm" href={link({ date: addDays(base, step) })}>التالي ←</LinkButton>
             <LinkButton size="sm" variant={view === 'day' ? 'primary' : 'secondary'} href={link({ view: 'day' })}>يوم</LinkButton>
             <LinkButton size="sm" variant={view === 'week' ? 'primary' : 'secondary'} href={link({ view: 'week' })}>أسبوع</LinkButton>
-            <LinkButton size="sm" href={link({ by: by === 'studio' ? 'photographer' : 'studio' })}>{by === 'studio' ? 'بالمصورين' : 'بالاستوديوهات'}</LinkButton>
+            <LinkButton size="sm" variant={by === 'studio' ? 'primary' : 'secondary'} href={link({ by: 'studio' })}>الاستوديوهات</LinkButton>
+            <LinkButton size="sm" variant={by === 'photographer' ? 'primary' : 'secondary'} href={link({ by: 'photographer' })}>المصورين</LinkButton>
           </>
         }
       />
