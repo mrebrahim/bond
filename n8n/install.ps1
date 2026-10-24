@@ -2,13 +2,13 @@
 #   powershell -ExecutionPolicy Bypass -c "iwr -UseBasicParsing https://raw.githubusercontent.com/mrebrahim/bond/claude/dreamy-babbage-t6r4kb/n8n/install.ps1 -OutFile $env:TEMP\bond-n8n.ps1; & $env:TEMP\bond-n8n.ps1"
 # Asks for the keys and the DB password; stores nothing on disk.
 # Re-run with existing credentials: ... bond-n8n.ps1 -PgId <id> -EvId <id>
-param([string]$PgId, [string]$EvId)
+param([string]$PgId, [string]$EvId, [string]$Ref = 'claude/dreamy-babbage-t6r4kb')
 
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $N8N    = 'https://comp.digitalsolutionegy.com'
-$RAW    = 'https://raw.githubusercontent.com/mrebrahim/bond/claude/dreamy-babbage-t6r4kb/n8n'
+$RAW    = "https://raw.githubusercontent.com/mrebrahim/bond/$Ref/n8n"
 $FILES  = @('01_daily.json', '02_hourly.json', '03_outbox.json', '04_feedback.json', '05_inbound_whatsapp.json')
 $MANUAL = @('04_feedback.json')   # needs the Google Sheets OAuth credential picked in the n8n UI, then activate by hand
 $PGNAME = 'Supabase bond (Postgres)'
