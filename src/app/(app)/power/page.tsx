@@ -37,8 +37,7 @@ export default async function PowerPage() {
             {canRecord && (
               <div className="mt-4 grid grid-cols-2 gap-2">
                 <Modal trigger="📸 سجّل القراية" title="قراية العداد" triggerVariant="primary" triggerSize="lg">
-                  {(close) => (
-                    <ActionForm action={recordReading} onSuccess={close} className="flex flex-col gap-3">
+                  <ActionForm action={recordReading} className="flex flex-col gap-3">
                       <input type="hidden" name="meter_id" value={m.meter_id!} />
                       <Field label="الرصيد على العداد (ج.م) *"><Input name="balance" type="number" step="0.01" min={0} inputMode="decimal" required className="text-lg" /></Field>
                       <Field label="الشريحة"><Input name="tier" type="number" min={1} inputMode="numeric" defaultValue={m.tier ?? ''} /></Field>
@@ -46,17 +45,14 @@ export default async function PowerPage() {
                       <Field label="صورة العداد"><Input name="photo" type="file" accept="image/*" capture="environment" /></Field>
                       <SubmitButton size="lg">سجّل</SubmitButton>
                     </ActionForm>
-                  )}
                 </Modal>
                 <Modal trigger="🔌 شحنت" title="شحن الكارت" triggerSize="lg">
-                  {(close) => (
-                    <ActionForm action={addRecharge} onSuccess={close} className="flex flex-col gap-3">
+                  <ActionForm action={addRecharge} className="flex flex-col gap-3">
                       <input type="hidden" name="meter_id" value={m.meter_id!} />
                       <Field label="المبلغ (ج.م) *"><Input name="amount" type="number" min={1} inputMode="numeric" required /></Field>
                       <Field label="ملاحظة"><Input name="note" /></Field>
                       <SubmitButton size="lg">سجّل</SubmitButton>
                     </ActionForm>
-                  )}
                 </Modal>
               </div>
             )}

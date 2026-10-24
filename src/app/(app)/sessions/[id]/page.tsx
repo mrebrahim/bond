@@ -63,8 +63,7 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
               <ActionButton action={noShow.bind(null, id)} variant="danger" confirm="متأكد إنه مجاش؟ هيتخصم من الرصيد.">مجاش</ActionButton>
               {s.confirmation !== 'confirmed' && <ActionButton action={setConfirmation.bind(null, id, 'confirmed')}>أكّد</ActionButton>}
               <Modal trigger="تعديل الميعاد" title="تعديل الجلسة">
-                {(close) => (
-                  <ActionForm action={rescheduleSession.bind(null, id)} onSuccess={close} reset={false} className="flex flex-col gap-3">
+                <ActionForm action={rescheduleSession.bind(null, id)} reset={false} className="flex flex-col gap-3">
                     <div className="grid grid-cols-2 gap-3">
                       <Field label="اليوم"><Input name="date" type="date" dir="ltr" defaultValue={cairoYmd(s.booked_start)} /></Field>
                       <Field label="الساعة"><Input name="time" type="time" dir="ltr" step={900} defaultValue={cairoHm(s.booked_start)} /></Field>
@@ -82,16 +81,13 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
                     <Field label="ملاحظات"><Textarea name="notes" defaultValue={s.notes ?? ''} /></Field>
                     <SubmitButton>احفظ</SubmitButton>
                   </ActionForm>
-                )}
               </Modal>
               <Modal trigger="إلغاء" title="إلغاء الجلسة" triggerVariant="ghost">
-                {(close) => (
-                  <ActionForm action={cancelSession.bind(null, id)} onSuccess={close} className="flex flex-col gap-3">
+                <ActionForm action={cancelSession.bind(null, id)} className="flex flex-col gap-3">
                     <p className="text-sm text-slate-600">الإلغاء قبل الميعاد بأقل من 24 ساعة بيتخصم من الرصيد.</p>
                     <Field label="السبب"><Textarea name="reason" required /></Field>
                     <SubmitButton variant="danger">إلغاء الجلسة</SubmitButton>
                   </ActionForm>
-                )}
               </Modal>
             </>
           )}

@@ -85,12 +85,10 @@ async function Alerts({ filter, canComplaint }: { filter?: string; canComplaint:
                   {a.clients?.phone_wa && <a href={`tel:+${a.clients.phone_wa}`} className="inline-flex min-h-11 items-center rounded-lg border border-slate-300 px-3 text-sm">اتصال</a>}
                   {(!isComplaint || canComplaint) && (
                     <Modal trigger={isComplaint ? 'كلمته' : 'تم'} title={isComplaint ? 'حصل إيه مع العميل؟' : 'قفل التنبيه'} triggerVariant={isComplaint ? 'primary' : 'secondary'}>
-                      {(close) => (
-                        <ActionForm action={resolveAlert.bind(null, a.id)} onSuccess={close} className="flex flex-col gap-3">
+                      <ActionForm action={resolveAlert.bind(null, a.id)} className="flex flex-col gap-3">
                           <Field label="حصل إيه *"><Textarea name="resolution" required /></Field>
                           <SubmitButton>اقفل</SubmitButton>
                         </ActionForm>
-                      )}
                     </Modal>
                   )}
                 </div>
@@ -123,12 +121,10 @@ async function Complaints({ canComplaint }: { canComplaint: boolean }) {
             <Td className="text-xs">{c.handled_by_name ? <>{c.handled_by_name}: {c.resolution}</> : '—'}</Td>
             <Td>{c.is_open && canComplaint && (
               <Modal trigger="كلمته" title="حصل إيه مع العميل؟" triggerVariant="primary" triggerSize="sm">
-                {(close) => (
-                  <ActionForm action={resolveAlert.bind(null, c.alert_id!)} onSuccess={close} className="flex flex-col gap-3">
+                <ActionForm action={resolveAlert.bind(null, c.alert_id!)} className="flex flex-col gap-3">
                     <Field label="حصل إيه *"><Textarea name="resolution" required /></Field>
                     <SubmitButton>اقفل</SubmitButton>
                   </ActionForm>
-                )}
               </Modal>
             )}</Td>
           </tr>

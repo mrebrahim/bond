@@ -1,11 +1,14 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useRef, useState, useTransition, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, useTransition, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import clsx from 'clsx';
 import type { ActionResult } from '@/lib/db';
 import { buttonClass, type ButtonVariant } from './index';
+
+// الـ Modal بيدّي close لأي ActionForm جواه (علشان صفحات السيرفر متبعتش functions)
+const ModalClose = createContext<(() => void) | null>(null);
 
 function report(res: ActionResult) {
   if (res.ok) {
@@ -27,6 +30,7 @@ export function ActionForm({
   reset?: boolean;
 }) {
   const router = useRouter();
+  const closeModal = useContext(ModalClose);
   const ref = useRef<HTMLFormElement>(null);
   const [pending, start] = useTransition();
   return (
@@ -42,6 +46,7 @@ export function ActionForm({
           if (res.ok) {
             if (reset) ref.current?.reset();
             onSuccess?.(res);
+            closeModal?.();
             router.refresh();
           }
         });
@@ -134,7 +139,9 @@ export function Modal({
               <h3 className="text-lg font-semibold">{title}</h3>
               <button type="button" onClick={close} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="قفل">✕</button>
             </div>
-            {typeof children === 'function' ? children(close) : children}
+            <ModalClose.Provider value={close}>
+              {typeof children === 'function' ? children(close) : children}
+            </ModalClose.Provider>
           </div>
         </div>
       )}
