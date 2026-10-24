@@ -1,0 +1,263 @@
+{
+  "name": "DSE · Outbox (WhatsApp)",
+  "settings": {
+    "timezone": "Africa/Cairo",
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none"
+  },
+  "nodes": [
+    {
+      "id": "aad5da18-b809-58cf-be9e-49b0966e10b0",
+      "name": "كل دقيقتين",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "89081f0a-e56e-5e82-b23d-2a60419f9208",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// ⚙️ عدّل القيم دي مرة واحدة\nreturn [{ json: {\n  evoUrl: 'http://evolutoin-api-evolution-api.4tqpgc.easypanel.host',   // من غير / في الآخر\n  instanceClients: 'dse-clients',   // رقم الرسايل للعملاء\n  instanceTeam: 'dse-team',         // رقم منفصل للفريق\n  formId: 'FORM_ID',                // Google Form للتقييم\n  entryClient: 'entry.111111',\n  entryDeliverable: 'entry.222222',\n  supportWa: '',\n}}];"
+      }
+    },
+    {
+      "id": "785073c9-e043-5619-b146-2f57d1d06812",
+      "name": "v_alert_outbox",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select o.*,\n       (select string_agg(b.name_ar || ' ' || trim_scale(b.remaining)::text, ' · ')\n          from v_cycle_balance b where b.cycle_id = o.cycle_id and b.unit_kind in ('count','hours')) as balance_text,\n       (select end_date from cycles where id = o.cycle_id) as cycle_end\n  from v_alert_outbox o\n limit 50;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "SUPABASE_PG",
+          "name": "Supabase bond (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "e9f4f1df-6227-57f4-9e4c-298f73776623",
+      "name": "بناء الرسالة",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// بيبني نص الرسالة لكل alert_key (utility — من غير عروض)\nconst cfg = $('Config').first().json;\nconst tz = 'Africa/Cairo';\nconst d = (v) => v ? new Intl.DateTimeFormat('ar-EG-u-nu-latn', { weekday: 'long', day: '2-digit', month: '2-digit', timeZone: tz }).format(new Date(String(v).length === 10 ? v + 'T12:00:00Z' : v)) : '';\nconst t = (v) => v ? new Intl.DateTimeFormat('ar-EG-u-nu-latn', { hour: 'numeric', minute: '2-digit', timeZone: tz }).format(new Date(v)) : '';\nconst items = (arr) => (arr || []).filter(x => Number(x.remaining) > 0).map(x => `${x.name} ${x.remaining}`).join(' · ');\n\nconst out = [];\nfor (const { json: a } of $input.all()) {\n  const p = a.payload || {};\n  const bal = a.balance_text || '';\n  const end = d(a.cycle_end || p.end_date);\n  const link = `https://docs.google.com/forms/d/e/${cfg.formId}/viewform?usp=pp_url&${cfg.entryClient}=${a.client_code}&${cfg.entryDeliverable}=${p.deliverable_id || a.deliverable_id}`;\n  let text = null;\n  switch (a.alert_key) {\n    // ---- للعميل ----\n    case 'published': text = `الريل بتاعك نزل 🎬\\n${p.post_url}\\n\\nرأيك في 10 ثواني: ${link}${bal ? `\\n\\nفاضلك ${bal} لحد ${end}` : ''}`; break;\n    case 'session_done': text = `صورت النهارده ${p.qty} ${p.unit === 'hours' ? 'ساعة' : 'ريل'} ✅\\nباقيلك ${p.remaining} لحد ${end}`; break;\n    case 'session_24h': text = `تصويرك بكرة ${d(p.start)} الساعة ${t(p.start)} 📸\\n${p.qty} ${p.type === 'trainer_hours' ? 'ساعة' : 'ريلز'}${p.locations ? ` في ${p.locations} لوكيشن` : ''}${p.outfits ? ` · هات ${p.outfits} لبس` : ''}\\n\\nاكتب 1 للتأكيد أو 2 لو عايز تغيّر الميعاد`; break;\n    case 'session_2h': text = `تذكير: معادك النهارده الساعة ${t(p.start)} 📍`; break;\n    case 'expiry_7d': case 'expiry_3d': case 'expiry_1d': text = `باقيلك ${items(p.items)} والباقة بتخلص ${d(p.end_date)}\\nاحجز معادك قبلها علشان متضيعش 🙏`; break;\n    case 'usage_high': text = `استهلكت 80% من ${p.name} (${p.used} من ${p.total})`; break;\n    case 'content_runway_low': text = `معانا محتوى لحد ${d(p.first_gap_date)} بس\\nمحتاجين تصوير قبل ${d(p.shoot_deadline)}`; break;\n    case 'slot_missed': text = `النهارده كان ميعاد نشر ومكانش عندنا محتوى جاهز — كلّمنا نحجز تصوير`; break;\n    case 'expired_summary': text = `الباقة خلصت ${d(p.end_date)}\\nاستلمت: ${(p.items || []).map(x => `${x.name} ${x.used}/${x.total}`).join(' · ')}\\nالرصيد اللي ماتستخدمش انتهى حسب العقد`; break;\n    case 'renewal_invoice': text = `فاتورة التجديد: ${p.amount} ج.م — الباقة الجديدة تبدأ ${d(p.start_date)}\\nالدفع: InstaPay / فودافون كاش / تحويل`; break;\n    case 'payment_overdue': text = `تذكير بالفاتورة: ${p.description} — ${p.amount} ج.م\\nالدفع: InstaPay / فودافون كاش / تحويل`; break;\n    case 'no_show': text = a.audience === 'client' ? `ماقدرناش نشوفك النهارده 😔 اتخصم ${p.penalty} ${p.unit === 'hours' ? 'ساعة' : 'ريل'} علشان الغياب حسب العقد` : `⚠️ ${a.client_name} مجاش الجلسة`; break;\n    // ---- للفريق ----\n    case 'client_unhappy': text = `🔴 عميل متضايق: ${p.client_name} (${p.client_phone})\\nتصوير ${p.filming ?? '-'} · مونتاج ${p.editing ?? '-'} · لوكيشن ${p.location ?? '-'}\\n${p.comment ? `\"${p.comment}\"\\n` : ''}المصور: ${p.photographer ?? '-'} · المونتير: ${p.editor ?? '-'}\\n${p.post_url ?? ''}\\nكلمه دلوقتي واقفل الشكوى من السيستم`; break;\n    case 'complaint_escalated': text = `🚨 ${p.client_name} مستني من ${p.wait_minutes} دقيقة ومحدش كلمه\\n${p.comment ?? ''}`; break;\n    case 'feedback_low': text = `تقييم وحش على شغلك عند ${p.client_name}: ${p.comment ?? ''}`; break;\n    case 'revision_requested': text = `${a.client_name} طالب تعديل: ${p.comment ?? ''}`; break;\n    case 'editing_late': text = `⏱ \"${p.title}\" واقف في المونتاج من ${d(p.since)}`; break;\n    case 'usage_full_early': text = `فرصة upgrade: ${a.client_name} خلّص ${p.name} وباقي ${p.days_left} يوم`; break;\n    case 'hours_low': text = `ساعات المدربين عند ${a.client_name} قربت تخلص: باقي ${p.remaining} من ${p.total}`; break;\n    case 'low_usage_mid': text = `خطر churn: ${a.client_name} استهلك ${p.used_pct}% بس ونص الدورة عدّى`; break;\n    case 'session_unconfirmed': text = `${a.client_name} لسه مأكدش جلسة ${d(p.start)} ${t(p.start)} — كلمه`; break;\n    case 'slot_missed_internal': text = `ميعاد نشر ${a.client_name} فات والمحتوى كان جاهز!`; break;\n    case 'power_low': text = `⚡ كارت الكهرباء: الرصيد ${p.balance} ج.م — هيخلص ${d(p.runs_out_at)} ${t(p.runs_out_at)}`; break;\n    case 'reschedule_requested': text = `${a.client_name} عايز يغيّر ميعاد الجلسة — كلمه`; break;\n  }\n  out.push({ json: {\n    alert_id: a.alert_id, number: a.phone, text,\n    instance: a.audience === 'client' ? cfg.instanceClients : cfg.instanceTeam,\n    evoUrl: cfg.evoUrl,\n  }});\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "b6a0e590-9534-534c-8fec-affceb6b92e5",
+      "name": "فيه نص؟",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.text }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c21c1ccf-9846-5ea9-920c-f8ca725d3659",
+      "name": "Evolution · sendText",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        -100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.evoUrl }}/message/sendText/{{ $json.instance }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: $json.number, text: $json.text }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "EVO_KEY",
+          "name": "Evolution API key (header: apikey)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "fbff5c43-c391-54ef-826f-f020d6ca4239",
+      "name": "علّم sent / failed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1320,
+        -100
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update alerts set status = $1, sent_at = case when $1 = 'sent' then now() end, error = nullif($2, '') where id = $3::bigint;",
+        "options": {
+          "queryReplacement": "={{ $json.error ? 'failed' : 'sent' }},={{ $json.error ? JSON.stringify($json.error).slice(0, 500) : '' }},={{ $('بناء الرسالة').item.json.alert_id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "SUPABASE_PG",
+          "name": "Supabase bond (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "f42ed0de-810f-57fd-b9d4-dd1e25c191e3",
+      "name": "علّم skipped",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1100,
+        100
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update alerts set status = 'skipped' where id = $1::bigint;",
+        "options": {
+          "queryReplacement": "={{ $json.alert_id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "SUPABASE_PG",
+          "name": "Supabase bond (Postgres)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "كل دقيقتين": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "v_alert_outbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "v_alert_outbox": {
+      "main": [
+        [
+          {
+            "node": "بناء الرسالة",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "بناء الرسالة": {
+      "main": [
+        [
+          {
+            "node": "فيه نص؟",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "فيه نص؟": {
+      "main": [
+        [
+          {
+            "node": "Evolution · sendText",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "علّم skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evolution · sendText": {
+      "main": [
+        [
+          {
+            "node": "علّم sent / failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "name": "DSE · Hourly (run_hourly)",
+  "settings": {
+    "timezone": "Africa/Cairo",
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none"
+  },
+  "nodes": [
+    {
+      "id": "b0862c55-606d-5644-bd46-f3b742fa52d2",
+      "name": "كل ساعة",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "2 * * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "0fb71faf-b851-57a2-90dc-50daeff1851b",
+      "name": "run_hourly",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        260,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select run_hourly() as result;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "SUPABASE_PG",
+          "name": "Supabase bond (Postgres)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "كل ساعة": {
+      "main": [
+        [
+          {
+            "node": "run_hourly",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

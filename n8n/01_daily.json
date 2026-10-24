@@ -1,0 +1,64 @@
+{
+  "name": "DSE · Daily (run_daily)",
+  "settings": {
+    "timezone": "Africa/Cairo",
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none"
+  },
+  "nodes": [
+    {
+      "id": "a968fbbf-5d9f-5bf5-8684-b37fa3b747f4",
+      "name": "كل يوم 00:05",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "5 0 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "e972b3dd-4e5c-56db-82aa-f8818d13357c",
+      "name": "run_daily",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        260,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select run_daily() as result;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "SUPABASE_PG",
+          "name": "Supabase bond (Postgres)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "كل يوم 00:05": {
+      "main": [
+        [
+          {
+            "node": "run_daily",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

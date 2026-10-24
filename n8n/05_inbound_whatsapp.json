@@ -1,0 +1,172 @@
+{
+  "name": "DSE · Inbound WhatsApp (تأكيد الحجز)",
+  "settings": {
+    "timezone": "Africa/Cairo",
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none"
+  },
+  "nodes": [
+    {
+      "id": "110201fb-9d65-5578-be0b-8cabcdfd6d84",
+      "name": "Evolution Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dse-evolution-inbound",
+        "options": {}
+      },
+      "webhookId": "544611c9-2881-4116-a070-fda6cc22f86e"
+    },
+    {
+      "id": "89081f0a-e56e-5e82-b23d-2a60419f9208",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// ⚙️ عدّل القيم دي مرة واحدة\nreturn [{ json: {\n  evoUrl: 'http://evolutoin-api-evolution-api.4tqpgc.easypanel.host',   // من غير / في الآخر\n  instanceClients: 'dse-clients',   // رقم الرسايل للعملاء\n  instanceTeam: 'dse-team',         // رقم منفصل للفريق\n  formId: 'FORM_ID',                // Google Form للتقييم\n  entryClient: 'entry.111111',\n  entryDeliverable: 'entry.222222',\n  supportWa: '',\n}}];"
+      }
+    },
+    {
+      "id": "a0f51022-dd35-534f-8cdf-d24eaeff047e",
+      "name": "Parse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return $('Evolution Webhook').all().flatMap((it) => { const $json = it.json; const b = $json.body || $json; const data = b.data || {}; if ((b.event || '').toLowerCase().replace('_', '.') !== 'messages.upsert' || data.key?.fromMe) return []; const jid = data.key?.remoteJid || ''; if (jid.endsWith('@g.us')) return []; const text = (data.message?.conversation || data.message?.extendedTextMessage?.text || '').trim()   .replace(/[٠-٩]/g, (c) => '٠١٢٣٤٥٦٧٨٩'.indexOf(c)); if (text !== '1' && text !== '2') return []; return [{ json: { phone: jid.split('@')[0], answer: text, instance: b.instance } }]; });"
+      }
+    },
+    {
+      "id": "f6c65aef-5b0d-5c68-9603-529659011284",
+      "name": "تأكيد / تغيير الحجز",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with s as (\n  select ss.id, ss.client_id, ss.cycle_id\n    from studio_sessions ss join clients c on c.id = ss.client_id\n   where c.phone_wa = $1 and ss.status = 'booked' and ss.booked_start between now() and now() + interval '48 hours'\n   order by ss.booked_start limit 1),\nu as (\n  update studio_sessions set confirmation = case when $2 = '1' then 'confirmed' else 'reschedule_requested' end\n   where id in (select id from s) returning id, client_id, cycle_id, confirmation)\nselect u.id, u.confirmation,\n       case when u.confirmation = 'reschedule_requested'\n            then queue_alert('reschedule_requested', 'reschedule:' || u.id, '{support,account_manager}', u.client_id, '{}'::jsonb, u.cycle_id, u.id) end as queued\n  from u;",
+        "options": {
+          "queryReplacement": "={{ $json.phone }},={{ $json.answer }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "SUPABASE_PG",
+          "name": "Supabase bond (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "c208041d-635f-5fa5-874f-b2d924ea3f16",
+      "name": "الرد",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const cfg = $('Config').first().json;\nconst inb = $('Parse').first().json;\nif (!$json.id) return [];   // مفيش جلسة قريبة\nreturn [{ json: { evoUrl: cfg.evoUrl, instance: cfg.instanceClients, number: inb.phone,\n  text: $json.confirmation === 'confirmed' ? 'تمام ✅ الميعاد اتأكد — مستنيينك' : 'تمام، هنكلمك دلوقتي نظبط ميعاد تاني 🙏' } }];"
+      }
+    },
+    {
+      "id": "c20b2a95-1cb5-5465-a270-1e4718b63173",
+      "name": "Evolution · reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.evoUrl }}/message/sendText/{{ $json.instance }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: $json.number, text: $json.text }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "EVO_KEY",
+          "name": "Evolution API key (header: apikey)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Evolution Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Parse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse": {
+      "main": [
+        [
+          {
+            "node": "تأكيد / تغيير الحجز",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "تأكيد / تغيير الحجز": {
+      "main": [
+        [
+          {
+            "node": "الرد",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "الرد": {
+      "main": [
+        [
+          {
+            "node": "Evolution · reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

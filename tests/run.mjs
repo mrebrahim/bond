@@ -440,6 +440,32 @@ await test('v_dashboard_kpis و v_slot_board', async () => {
   assert(s.length > 0 && s.some((x) => x.board_status === 'in_pipeline'), JSON.stringify(s.slice(0, 5)));
 });
 
+console.log('\nn8n (الـ SQL اللي في الـ workflows):');
+const n8nSql = (file, nodeName) => JSON.parse(readFileSync(join(root, 'n8n', file), 'utf8')).nodes.find((n) => n.name === nodeName).parameters.query;
+await test('Outbox: v_alert_outbox + الرصيد + علّم sent', async () => {
+  await db.query(`update clients set phone_wa = phone_wa`);
+  const r = await rows(n8nSql('03_outbox.json', 'v_alert_outbox'));
+  assert(r.length > 0 && r.some((x) => x.alert_key === 'published' && x.balance_text), JSON.stringify(r[0]));
+  await db.query(n8nSql('03_outbox.json', 'علّم sent / failed'), ['sent', '', r[0].alert_id]);
+  assert((await val('select status from alerts where id = $1', [r[0].alert_id])) === 'sent');
+});
+await test('Feedback: insert من الشيت مرة واحدة بس', async () => {
+  const q = n8nSql('04_feedback.json', 'insert feedback');
+  const args = [reel, '4', '5', '', 'false', 'إضاءة|صوت', 'حلو', 'false', 'sheet-row-9'];
+  await db.query(q, args);
+  await db.query(q, args);
+  assert(Number(await val(`select count(*) from feedback where source_ref = 'sheet-row-9'`)) === 1);
+});
+await test('Inbound WhatsApp: "1" بيأكد و "2" بيطلب تغيير + تنبيه', async () => {
+  const s = await val(`insert into studio_sessions (client_id, studio_id, booked_start, planned_qty) values ($1, $2, now() + interval '20 hours', 1) returning id`, [client, studio2]);
+  const q = n8nSql('05_inbound_whatsapp.json', 'تأكيد / تغيير الحجز');
+  const a = await one(q, ['201012345678', '1']);
+  assert(a.id === s && a.confirmation === 'confirmed', JSON.stringify(a));
+  const b = await one(q, ['201012345678', '2']);
+  assert(b.confirmation === 'reschedule_requested' && b.queued === 2, JSON.stringify(b));
+  assert(!(await one(q, ['201000000000', '1'])), 'رقم مش عميل');
+});
+
 await test('انتهاء الدورة بيحسب الضايع', async () => {
   await db.query(`update cycles set start_date = start_date - 40, end_date = cairo_today() - 1 where id = $1`, [cycle]);
   await db.query(`update subscriptions set auto_renew = false where id = $1`, [sub]);

@@ -1,0 +1,107 @@
+{
+  "name": "DSE · Feedback (Google Sheets)",
+  "settings": {
+    "timezone": "Africa/Cairo",
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none"
+  },
+  "nodes": [
+    {
+      "id": "5aa771d6-1c8e-5532-ac51-c23b74b61892",
+      "name": "صف جديد في الشيت",
+      "type": "n8n-nodes-base.googleSheetsTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "PASTE_SHEET_URL"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0"
+        },
+        "event": "rowAdded",
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsTriggerOAuth2Api": {
+          "id": "GSHEETS",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "id": "a83290a9-8520-5373-8439-5e451d4e8c58",
+      "name": "Map",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// ⚙️ عدّل أسماء الأعمدة حسب شيت ردود الفورم\nconst COL = {\n  deliverable: 'deliverable_id',          // الحقل المخفي اللي جاي من اللينك\n  filming: 'قيّم التصوير',\n  editing: 'قيّم المونتاج',\n  location: 'قيّم اللوكيشن',\n  wants: 'في حاجة عايز نعدلها؟',\n  issues: 'إيه اللي مضايقك',\n  comment: 'ملاحظتك',\n  revision: 'عايز نعدّل الريل؟',\n};\nconst yes = (v) => /أيوه|اه|نعم|yes/i.test(String(v || ''));\nconst n = (v) => { const x = parseInt(String(v || '').trim(), 10); return x >= 1 && x <= 5 ? x : null; };\nreturn $input.all().map(({ json: r }) => ({ json: {\n  deliverable_id: String(r[COL.deliverable] || '').trim(),\n  filming: n(r[COL.filming]), editing: n(r[COL.editing]), location: n(r[COL.location]),\n  wants: yes(r[COL.wants]),\n  issues: String(r[COL.issues] || '').split(',').map(s => s.trim()).filter(Boolean),\n  comment: String(r[COL.comment] || '').trim() || null,\n  revision: yes(r[COL.revision]),\n  source_ref: 'sheet-row-' + (r.row_number ?? r.rowNumber),\n}}));"
+      }
+    },
+    {
+      "id": "0f26be79-debc-59a4-90b5-582c50630e57",
+      "name": "insert feedback",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into feedback (deliverable_id, filming_score, editing_score, location_score, wants_changes, issues, comment, revision_requested, source_ref)\nvalues ($1::uuid, nullif($2,'')::int, nullif($3,'')::int, nullif($4,'')::int, $5::boolean, string_to_array(nullif($6,''), '|'), nullif($7,''), $8::boolean, $9)\non conflict (source_ref) do nothing;",
+        "options": {
+          "queryReplacement": "={{ $json.deliverable_id }},={{ $json.filming ?? '' }},={{ $json.editing ?? '' }},={{ $json.location ?? '' }},={{ $json.wants }},={{ $json.issues.join('|') }},={{ $json.comment ?? '' }},={{ $json.revision }},={{ $json.source_ref }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "SUPABASE_PG",
+          "name": "Supabase bond (Postgres)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "صف جديد في الشيت": {
+      "main": [
+        [
+          {
+            "node": "Map",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map": {
+      "main": [
+        [
+          {
+            "node": "insert feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

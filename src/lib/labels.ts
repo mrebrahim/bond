@@ -101,6 +101,7 @@ export const ALERT_LABELS: Record<string, string> = {
   renewal_invoice: 'فاتورة التجديد',
   editing_late: 'ريل متأخر في المونتاج',
   power_low: '⚡ الكهرباء قربت تخلص',
+  reschedule_requested: 'العميل عايز يغيّر ميعاد الجلسة',
 };
 
 export const AUDIENCE_LABELS: Record<string, string> = {
