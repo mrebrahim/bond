@@ -33,7 +33,7 @@ return [{ json: {
   entryClient: 'entry.111111',
   entryDeliverable: 'entry.222222',
   fromEmail: 'Digital Solution <notifications@digitalsolutionegy.com>',   // لازم يبقى نفس إيميل الـ SMTP
-  appUrl: 'https://YOUR-APP.vercel.app',   // رابط السيستم (بيتحط في إيميلات الفريق)
+  appUrl: 'https://bond-chi-tawny.vercel.app',   // رابط السيستم (بيتحط في إيميلات الفريق)
 }}];"""
 
 def save(fn, wf):

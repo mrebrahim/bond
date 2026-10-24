@@ -3,7 +3,7 @@
 // Windows CMD:
 //   set N8N_URL=https://comp.digitalsolutionegy.com
 //   set N8N_API_KEY=...            (n8n → Settings → n8n API)
-//   set APP_URL=https://xxx.vercel.app
+//   set APP_URL=https://bond-chi-tawny.vercel.app   (اختياري — ده الافتراضي)
 //   set FROM_EMAIL=notifications@digitalsolutionegy.com
 //   set EVO_URL=https://evolutoin-api-evolution-api.4tqpgc.easypanel.host
 //   set EVO_API_KEY=...            (اختياري: بيعمل credential الـ Evolution لو مش موجود)
