@@ -25,8 +25,9 @@
 
 ## 2) Evolution API
 1. من الـ manager اعمل instance اسمه `dse-clients` (رقم العملاء) و `dse-team` (رقم الفريق) واعمل scan للـ QR — أو غيّر الأسماء في node الـ **Config**.
-2. Webhook على `dse-clients`: URL = `https://comp.digitalsolutionegy.com/webhook/dse-evolution-inbound` · Event: `MESSAGES_UPSERT`.
-3. لو الـ instance شغال بـ **WhatsApp Cloud API** (الرسمي): الرسايل الحرة بتوصل بس جوه 24 ساعة من آخر رسالة من العميل. برّه الـ 24 ساعة لازم Utility templates متوافق عليها من Meta (PRD §10) — ساعتها غيّر node الـ sendText لـ `sendTemplate` لكل `alert_key`.
+2. الرابط بـ `https` (متعمول كده في node الـ Config).
+3. Webhook على `dse-clients`: URL = `https://comp.digitalsolutionegy.com/webhook/dse-evolution-inbound` · Event: `MESSAGES_UPSERT` · خلّي **Webhook by Events** و **Webhook Base64** مقفولين (غير كده الرابط بيتغير والـ workflow مش هيستلم).
+4. لو الـ instance شغال بـ **WhatsApp Cloud API** (الرسمي): الرسايل الحرة بتوصل بس جوه 24 ساعة من آخر رسالة من العميل. برّه الـ 24 ساعة لازم Utility templates متوافق عليها من Meta (PRD §10) — ساعتها غيّر node الـ sendText لـ `sendTemplate` لكل `alert_key`.
 
 ## 3) node الـ Config (في 03 و 05)
 `evoUrl` · `instanceClients` · `instanceTeam` · `formId` · `entryClient` · `entryDeliverable` (أرقام الـ entry من "Get pre-filled link" في الفورم).

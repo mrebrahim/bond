@@ -32,7 +32,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "// ⚙️ عدّل القيم دي مرة واحدة\nreturn [{ json: {\n  evoUrl: 'http://evolutoin-api-evolution-api.4tqpgc.easypanel.host',   // من غير / في الآخر\n  instanceClients: 'dse-clients',   // رقم الرسايل للعملاء\n  instanceTeam: 'dse-team',         // رقم منفصل للفريق\n  formId: 'FORM_ID',                // Google Form للتقييم\n  entryClient: 'entry.111111',\n  entryDeliverable: 'entry.222222',\n  supportWa: '',\n}}];"
+        "jsCode": "// ⚙️ عدّل القيم دي مرة واحدة\nreturn [{ json: {\n  evoUrl: 'https://evolutoin-api-evolution-api.4tqpgc.easypanel.host',   // من غير / في الآخر\n  instanceClients: 'dse-clients',   // رقم الرسايل للعملاء\n  instanceTeam: 'dse-team',         // رقم منفصل للفريق\n  formId: 'FORM_ID',                // Google Form للتقييم\n  entryClient: 'entry.111111',\n  entryDeliverable: 'entry.222222',\n  supportWa: '',\n}}];"
       }
     },
     {
@@ -45,7 +45,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "return $('Evolution Webhook').all().flatMap((it) => { const $json = it.json; const b = $json.body || $json; const data = b.data || {}; if ((b.event || '').toLowerCase().replace('_', '.') !== 'messages.upsert' || data.key?.fromMe) return []; const jid = data.key?.remoteJid || ''; if (jid.endsWith('@g.us')) return []; const text = (data.message?.conversation || data.message?.extendedTextMessage?.text || '').trim()   .replace(/[٠-٩]/g, (c) => '٠١٢٣٤٥٦٧٨٩'.indexOf(c)); if (text !== '1' && text !== '2') return []; return [{ json: { phone: jid.split('@')[0], answer: text, instance: b.instance } }]; });"
+        "jsCode": "return $('Evolution Webhook').all().flatMap((it) => { const $json = it.json; const b = $json.body || $json; const data = b.data || {}; if ((b.event || '').toLowerCase().replace('_', '.') !== 'messages.upsert' || data.key?.fromMe) return []; const jid = data.key?.remoteJid || ''; if (jid.endsWith('@g.us')) return []; const pnJid = jid.endsWith('@lid') ? (data.key?.senderPn || data.key?.remoteJidAlt || '') : jid; const phone = pnJid.split('@')[0].replace(/\\D/g, ''); if (!phone) return []; const text = (data.message?.conversation || data.message?.extendedTextMessage?.text || '').trim()   .replace(/[٠-٩]/g, (c) => '٠١٢٣٤٥٦٧٨٩'.indexOf(c)); if (text !== '1' && text !== '2') return []; return [{ json: { phone, answer: text, instance: b.instance } }]; });"
       }
     },
     {
