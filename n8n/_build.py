@@ -29,11 +29,8 @@ return [{ json: {
   evoUrl: 'https://evolutoin-api-evolution-api.4tqpgc.easypanel.host',   // من غير / في الآخر
   instanceClients: 'dse-clients',   // رقم الرسايل للعملاء
   instanceTeam: 'dse-team',         // رقم منفصل للفريق
-  formId: 'FORM_ID',                // Google Form للتقييم
-  entryClient: 'entry.111111',
-  entryDeliverable: 'entry.222222',
   fromEmail: 'Digital Solution <notifications@digitalsolutionegy.com>',   // لازم يبقى نفس إيميل الـ SMTP
-  appUrl: 'https://bond-chi-tawny.vercel.app',   // رابط السيستم (بيتحط في إيميلات الفريق)
+  appUrl: 'https://bond-chi-tawny.vercel.app',   // رابط السيستم (لينك التقييم القصير + إيميلات الفريق)
 }}];"""
 
 def save(fn, wf):
@@ -56,7 +53,8 @@ save("02_hourly.json", {"name": "DSE · Hourly (run_hourly)", "settings": SETTIN
 OUTBOX_SQL = """select o.*,
        (select string_agg(b.name_ar || ' ' || trim_scale(b.remaining)::text, ' · ')
           from v_cycle_balance b where b.cycle_id = o.cycle_id and b.unit_kind in ('count','hours')) as balance_text,
-       (select end_date from cycles where id = o.cycle_id) as cycle_end
+       (select end_date from cycles where id = o.cycle_id) as cycle_end,
+       (select short_code from deliverables where id = o.deliverable_id) as feedback_code
   from v_alert_outbox o
  limit 50;"""
 
@@ -72,7 +70,7 @@ for (const { json: a } of $input.all()) {
   const p = a.payload || {};
   const bal = a.balance_text || '';
   const end = d(a.cycle_end || p.end_date);
-  const link = `https://docs.google.com/forms/d/e/${cfg.formId}/viewform?usp=pp_url&${cfg.entryClient}=${a.client_code}&${cfg.entryDeliverable}=${p.deliverable_id || a.deliverable_id}`;
+  const link = `${cfg.appUrl}/f/${a.feedback_code}`;   // لينك قصير → فورم التقييم متملي
   let text = null;
   switch (a.alert_key) {
     // ---- للعميل ----

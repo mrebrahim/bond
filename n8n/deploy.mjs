@@ -42,9 +42,6 @@ const CONFIG = {
   instanceTeam: env.EVO_INSTANCE_TEAM,
   fromEmail: env.FROM_EMAIL,
   appUrl: env.APP_URL,
-  formId: env.FORM_ID,
-  entryClient: env.FORM_ENTRY_CLIENT,
-  entryDeliverable: env.FORM_ENTRY_DELIVERABLE,
 };
 function patchConfig(code) {
   let out = code;

@@ -455,6 +455,21 @@ await test('Outbox: الفريق بالإيميل والعميل بالواتس�
   assert(r.some((x) => x.audience !== 'client' && x.channel === 'email' && x.email?.endsWith('@x.com')), JSON.stringify(r.filter((x) => x.audience !== 'client')));
   assert(r.every((x) => x.audience === 'client' || x.channel === 'email'), 'staff over whatsapp');
 });
+await test('لينك التقييم القصير: بيتحوّل لفورم متملي (حتى من غير login)', async () => {
+  const code = await val('select short_code from deliverables where id = $1', [reel]);
+  assert(/^[0-9a-f]{8}$/.test(code), code);
+  await as('anon');
+  const before = await val('select feedback_redirect($1)', [code]);
+  await as(null);
+  assert(before === 'https://forms.gle/xUTj4TopqgZMB7St9', before);
+  await db.query(`update settings set value = to_jsonb('https://docs.google.com/forms/d/e/X/viewform?usp=pp_url&entry.1=CLIENTCODE&entry.2=REELID'::text) where key = 'feedback_form_prefill_url'`);
+  await as('anon');
+  const after = await val('select feedback_redirect($1)', [code]);
+  const none = await val(`select feedback_redirect('zzzzzzzz')`);
+  await as(null);
+  assert(after === `https://docs.google.com/forms/d/e/X/viewform?usp=pp_url&entry.1=C001&entry.2=${reel}`, after);
+  assert(none === null);
+});
 await test('Feedback: insert من الشيت مرة واحدة بس', async () => {
   const q = n8nSql('04_feedback.json', 'insert feedback');
   const args = [reel, '4', '5', '', 'false', 'إضاءة|صوت', 'حلو', 'false', 'sheet-row-9'];

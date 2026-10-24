@@ -1097,6 +1097,7 @@ export type Database = {
           revision_count: number
           script_id: string | null
           session_id: string | null
+          short_code: string
           stage: string
           stage_changed_at: string
           title: string | null
@@ -1117,6 +1118,7 @@ export type Database = {
           revision_count?: number
           script_id?: string | null
           session_id?: string | null
+          short_code?: string
           stage: string
           stage_changed_at?: string
           title?: string | null
@@ -1137,6 +1139,7 @@ export type Database = {
           revision_count?: number
           script_id?: string | null
           session_id?: string | null
+          short_code?: string
           stage?: string
           stage_changed_at?: string
           title?: string | null
@@ -1902,6 +1905,7 @@ export type Database = {
         Row: {
           active: boolean
           created_at: string
+          email: string | null
           id: string
           name: string
           phone_wa: string | null
@@ -1910,6 +1914,7 @@ export type Database = {
         Insert: {
           active?: boolean
           created_at?: string
+          email?: string | null
           id: string
           name: string
           phone_wa?: string | null
@@ -1918,6 +1923,7 @@ export type Database = {
         Update: {
           active?: boolean
           created_at?: string
+          email?: string | null
           id?: string
           name?: string
           phone_wa?: string | null
@@ -2503,6 +2509,7 @@ export type Database = {
           alert_id: number | null
           alert_key: string | null
           audience: string | null
+          channel: string | null
           client_code: string | null
           client_id: string | null
           client_name: string | null
@@ -2510,6 +2517,7 @@ export type Database = {
           created_at: string | null
           cycle_id: string | null
           deliverable_id: string | null
+          email: string | null
           payload: Json | null
           phone: string | null
           priority: string | null
@@ -3268,6 +3276,7 @@ export type Database = {
         Returns: string
       }
       escalate_complaints: { Args: never; Returns: number }
+      feedback_redirect: { Args: { p_code: string }; Returns: string }
       generate_alerts: { Args: never; Returns: number }
       generate_content_slots: { Args: { p_days?: number }; Returns: number }
       generate_session_reminders: { Args: never; Returns: number }
