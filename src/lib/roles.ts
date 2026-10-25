@@ -27,9 +27,9 @@ export function hasRole(roles: readonly string[], allowed: readonly Role[]): boo
 /** صلاحيات العمليات (نفس مصفوفة PRD §2) */
 export const CAN = {
   editClient: ['sales', 'support', 'account_manager'],
-  subscription: ['sales', 'account_manager'],
+  subscription: ['sales', 'account_manager', 'support'],
   cancelSubscription: ['account_manager'],
-  payment: ['finance'],
+  payment: ['finance', 'support'],
   book: ['support', 'account_manager', 'studio', 'media_lead'],
   sessionOps: ['support', 'account_manager', 'studio', 'media_lead'],
   stage: ['account_manager', 'studio', 'editor', 'designer', 'social_media', 'media_lead'],

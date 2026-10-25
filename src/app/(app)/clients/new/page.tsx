@@ -1,12 +1,12 @@
 import { createClient } from '@/lib/supabase/server';
 import { requirePageRole } from '@/lib/auth';
-import { CAN } from '@/lib/roles';
+import { CAN, hasRole } from '@/lib/roles';
 import { cairoToday } from '@/lib/format';
 import { PageHeader } from '@/components/ui';
 import { NewClientWizard } from './wizard';
 
 export default async function NewClientPage() {
-  await requirePageRole(CAN.editClient);
+  const staff = await requirePageRole(CAN.editClient);
   const supabase = await createClient();
   const [{ data: ams }, { data: types }, { data: plans }] = await Promise.all([
     supabase.from('staff').select('id, name').contains('roles', ['account_manager']).eq('active', true).order('created_at'),
@@ -16,7 +16,7 @@ export default async function NewClientPage() {
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader title="عميل جديد" />
-      <NewClientWizard ams={ams ?? []} types={types ?? []} plans={plans ?? []} today={cairoToday()} />
+      <NewClientWizard ams={ams ?? []} types={types ?? []} plans={plans ?? []} today={cairoToday()} canPay={hasRole(staff.roles, CAN.payment)} />
     </div>
   );
 }

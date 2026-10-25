@@ -3387,6 +3387,15 @@ export type Database = {
         Returns: number
       }
       my_roles: { Args: never; Returns: string[] }
+      pay_subscription: {
+        Args: {
+          p_amount: number
+          p_method: string
+          p_reference?: string
+          p_sub: string
+        }
+        Returns: string
+      }
       prepare_monthly_bonuses: { Args: { p_month?: string }; Returns: number }
       preview_booking: {
         Args: {
@@ -3421,6 +3430,15 @@ export type Database = {
           p_tier?: number
         }
         Returns: Json
+      }
+      record_payment: {
+        Args: {
+          p_amount: number
+          p_invoice: string
+          p_method: string
+          p_reference?: string
+        }
+        Returns: string
       }
       renew_due_subscriptions: { Args: never; Returns: number }
       require_role: { Args: { p_roles: string[] }; Returns: undefined }

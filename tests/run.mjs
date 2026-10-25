@@ -71,6 +71,7 @@ for (const [key, email, name, roles] of [
   ['social', 'madonna@x.com', 'مادونا', '{social_media}'],
   ['studio', 'andrew@x.com', 'أندرو', '{studio,editor,designer}'],
   ['lead', 'mina@x.com', 'مينا', '{studio,editor,designer,media_lead}'],
+  ['support', 'support@x.com', 'دعم', '{support}'],
 ]) {
   await db.query('insert into auth.users (email) values ($1)', [email]);
   team[key] = await val('select add_staff($1, $2, $3::text[], null)', [email, name, roles]);
@@ -116,6 +117,31 @@ await test('الدفع بيفعّل الباقة', async () => {
   await as(null);
   assert((await val('select status from cycles where id = $1', [cycle])) === 'active');
   assert((await val('select status from invoices where id = $1', [invoice])) === 'paid');
+});
+await test('الدعم الفني: يعمل اشتراك ويسجّل الدفعة وهو بيعمل العميل', async () => {
+  await db.exec('begin');  // عميل تجربة — بيترجع في الآخر علشان ميأثرش على باقي الاختبارات
+  try {
+  await as(team.support);
+  const c2 = await val(`insert into clients (name, phone_wa) values ('جيم الدعم', '201099999999') returning id`);
+  const s2 = await val(`select create_subscription($1, 'Starter', 6000, '[{"type":"reel","qty":4}]', null, 30)`, [c2]);
+  await db.exec('savepoint sp');
+  await throws(`select pay_subscription($1, 7000, 'cash')`, [s2], 'أكبر من الباقي');
+  await db.exec('rollback to savepoint sp');
+  await db.query(`select pay_subscription($1, 3000, 'instapay', 'TX1')`, [s2]);
+  await as(null);
+  const inv = await one(`select i.* from invoices i join cycles c on c.id = i.cycle_id where c.subscription_id = $1`, [s2]);
+  assert(inv.status === 'partial' && Number(inv.paid_amount) === 3000, JSON.stringify(inv));
+  assert((await val('select received_by from payments where invoice_id = $1', [inv.id])) === team.support, 'received_by');
+  await as(team.support);
+  await db.query(`select record_payment($1, 3000, 'cash')`, [inv.id]);
+  await as(team.studio);
+  await db.exec('savepoint sp');
+  await throws(`select record_payment($1, 1, 'cash')`, [inv.id], 'مش متاحة لدورك');
+  await db.exec('rollback to savepoint sp');
+  await as(null);
+  assert((await val('select status from invoices where id = $1', [inv.id])) === 'paid');
+  assert((await val(`select status from cycles where subscription_id = $1`, [s2])) === 'active');
+  } finally { await as(null); await db.exec('rollback'); }
 });
 await test('موظف استوديو مينفعش يسجل دفع (RLS)', async () => {
   await as(team.studio);

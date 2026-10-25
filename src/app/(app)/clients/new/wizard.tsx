@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { Button, Card, Field, Input, Select, Textarea, cn } from '@/components/ui';
 import { ItemsEditor, type DType, type Item } from '@/components/clients/items-editor';
 import { checkScheduleDiff, createClientWizard, type WizardPayload } from '@/lib/actions/clients';
-import { PLATFORMS, SHOOT_FREQUENCY } from '@/lib/labels';
+import { PAYMENT_METHODS, PLATFORMS, SHOOT_FREQUENCY } from '@/lib/labels';
 import { WEEKDAYS } from '@/lib/format';
 
 type Plan = { id: string; name: string; base_price: number; validity_days: number; plan_items: { deliverable_type: string | null; quantity: number }[] };
@@ -19,7 +19,7 @@ const emptyGrid = (): Grid => ({
   design: Array.from({ length: 7 }, () => ({ on: false, time: '14:00', platforms: [] })),
 });
 
-export function NewClientWizard({ ams, types, plans, today }: { ams: { id: string; name: string }[]; types: DType[]; plans: Plan[]; today: string }) {
+export function NewClientWizard({ ams, types, plans, today, canPay }: { ams: { id: string; name: string }[]; types: DType[]; plans: Plan[]; today: string; canPay: boolean }) {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [pending, start] = useTransition();
@@ -33,6 +33,8 @@ export function NewClientWizard({ ams, types, plans, today }: { ams: { id: strin
   const [withSub, setWithSub] = useState(true);
   const [sub, setSub] = useState({ plan_id: '', name: '', price: 0, validity_days: 30, start: today, overage_rate: '' });
   const [items, setItems] = useState<Item[]>([{ type: 'reel', qty: 10 }]);
+  const [paid, setPaid] = useState(canPay);
+  const [pay, setPay] = useState({ amount: '', method: 'instapay', reference: '' });
   const [diff, setDiff] = useState<Awaited<ReturnType<typeof checkScheduleDiff>>>([]);
 
   const perWeek = useMemo(() => ({
@@ -78,10 +80,17 @@ export function NewClientWizard({ ams, types, plans, today }: { ams: { id: strin
         plan_id: sub.plan_id || null, name: sub.name || 'باقة', price: Number(sub.price), validity_days: Number(sub.validity_days),
         start: sub.start, overage_rate: hasHours && sub.overage_rate ? Number(sub.overage_rate) : null, items,
       } : null,
+      payment: withSub && canPay && paid ? {
+        amount: Number(pay.amount === '' ? sub.price : pay.amount), method: pay.method as NonNullable<WizardPayload['payment']>['method'], reference: pay.reference,
+      } : null,
     };
     start(async () => {
       const res = await createClientWizard(payload);
-      if (!res.ok) { toast.error(res.error); return; }
+      if (!res.ok) {
+        toast.error(res.error);
+        if (res.data) router.push(`/clients/${res.data as string}`);
+        return;
+      }
       toast.success(res.message ?? 'تم');
       router.push(`/clients/${res.data as string}`);
     });
@@ -204,6 +213,26 @@ export function NewClientWizard({ ams, types, plans, today }: { ams: { id: strin
                   )}
                 </div>
                 <Field label="الخدمات"><ItemsEditor types={types} items={items} onChange={setItems} /></Field>
+                {canPay && (
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <label className="flex min-h-11 items-center gap-2 text-sm font-semibold">
+                      <input type="checkbox" className="h-5 w-5" checked={paid} onChange={(e) => setPaid(e.target.checked)} /> 💰 العميل دفع دلوقتي
+                    </label>
+                    {paid && (
+                      <div className="mt-2 grid gap-4 sm:grid-cols-3">
+                        <Field label="المبلغ اللي اتدفع (ج.م)">
+                          <Input type="number" min={1} value={pay.amount === '' ? sub.price : pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} />
+                        </Field>
+                        <Field label="الطريقة">
+                          <Select value={pay.method} onChange={(e) => setPay({ ...pay, method: e.target.value })}>
+                            {Object.entries(PAYMENT_METHODS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                          </Select>
+                        </Field>
+                        <Field label="رقم العملية (اختياري)"><Input dir="ltr" value={pay.reference} onChange={(e) => setPay({ ...pay, reference: e.target.value })} /></Field>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {diff.map((d) => (
                   <div key={d.type} className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
                     ⚠️ الجدول ده محتاج {Math.round(d.needed)} {d.name} والباقة فيها {d.package_qty}

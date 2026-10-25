@@ -44,13 +44,18 @@ const wizardSchema = z.object({
     overage_rate: z.number().positive().nullable(),
     items: itemsSchema,
   }).nullable(),
+  payment: z.object({
+    amount: z.number().positive('اكتب المبلغ اللي اتدفع'),
+    method: z.enum(['cash', 'instapay', 'vodafone_cash', 'bank_transfer', 'card', 'other']),
+    reference: z.string().trim().optional().nullable(),
+  }).nullable(),
 });
 export type WizardPayload = z.infer<typeof wizardSchema>;
 
 export async function createClientWizard(payload: WizardPayload): Promise<ActionResult> {
   const parsed = wizardSchema.safeParse(payload);
   if (!parsed.success) return fail(parsed.error.issues[0].message);
-  const { client, schedule, subscription } = parsed.data;
+  const { client, schedule, subscription, payment } = parsed.data;
   const staff = await getStaff();
   const supabase = await createClient();
 
@@ -67,7 +72,7 @@ export async function createClientWizard(payload: WizardPayload): Promise<Action
   }
 
   if (subscription) {
-    const { error: e3 } = await supabase.rpc('create_subscription', {
+    const { data: subId, error: e3 } = await supabase.rpc('create_subscription', {
       p_client: row.id,
       p_name: subscription.name,
       p_price: subscription.price,
@@ -79,6 +84,13 @@ export async function createClientWizard(payload: WizardPayload): Promise<Action
       p_by: staff.id,
     });
     if (e3) return { ok: false, error: `العميل اتضاف بس الاشتراك ماتعملش: ${e3.message}` };
+    if (payment) {
+      const { error: e4 } = await supabase.rpc('pay_subscription', {
+        p_sub: subId, p_amount: payment.amount, p_method: payment.method, p_reference: payment.reference || undefined,
+      });
+      if (e4) return { ok: false, error: `العميل والاشتراك اتعملوا بس الدفع ماتسجلش: ${e4.message}`, data: row.id };
+      return { ok: true, message: 'العميل اتضاف والدفع اتسجل', data: row.id };
+    }
   }
   return { ok: true, message: 'العميل اتضاف', data: row.id };
 }
@@ -197,11 +209,11 @@ export async function recordPayment(fd: FormData): Promise<ActionResult> {
   const supabase = await createClient();
   const amount = Number(fd.get('amount'));
   if (!(amount > 0)) return fail('اكتب المبلغ');
-  const { error } = await supabase.from('payments').insert({
-    invoice_id: String(fd.get('invoice_id')),
-    amount,
-    method: String(fd.get('method')) as 'cash',
-    reference: String(fd.get('reference') || '') || null,
+  const { error } = await supabase.rpc('record_payment', {
+    p_invoice: String(fd.get('invoice_id')),
+    p_amount: amount,
+    p_method: String(fd.get('method')),
+    p_reference: String(fd.get('reference') || '') || undefined,
   });
   if (error) return fail(error);
   return { ok: true, message: 'الدفع اتسجل' };

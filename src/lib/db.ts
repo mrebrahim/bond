@@ -15,7 +15,7 @@ export type BalanceItem = {
   reserved: number;
 };
 
-export type ActionResult = { ok: true; message?: string; data?: unknown } | { ok: false; error: string };
+export type ActionResult = { ok: true; message?: string; data?: unknown } | { ok: false; error: string; data?: unknown };
 
 export function fail(error: { message: string } | string): ActionResult {
   return { ok: false, error: typeof error === 'string' ? error : error.message };
