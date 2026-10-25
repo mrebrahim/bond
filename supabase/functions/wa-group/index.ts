@@ -25,7 +25,8 @@ async function evo(method: string, path: string, body?: unknown) {
 
 async function markCreateGroupDone(clientId: string, uid: string | null) {
   const { data: item } = await admin.from('checklist_template_items').select('id').eq('action', 'create_group').maybeSingle();
-  if (item) await admin.from('checklist_runs').upsert({ item_id: item.id, client_id: clientId, done_by: uid }, { onConflict: 'item_id,client_id', ignoreDuplicates: true });
+  // الـ unique index جزئي (client_id is not null) فـ upsert مش بيشتغل — insert ولو موجود بيتجاهل الـ duplicate
+  if (item) await admin.from('checklist_runs').insert({ item_id: item.id, client_id: clientId, done_by: uid, note: 'الجروب اتعمل من السيستم' });
 }
 
 Deno.serve(async (req) => {
