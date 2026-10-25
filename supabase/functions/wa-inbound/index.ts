@@ -1,9 +1,7 @@
-// ردود العملاء من Evolution (webhook MESSAGES_UPSERT) — "1"/"2" للجلسة و"قرأت" للقواعد
+// رسايل العملاء من Evolution (webhook MESSAGES_UPSERT) — بنسجّل "قرأت" للقواعد من غير ما نرد
 // العنوان: /functions/v1/wa-inbound?token=<settings.wa_webhook_token> (wa-group action=setup بيظبطه)
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 
-const EVO_URL = (Deno.env.get('EVO_URL') ?? 'https://evolutoin-api-evolution-api.4tqpgc.easypanel.host').replace(/\/$/, '');
-const EVO_KEY = Deno.env.get('EVO_API_KEY');
 const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 
 Deno.serve(async (req) => {
@@ -26,11 +24,6 @@ Deno.serve(async (req) => {
   const { data: r, error } = await supabase.rpc('handle_wa_reply', { p_chat: chat, p_sender: sender, p_text: text });
   console.log('wa-inbound result', JSON.stringify(r ?? error));
   if (error) return Response.json({ error: error.message }, { status: 500 });
-  if (r?.reply && EVO_KEY) {
-    await fetch(`${EVO_URL}/message/sendText/${b.instance ?? Deno.env.get('EVO_INSTANCE') ?? 'dse-clients'}`, {
-      method: 'POST', headers: { apikey: EVO_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ number: chat, text: r.reply }),
-    }).catch(() => undefined);
-  }
+  // السيستم مبيردش على العميل — بنسجّل بس (زي "قرأت" في المانوال)
   return Response.json({ ok: true, result: r });
 });

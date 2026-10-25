@@ -446,11 +446,11 @@ await test('مفتاح الإيقاف: outbox_enabled = false → مفيش وا�
   assert((await rows('select * from claim_wa_messages(10)')).length === 0, 'paused by default');
   await db.query(`update settings set value = 'true' where key = 'outbox_enabled'`);
 });
-await test('الواتساب: بيحجز قبل الإرسال — مبيكررش + 3 أوتوماتيك في اليوم للعميل', async () => {
-  for (let i = 0; i < 6; i++) await db.query(`select queue_alert('usage_high', 'qa-burst:' || $1::text, '{client}', $2)`, [i, client]);
-  const first = await rows('select * from claim_wa_messages(10)');
-  const second = await rows('select * from claim_wa_messages(10)');
-  assert(first.length > 0 && first.length <= 3, `first=${first.length}`);
+await test('الواتساب: بيحجز قبل الإرسال — مبيكررش + 6 أوتوماتيك في اليوم للعميل', async () => {
+  for (let i = 0; i < 10; i++) await db.query(`select queue_alert('published', 'qa-burst:' || $1::text, '{client}', $2)`, [i, client]);
+  const first = await rows('select * from claim_wa_messages(20)');
+  const second = await rows('select * from claim_wa_messages(20)');
+  assert(first.length > 0 && first.length <= 6, `first=${first.length}`);
   assert(!second.some((r) => first.map((x) => x.alert_id).includes(r.alert_id)), 'اتبعتت مرتين');
   assert(first.every((r) => r.destination === '201012345678'), 'رقم العميل');
   assert(Number(await val(`select count(*) from alerts where status = 'queued' and dedupe_key like 'qa-burst:%'`)) > 0, 'الزيادة لازم تستنى');
@@ -472,6 +472,24 @@ await test('الواتساب بيروح جروب العميل لو موجود، 
   assert(manual.find((x) => x.alert_key === 'client_rules').payload.rules.includes('قرأت'), 'rules text');
   const done = await rows(`select i.action from checklist_runs r join checklist_template_items i on i.id = r.item_id where r.client_id = $1`, [client]);
   assert(done.some((d) => d.action === 'send_rules') && done.some((d) => d.action === 'send_booking'), JSON.stringify(done));
+});
+await test('الأوتوماتيك للعميل: سكربت / تم الحجز / نزل البوست بس — والباقي skipped', async () => {
+  await db.query(`update alerts set status = 'skipped' where status = 'queued'`);
+  await db.query(`update settings set value = '100' where key = 'wa_messages_per_day'`);
+  await db.query(`select queue_alert('usage_high', 'qa-wl:usage', '{client}', $1)`, [client]);
+  await db.query(`select queue_alert('session_24h', 'qa-wl:24h', '{client}', $1)`, [client]);
+  await db.query(`select queue_alert('script_sent', 'qa-wl:script', '{client}', $1)`, [client]);
+  const s = await val(`insert into studio_sessions (client_id, studio_id, booked_start, planned_qty) values ($1, $2, now() + interval '5 days', 2) returning id`, [client, studio2]);
+  await db.query(`update studio_sessions set booked_start = booked_start + interval '1 day', booked_end = booked_end + interval '1 day' where id = $1`, [s]);
+  await db.query(`update studio_sessions set notes = 'x' where id = $1`, [s]);
+  const r = await rows('select * from claim_wa_messages(20)');
+  const keys = r.map((x) => x.alert_key).sort();
+  assert(JSON.stringify(keys) === JSON.stringify(['script_sent', 'session_booked', 'session_booked']), JSON.stringify(keys));
+  assert(r.find((x) => x.alert_key === 'session_booked' && x.payload.rescheduled === true && x.payload.studio), 'reschedule payload');
+  assert((await val(`select status from alerts where dedupe_key = 'qa-wl:usage'`)) === 'skipped');
+  assert((await val(`select status from alerts where dedupe_key = 'qa-wl:24h'`)) === 'skipped');
+  await db.query(`update studio_sessions set status = 'cancelled' where id = $1`, [s]);
+  await db.query(`update settings set value = '6' where key = 'wa_messages_per_day'`);
 });
 await test('ردود الجروب: "قرأت" بتعلّم القواعد، و1 / 2 للجلسة', async () => {
   const g = '120363000000000000@g.us';
@@ -531,7 +549,7 @@ await test('السكربت: "ابعت للعميل" بيحط رسالة واتس
   await db.query(`update scripts set status = 'changes_requested' where id = $1`, [sc]);
   await db.query(`update scripts set status = 'sent_to_client' where id = $1`, [sc]);
   await as(null);
-  const a = await rows(`select payload from alerts where alert_key = 'script_sent' and client_id = $1`, [client]);
+  const a = await rows(`select payload from alerts where alert_key = 'script_sent' and client_id = $1 and payload ? 'script_id'`, [client]);
   assert(a.length === 2 && a[0].payload.title === 'افتتاح الفرع', JSON.stringify(a));
 });
 

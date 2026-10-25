@@ -27,12 +27,13 @@ function text(a: Row): string | null {
     // ---- مانوال العميل الجديد (بيبعتها الفريق بزرار) ----
     case 'welcome': return `أهلًا بيكم في Digital Solution 👋\nده الجروب الخاص بـ *${p.client_name}* — هنا هتلاقوا مواعيد التصوير، والمحتوى قبل النشر، وأي تحديثات.\n${p.team ? `معاكم في الجروب: ${p.team}\n` : ''}أي استفسار اكتبوه هنا وهنرد عليكم في أسرع وقت 🙏`;
     case 'client_rules': return String(p.rules ?? '');
-    case 'booking_request': return `📅 يلا نحجز أول ميعاد تصوير!\nابعتلنا اليوم والساعة اللي يناسبوك${p.preferred_day !== null && p.preferred_day !== undefined ? ` (عادةً يوم ${DAYS[Number(p.preferred_day)]})` : ''}، وعدد الريلز اللي هتصورها${p.reels_per_session ? ` (المتوسط ${p.reels_per_session})` : ''}.\nأول ما نأكد هيوصلك تذكير قبلها بيوم.`;
+    case 'booking_request': return `📅 يلا نحجز أول ميعاد تصوير!\nابعتلنا اليوم والساعة اللي يناسبوك${p.preferred_day !== null && p.preferred_day !== undefined ? ` (عادةً يوم ${DAYS[Number(p.preferred_day)]})` : ''}، وعدد الريلز اللي هتصورها${p.reels_per_session ? ` (المتوسط ${p.reels_per_session})` : ''}.\nأول ما نحجز هيوصلك تأكيد هنا في الجروب.`;
     case 'outfits_reminder': return '👕 تذكير مهم: لو هتصور أكتر من ريل، هات أكتر من لبس — لبس لكل 3 ريلز تقريبًا — علشان الفيديوهات متبانش شبه بعض.';
     case 'contract_request': return '📄 من فضلك ابعتلنا صورة العقد بعد التوقيع هنا في الجروب.';
     case 'access_request': return '🔐 علشان نقدر ننشر ونتابع الأداء: من فضلك ضيفنا *Partner* على Meta Business Suite (فيسبوك وإنستجرام) — هنبعتلك الخطوات.\nلو عندك تيك توك أو يوتيوب أو Google Business قولنا نتفق على طريقة الأكسس.\n⚠️ متبعتش باسوردات في الجروب.';
     // ---- أوتوماتيك ----
     case 'published': return `الريل بتاعك نزل 🎬\n${p.post_url}\n\nرأيك في 10 ثواني: ${APP_URL}/f/${a.feedback_code}${bal ? `\n\nفاضلك ${bal} لحد ${end}` : ''}`;
+    case 'session_booked': return `${p.rescheduled ? 'ميعاد التصوير اتغيّر' : 'تم حجز ميعاد التصوير'} ✅\n📅 ${d(p.start)} الساعة ${t(p.start)}${p.studio ? `\n📍 ${p.studio}` : ''}\n🎬 ${p.qty} ${p.type === 'trainer_hours' ? 'ساعة' : 'ريل'}${p.outfits ? ` · هات ${p.outfits} لبس` : ''}`;
     case 'session_done': return `صورنا النهارده ${p.qty} ${p.unit === 'hours' ? 'ساعة' : 'ريل'} ✅\nباقيلك ${p.remaining} لحد ${end}`;
     case 'session_24h': return `تصويرك بكرة ${d(p.start)} الساعة ${t(p.start)} 📸\n${p.qty} ${p.type === 'trainer_hours' ? 'ساعة' : 'ريلز'}${p.locations ? ` في ${p.locations} لوكيشن` : ''}${p.outfits ? ` · هات ${p.outfits} لبس` : ''}\n\nاكتب *1* للتأكيد أو *2* لو عايز تغيّر الميعاد`;
     case 'session_2h': return `تذكير: معادك النهارده الساعة ${t(p.start)} 📍`;

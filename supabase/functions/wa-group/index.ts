@@ -1,6 +1,7 @@
 // جروبات الواتساب للعملاء — بيتنادى من السيستم بـ JWT الموظف
 //   { action: 'create', client_id }        → يعمل جروب (العميل + الـ AM + تيم ليدر الميديا) ويحفظ اللينك
 //   { action: 'link', client_id, link }    → يربط جروب موجود من لينك الدعوة
+//   { action: 'add_members', client_id }   → يضيف أرقام الفريق (settings.wa_group_members) لجروب موجود
 //   { action: 'status' } / { action: 'setup' } (أدمن) → حالة الرقم / ظبط استقبال الردود
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 
@@ -27,6 +28,12 @@ async function markCreateGroupDone(clientId: string, uid: string | null) {
   const { data: item } = await admin.from('checklist_template_items').select('id').eq('action', 'create_group').maybeSingle();
   // الـ unique index جزئي (client_id is not null) فـ upsert مش بيشتغل — insert ولو موجود بيتجاهل الـ duplicate
   if (item) await admin.from('checklist_runs').insert({ item_id: item.id, client_id: clientId, done_by: uid, note: 'الجروب اتعمل من السيستم' });
+}
+
+// أرقام الفريق الثابتة في أي جروب (settings.wa_group_members)
+async function groupMembers() {
+  const { data } = await admin.from('settings').select('value').eq('key', 'wa_group_members').maybeSingle();
+  return String(data?.value ?? '').split(/[,;\s]+/).map((x) => x.replace(/\D/g, '')).filter((x) => x.length >= 11);
 }
 
 Deno.serve(async (req) => {
@@ -101,9 +108,17 @@ Deno.serve(async (req) => {
       return Response.json({ ok: true, message: 'الجروب اتربط', jid });
     }
 
+    if (body.action === 'add_members') {
+      const { data: g } = await admin.from('clients').select('wa_group_jid').eq('id', c.id).single();
+      if (!g?.wa_group_jid) return fail('العميل مالوش جروب لسه');
+      const r = await evo('POST', `/group/updateParticipant/${INSTANCE}?groupJid=${encodeURIComponent(g.wa_group_jid)}`,
+        { action: 'add', participants: await groupMembers() });
+      return Response.json({ ok: true, message: 'الفريق اتضاف للجروب', result: r });
+    }
+
     if (body.action === 'create') {
       const { data: team } = await admin.from('staff').select('phone_wa, roles, id').eq('active', true);
-      const phones = new Set<string>([c.phone_wa]);
+      const phones = new Set<string>([c.phone_wa, ...await groupMembers()]);
       for (const s of team ?? []) {
         if (s.phone_wa && (s.id === c.account_manager_id || (s.roles as string[]).includes('media_lead'))) phones.add(s.phone_wa);
       }
