@@ -51,6 +51,14 @@ Deno.serve(async (req) => {
   }
 
   try {
+    if (body.action === 'instances') {
+      if (!isAdmin) return fail('للأدمن بس', 403);
+      const list = await evo('GET', '/instance/fetchInstances') as unknown as Record<string, unknown>[];
+      return Response.json({ using: INSTANCE, instances: (Array.isArray(list) ? list : []).map((i) => {
+        const x = (i.instance ?? i) as Record<string, unknown>;
+        return { name: x.instanceName ?? x.name, state: x.connectionStatus ?? x.status ?? x.state, number: x.ownerJid ?? x.owner ?? x.number };
+      }) });
+    }
     if (body.action === 'status') {
       const s = await evo('GET', `/instance/connectionState/${INSTANCE}`);
       return Response.json({ instance: INSTANCE, state: (s.instance as { state?: string })?.state ?? s.state ?? 'unknown' });
