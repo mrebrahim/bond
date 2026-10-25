@@ -14,13 +14,17 @@ Deno.serve(async (req) => {
   const b = await req.json().catch(() => ({}));
   const data = b.data ?? {};
   const event = String(b.event ?? '').toLowerCase().replace('_', '.');
-  if (event !== 'messages.upsert' || data.key?.fromMe) return Response.json({ ok: true, ignored: true });
+  // الرسالة ممكن تيجي ملفوفة (رسايل مختفية / view once / رد على رسالة)
+  const m = data.message?.ephemeralMessage?.message ?? data.message?.viewOnceMessage?.message ?? data.message ?? {};
   const chat: string = data.key?.remoteJid ?? '';
-  const sender: string = String(data.key?.participant ?? chat).split('@')[0];
-  const text: string = data.message?.conversation ?? data.message?.extendedTextMessage?.text ?? '';
-  if (!chat || !text) return Response.json({ ok: true, ignored: true });
+  const sender: string = String(data.key?.participant ?? data.participant ?? chat).split('@')[0];
+  const text: string = m.conversation ?? m.extendedTextMessage?.text ?? m.imageMessage?.caption ?? '';
+  console.log('wa-inbound', JSON.stringify({ event, fromMe: data.key?.fromMe, chat, sender, text: text.slice(0, 60), keys: Object.keys(m) }));
+  if (event !== 'messages.upsert' || data.key?.fromMe) return Response.json({ ok: true, ignored: 'event' });
+  if (!chat || !text) return Response.json({ ok: true, ignored: 'no_text' });
 
   const { data: r, error } = await supabase.rpc('handle_wa_reply', { p_chat: chat, p_sender: sender, p_text: text });
+  console.log('wa-inbound result', JSON.stringify(r ?? error));
   if (error) return Response.json({ error: error.message }, { status: 500 });
   if (r?.reply && EVO_KEY) {
     await fetch(`${EVO_URL}/message/sendText/${b.instance ?? Deno.env.get('EVO_INSTANCE') ?? 'dse-clients'}`, {
