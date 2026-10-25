@@ -8,12 +8,13 @@ import { toggleChecklist } from '@/lib/actions/sessions';
 
 export type ChecklistGroup = {
   id: string; name: string;
-  items: { id: string; text_ar: string; is_required: boolean; client_facing: boolean; done: boolean; done_by?: string | null }[];
+  items: { id: string; text_ar: string; is_required: boolean; client_facing: boolean; done: boolean; done_by?: string | null; action?: string | null }[];
 };
 
 /** المانوال: كل checkbox = صف في checklist_runs باسم اللي علّمه */
-export function Checklist({ groups, target, disabled }: {
-  groups: ChecklistGroup[]; target: { session_id?: string; deliverable_id?: string }; disabled?: boolean;
+export function Checklist({ groups, target, disabled, renderAction }: {
+  groups: ChecklistGroup[]; target: { session_id?: string; deliverable_id?: string; client_id?: string }; disabled?: boolean;
+  renderAction?: (action: string) => React.ReactNode;
 }) {
   const router = useRouter();
   const [, start] = useTransition();
@@ -35,8 +36,8 @@ export function Checklist({ groups, target, disabled }: {
             </div>
             <ul className="flex flex-col gap-1">
               {g.items.map((i) => (
-                <li key={i.id}>
-                  <label className={clsx('flex min-h-12 items-center gap-3 rounded-lg border px-3 py-2 text-sm',
+                <li key={i.id} className="flex flex-col gap-1 sm:flex-row sm:items-center">
+                  <label className={clsx('flex min-h-12 flex-1 items-center gap-3 rounded-lg border px-3 py-2 text-sm',
                     i.done ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-white', disabled && 'opacity-60')}>
                     <input
                       type="checkbox" className="h-5 w-5 shrink-0" checked={i.done} disabled={disabled}
@@ -54,6 +55,7 @@ export function Checklist({ groups, target, disabled }: {
                     {i.is_required && <span title="إجباري">⛔</span>}
                     {i.client_facing && <span title="مع العميل">👤</span>}
                   </label>
+                  {i.action && renderAction && <div className="flex shrink-0 flex-wrap gap-1 ps-8 sm:ps-0">{renderAction(i.action)}</div>}
                 </li>
               ))}
             </ul>

@@ -16,8 +16,12 @@ import { updateClient } from '@/lib/actions/clients';
 import type { Row } from '@/lib/db';
 import { CancelSubButton, ChangeSubButton, NewSubButton, PaymentButton, TopupButton } from './client-actions';
 import { ScheduleEditor } from './schedule-editor';
+import { OnboardingPanel } from './onboarding-panel';
+import { loadChecklist } from '@/lib/checklists';
+import { contractUrl } from '@/lib/actions/onboarding';
 
 const TABS = [
+  { key: 'onboarding', label: 'مانوال البداية' },
   { key: 'work', label: 'الشغل' },
   { key: 'sessions', label: 'الجلسات' },
   { key: 'content', label: 'بنك المحتوى' },
@@ -32,7 +36,7 @@ export default async function ClientProfile({ params, searchParams }: {
   params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string }>;
 }) {
   const { id } = await params;
-  const tab = (await searchParams).tab ?? 'work';
+  const tabParam = (await searchParams).tab;
   const staff = await getStaff();
   const supabase = await createClient();
 
@@ -45,6 +49,16 @@ export default async function ClientProfile({ params, searchParams }: {
     supabase.from('invoices').select('id, description, amount, paid_amount').eq('client_id', id).in('status', ['unpaid', 'partial']).order('due_date'),
   ]);
   if (!client) notFound();
+  let tab = tabParam;
+  if (!tab) {
+    const [{ count: required }, { count: done }] = await Promise.all([
+      supabase.from('checklist_template_items').select('id, checklist_templates!inner(stage)', { count: 'exact', head: true })
+        .eq('is_required', true).eq('checklist_templates.stage', 'client_onboarding'),
+      supabase.from('checklist_runs').select('id, checklist_template_items!inner(is_required, checklist_templates!inner(stage))', { count: 'exact', head: true })
+        .eq('client_id', id).eq('checklist_template_items.is_required', true).eq('checklist_template_items.checklist_templates.stage', 'client_onboarding'),
+    ]);
+    tab = (done ?? 0) < (required ?? 0) ? 'onboarding' : 'work';
+  }
 
   const activeCycle = (balances ?? []).find((b) => b.cycle_status === 'active');
   const pendingCycle = (balances ?? []).find((b) => b.cycle_status === 'pending_payment');
@@ -131,10 +145,26 @@ export default async function ClientProfile({ params, searchParams }: {
       {tab === 'history' && <HistoryTab clientId={id} />}
       {tab === 'feedback' && <FeedbackTab clientId={id} />}
       {tab === 'scripts' && <ScriptsTab clientId={id} />}
+      {tab === 'onboarding' && <OnboardingTab client={client} canManage={hasRole(staff.roles, CAN.editClient)} />}
       {tab === 'profile' && (
         <ProfileTab clientId={id} client={client} canEdit={canEdit} />
       )}
     </div>
+  );
+}
+
+async function OnboardingTab({ client, canManage }: { client: Row<'clients'>; canManage: boolean }) {
+  const supabase = await createClient();
+  const groups = await loadChecklist(supabase, ['client_onboarding'], 'reel', { client_id: client.id });
+  if (!groups.length) return <Empty>مفيش مانوال للعميل الجديد — ضيفه من الإعدادات ← المانوال</Empty>;
+  return (
+    <OnboardingPanel
+      clientId={client.id}
+      groups={groups}
+      group={{ jid: client.wa_group_jid, link: client.wa_group_link }}
+      contract={{ url: client.contract_path ? await contractUrl(client.contract_path) : null }}
+      canManage={canManage}
+    />
   );
 }
 

@@ -1,0 +1,97 @@
+// جروبات الواتساب للعملاء — بيتنادى من السيستم بـ JWT الموظف
+//   { action: 'create', client_id }        → يعمل جروب (العميل + الـ AM + تيم ليدر الميديا) ويحفظ اللينك
+//   { action: 'link', client_id, link }    → يربط جروب موجود من لينك الدعوة
+//   { action: 'status' } / { action: 'setup' } (أدمن) → حالة الرقم / ظبط استقبال الردود
+import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
+
+const EVO_URL = (Deno.env.get('EVO_URL') ?? 'https://evolutoin-api-evolution-api.4tqpgc.easypanel.host').replace(/\/$/, '');
+const EVO_KEY = Deno.env.get('EVO_API_KEY');
+const INSTANCE = Deno.env.get('EVO_INSTANCE') ?? 'dse-clients';
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+const admin = createClient(SUPABASE_URL, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
+
+const fail = (error: string, status = 400) => Response.json({ error }, { status });
+
+async function evo(method: string, path: string, body?: unknown) {
+  const res = await fetch(`${EVO_URL}${path}`, {
+    method, headers: { apikey: EVO_KEY!, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let json: Record<string, unknown> = {};
+  try { json = JSON.parse(text); } catch { /* */ }
+  if (!res.ok) throw new Error(`Evolution ${res.status}: ${text.slice(0, 300)}`);
+  return json;
+}
+
+async function markCreateGroupDone(clientId: string, uid: string) {
+  const { data: item } = await admin.from('checklist_template_items').select('id').eq('action', 'create_group').maybeSingle();
+  if (item) await admin.from('checklist_runs').upsert({ item_id: item.id, client_id: clientId, done_by: uid }, { onConflict: 'item_id,client_id', ignoreDuplicates: true });
+}
+
+Deno.serve(async (req) => {
+  if (!EVO_KEY) return fail('EVO_API_KEY مش متحط في الـ secrets', 500);
+  // صلاحيات الموظف من الـ JWT بتاعه
+  const user = createClient(SUPABASE_URL, Deno.env.get('SUPABASE_ANON_KEY')!, {
+    global: { headers: { Authorization: req.headers.get('Authorization') ?? '' } }, auth: { persistSession: false },
+  });
+  const { data: claims } = await user.auth.getUser();
+  const uid = claims?.user?.id;
+  if (!uid) return fail('غير مصرح', 401);
+  const body = await req.json().catch(() => ({}));
+  const isAdmin = (await user.rpc('has_role', { p_roles: [] })).data === true;
+  const canManage = (await user.rpc('has_role', { p_roles: ['sales', 'support', 'account_manager'] })).data === true;
+
+  try {
+    if (body.action === 'status') {
+      const s = await evo('GET', `/instance/connectionState/${INSTANCE}`);
+      return Response.json({ instance: INSTANCE, state: (s.instance as { state?: string })?.state ?? s.state ?? 'unknown' });
+    }
+    if (body.action === 'setup') {
+      if (!isAdmin) return fail('للأدمن بس', 403);
+      const { data: tok } = await admin.from('settings').select('value').eq('key', 'wa_webhook_token').maybeSingle();
+      const url = `${SUPABASE_URL}/functions/v1/wa-inbound?token=${tok?.value}`;
+      await evo('POST', `/webhook/set/${INSTANCE}`, { webhook: { enabled: true, url, byEvents: false, base64: false, events: ['MESSAGES_UPSERT'] } });
+      return Response.json({ ok: true, message: 'استقبال الردود اتظبط' });
+    }
+    if (!canManage) return fail('العملية دي مش متاحة لدورك', 403);
+    const { data: c } = await admin.from('clients').select('id, name, phone_wa, account_manager_id').eq('id', body.client_id).maybeSingle();
+    if (!c) return fail('العميل مش موجود', 404);
+
+    if (body.action === 'link') {
+      const code = String(body.link ?? '').trim().split('/').pop()?.split('?')[0] ?? '';
+      if (!/^[A-Za-z0-9]{10,}$/.test(code)) return fail('ده مش لينك جروب واتساب صحيح (https://chat.whatsapp.com/...)');
+      const info = await evo('GET', `/group/inviteInfo/${INSTANCE}?inviteCode=${code}`);
+      const jid = String(info.id ?? '');
+      if (!jid.endsWith('@g.us')) return fail('مقدرتش أوصل للجروب — اتأكد إن رقم السيستم عضو فيه');
+      await admin.from('clients').update({ wa_group_jid: jid, wa_group_link: `https://chat.whatsapp.com/${code}` }).eq('id', c.id);
+      await markCreateGroupDone(c.id, uid);
+      return Response.json({ ok: true, message: 'الجروب اتربط', jid });
+    }
+
+    if (body.action === 'create') {
+      const { data: team } = await admin.from('staff').select('phone_wa, roles, id').eq('active', true);
+      const phones = new Set<string>([c.phone_wa]);
+      for (const s of team ?? []) {
+        if (s.phone_wa && (s.id === c.account_manager_id || (s.roles as string[]).includes('media_lead'))) phones.add(s.phone_wa);
+      }
+      const g = await evo('POST', `/group/create/${INSTANCE}`, {
+        subject: `${c.name} × Digital Solution`.slice(0, 100),
+        description: 'جروب المتابعة مع Digital Solution — مواعيد التصوير والمحتوى والتحديثات',
+        participants: [...phones],
+      });
+      const jid = String(g.id ?? g.groupJid ?? (g.group as { id?: string })?.id ?? '');
+      if (!jid.endsWith('@g.us')) throw new Error(`الجروب اتعمل بس مقدرتش أقرا الـ id: ${JSON.stringify(g).slice(0, 200)}`);
+      let link: string | null = null;
+      try {
+        const inv = await evo('GET', `/group/inviteCode/${INSTANCE}?groupJid=${encodeURIComponent(jid)}`);
+        link = String(inv.inviteUrl ?? (inv.inviteCode ? `https://chat.whatsapp.com/${inv.inviteCode}` : '')) || null;
+      } catch { /* اللينك مش ضروري */ }
+      await admin.from('clients').update({ wa_group_jid: jid, wa_group_link: link }).eq('id', c.id);
+      await markCreateGroupDone(c.id, uid);
+      return Response.json({ ok: true, message: 'الجروب اتعمل ✅', jid, link });
+    }
+    return fail('action غير معروف');
+  } catch (e) {
+    return fail(String((e as Error)?.message ?? e), 502);
+  }
+});

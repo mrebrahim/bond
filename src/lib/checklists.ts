@@ -5,15 +5,17 @@ type Supa = Awaited<ReturnType<typeof createClient>>;
 
 /** بنود المانوال لمراحل معينة + اللي اتعلّم منها */
 export async function loadChecklist(
-  supabase: Supa, stages: string[], type: string, target: { session_id?: string; deliverable_id?: string },
+  supabase: Supa, stages: string[], type: string, target: { session_id?: string; deliverable_id?: string; client_id?: string },
 ): Promise<ChecklistGroup[]> {
   const [{ data: templates }, { data: runs }] = await Promise.all([
     supabase.from('checklist_templates')
-      .select('id, name, stage, applies_to, checklist_template_items(id, text_ar, is_required, client_facing, sort)')
+      .select('id, name, stage, applies_to, checklist_template_items(id, text_ar, is_required, client_facing, sort, action)')
       .eq('active', true).in('stage', stages),
     target.session_id
       ? supabase.from('checklist_runs').select('item_id, done').eq('session_id', target.session_id)
-      : supabase.from('checklist_runs').select('item_id, done').eq('deliverable_id', target.deliverable_id!),
+      : target.client_id
+        ? supabase.from('checklist_runs').select('item_id, done').eq('client_id', target.client_id)
+        : supabase.from('checklist_runs').select('item_id, done').eq('deliverable_id', target.deliverable_id!),
   ]);
   const done = new Set((runs ?? []).filter((r) => r.done).map((r) => r.item_id));
   return (templates ?? [])
@@ -23,7 +25,7 @@ export async function loadChecklist(
       id: t.id,
       name: t.name,
       items: [...t.checklist_template_items].sort((a, b) => a.sort - b.sort)
-        .map((i) => ({ id: i.id, text_ar: i.text_ar, is_required: i.is_required, client_facing: i.client_facing, done: done.has(i.id) })),
+        .map((i) => ({ id: i.id, text_ar: i.text_ar, is_required: i.is_required, client_facing: i.client_facing, action: i.action, done: done.has(i.id) })),
     }));
 }
 

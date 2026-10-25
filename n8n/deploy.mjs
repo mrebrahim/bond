@@ -1,4 +1,4 @@
-// رفع/تحديث الـ workflows على n8n من الـ API
+// رفع/تحديث الـ workflows على n8n من الـ API (فاضل 04_feedback بس — الباقي في Supabase)
 //
 // Windows CMD:
 //   set N8N_URL=https://comp.digitalsolutionegy.com

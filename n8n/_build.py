@@ -33,7 +33,11 @@ return [{ json: {
   appUrl: 'https://bond-chi-tawny.vercel.app',   // رابط السيستم (لينك التقييم القصير + إيميلات الفريق)
 }}];"""
 
+KEEP = {"04_feedback.json"}  # الباقي اتنقل لـ Supabase (pg_cron + Edge Functions)
+
 def save(fn, wf):
+    if fn not in KEEP:
+        return
     with open(f"{out}/{fn}", "w", encoding="utf-8") as f:
         json.dump(wf, f, ensure_ascii=False, indent=2)
 

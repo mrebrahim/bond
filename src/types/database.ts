@@ -399,6 +399,7 @@ export type Database = {
       checklist_runs: {
         Row: {
           client_confirmed_at: string | null
+          client_id: string | null
           deliverable_id: string | null
           done: boolean
           done_at: string
@@ -410,6 +411,7 @@ export type Database = {
         }
         Insert: {
           client_confirmed_at?: string | null
+          client_id?: string | null
           deliverable_id?: string | null
           done?: boolean
           done_at?: string
@@ -421,6 +423,7 @@ export type Database = {
         }
         Update: {
           client_confirmed_at?: string | null
+          client_id?: string | null
           deliverable_id?: string | null
           done?: boolean
           done_at?: string
@@ -431,6 +434,20 @@ export type Database = {
           session_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "checklist_runs_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "checklist_runs_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "v_client_overview"
+            referencedColumns: ["client_id"]
+          },
           {
             foreignKeyName: "checklist_runs_deliverable_id_fkey"
             columns: ["deliverable_id"]
@@ -498,6 +515,7 @@ export type Database = {
       }
       checklist_template_items: {
         Row: {
+          action: string | null
           client_facing: boolean
           id: string
           is_required: boolean
@@ -507,6 +525,7 @@ export type Database = {
           text_ar: string
         }
         Insert: {
+          action?: string | null
           client_facing?: boolean
           id?: string
           is_required?: boolean
@@ -516,6 +535,7 @@ export type Database = {
           text_ar: string
         }
         Update: {
+          action?: string | null
           client_facing?: boolean
           id?: string
           is_required?: boolean
@@ -571,6 +591,7 @@ export type Database = {
           churned_at: string | null
           code: string | null
           contact_person: string | null
+          contract_path: string | null
           created_at: string
           id: string
           industry: string | null
@@ -584,6 +605,8 @@ export type Database = {
           reels_per_session_avg: number | null
           shoot_frequency: string | null
           status: string
+          wa_group_jid: string | null
+          wa_group_link: string | null
         }
         Insert: {
           account_manager_id?: string | null
@@ -597,6 +620,7 @@ export type Database = {
           churned_at?: string | null
           code?: string | null
           contact_person?: string | null
+          contract_path?: string | null
           created_at?: string
           id?: string
           industry?: string | null
@@ -610,6 +634,8 @@ export type Database = {
           reels_per_session_avg?: number | null
           shoot_frequency?: string | null
           status?: string
+          wa_group_jid?: string | null
+          wa_group_link?: string | null
         }
         Update: {
           account_manager_id?: string | null
@@ -623,6 +649,7 @@ export type Database = {
           churned_at?: string | null
           code?: string | null
           contact_person?: string | null
+          contract_path?: string | null
           created_at?: string
           id?: string
           industry?: string | null
@@ -636,6 +663,8 @@ export type Database = {
           reels_per_session_avg?: number | null
           shoot_frequency?: string | null
           status?: string
+          wa_group_jid?: string | null
+          wa_group_link?: string | null
         }
         Relationships: [
           {
@@ -3118,6 +3147,37 @@ export type Database = {
           },
         ]
       }
+      v_staff_email_outbox: {
+        Row: {
+          alert_id: number | null
+          alert_key: string | null
+          audience: string | null
+          client_code: string | null
+          client_id: string | null
+          client_name: string | null
+          created_at: string | null
+          email: string | null
+          payload: Json | null
+          priority: string | null
+          recipient_name: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "alerts_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "alerts_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "v_client_overview"
+            referencedColumns: ["client_id"]
+          },
+        ]
+      }
       v_today_sessions: {
         Row: {
           approved_scripts_unused: number | null
@@ -3246,6 +3306,37 @@ export type Database = {
         }
         Returns: string[]
       }
+      claim_staff_emails: {
+        Args: { p_limit?: number }
+        Returns: {
+          alert_id: number
+          alert_key: string
+          client_id: string
+          client_name: string
+          email: string
+          payload: Json
+          priority: string
+          recipient_name: string
+        }[]
+      }
+      claim_wa_messages: {
+        Args: { p_limit?: number }
+        Returns: {
+          alert_id: number
+          alert_key: string
+          balance_text: string
+          client_code: string
+          client_id: string
+          client_name: string
+          cycle_end: string
+          cycle_id: string
+          deliverable_id: string
+          destination: string
+          feedback_code: string
+          payload: Json
+          priority: string
+        }[]
+      }
       close_expired_cycles: { Args: never; Returns: number }
       complete_session: {
         Args: {
@@ -3280,8 +3371,16 @@ export type Database = {
       generate_alerts: { Args: never; Returns: number }
       generate_content_slots: { Args: { p_days?: number }; Returns: number }
       generate_session_reminders: { Args: never; Returns: number }
+      handle_wa_reply: {
+        Args: { p_chat: string; p_sender: string; p_text: string }
+        Returns: Json
+      }
       has_role: { Args: { p_roles: string[] }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
+      mark_alert_failed: {
+        Args: { p_alert: number; p_error: string }
+        Returns: undefined
+      }
       mark_missed_slots: { Args: never; Returns: number }
       mark_no_show: {
         Args: { p_by?: string; p_session: string }
@@ -3334,6 +3433,10 @@ export type Database = {
       schedule_package_diff: {
         Args: { p_days: number; p_items: Json; p_per_week: Json }
         Returns: Json
+      }
+      send_client_message: {
+        Args: { p_client: string; p_key: string }
+        Returns: number
       }
       session_locations: { Args: { p_qty: number }; Returns: number }
       session_minutes: {

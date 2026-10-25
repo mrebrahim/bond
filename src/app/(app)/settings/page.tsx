@@ -2,18 +2,19 @@ import { createClient } from '@/lib/supabase/server';
 import { requirePageRole } from '@/lib/auth';
 import { ROLES, ROLE_LABELS } from '@/lib/roles';
 import { money, num } from '@/lib/format';
-import { Badge, Card, CardTitle, Empty, Field, Input, Select, Table, Tabs, Td, Th, PageHeader } from '@/components/ui';
+import { Badge, Card, CardTitle, Empty, Field, Input, Select, Table, Tabs, Td, Textarea, Th, PageHeader } from '@/components/ui';
 import { ActionButton, ActionForm, SubmitButton } from '@/components/ui/client';
 import {
   addChallenge, addChecklistItem, addExistingStaff, addMeter, addStudio, deleteChecklistItem, inviteStaff, prepareBonuses,
   setBonusStatus, toggleChallenge, togglePlan, toggleStudio, updateChecklistItem, updateSetting, updateStaff, updateXpRule,
 } from '@/lib/actions/settings';
 import { PlanForm } from './plan-form';
+import { WhatsappPanel } from './whatsapp-panel';
 
 const TABS = [
   { key: 'general', label: 'عام' }, { key: 'plans', label: 'الباقات' }, { key: 'manual', label: 'المانوال' },
   { key: 'xp', label: 'النقاط' }, { key: 'challenges', label: 'التحديات' }, { key: 'team', label: 'الفريق' },
-  { key: 'bonus', label: 'البونص' }, { key: 'studios', label: 'الاستوديوهات والعدادات' },
+  { key: 'bonus', label: 'البونص' }, { key: 'studios', label: 'الاستوديوهات والعدادات' }, { key: 'whatsapp', label: 'الواتساب' },
 ];
 const STAGES: Record<string, string> = {
   onboarding: 'أول جلسة', script: 'سكربت', pre_shoot: 'قبل التصوير', shoot: 'يوم التصوير', post_shoot: 'بعد التصوير',
@@ -51,6 +52,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       {tab === 'team' && <Team />}
       {tab === 'bonus' && <Bonus />}
       {tab === 'studios' && <Studios />}
+      {tab === 'whatsapp' && <Whatsapp />}
     </div>
   );
 }
@@ -67,13 +69,22 @@ async function General() {
               <div className="text-sm font-medium">{s.description_ar}</div>
               <div className="text-xs text-slate-400" dir="ltr">{s.key}</div>
             </div>
-            <Input name="value" defaultValue={typeof s.value === 'object' ? JSON.stringify(s.value) : String(s.value)} dir="ltr" className="w-48" />
+            {typeof s.value === 'string' && s.value.length > 60
+              ? <Textarea name="value" defaultValue={s.value} rows={8} className="w-full sm:w-[28rem]" />
+              : <Input name="value" defaultValue={typeof s.value === 'object' ? JSON.stringify(s.value) : String(s.value)} dir="ltr" className="w-48" />}
             <SubmitButton size="sm" variant="secondary">احفظ</SubmitButton>
           </ActionForm>
         ))}
       </div>
     </Card>
   );
+}
+
+async function Whatsapp() {
+  const supabase = await createClient();
+  const { data } = await supabase.from('settings').select('key, value').in('key', ['outbox_enabled', 'wa_messages_per_day']);
+  const get = (k: string) => String(data?.find((x) => x.key === k)?.value ?? '');
+  return <WhatsappPanel enabled={get('outbox_enabled') === 'true'} perDay={get('wa_messages_per_day') || '3'} />;
 }
 
 async function Plans() {

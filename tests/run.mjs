@@ -440,33 +440,56 @@ await test('v_dashboard_kpis و v_slot_board', async () => {
   assert(s.length > 0 && s.some((x) => x.board_status === 'in_pipeline'), JSON.stringify(s.slice(0, 5)));
 });
 
-console.log('\nn8n (الـ SQL اللي في الـ workflows):');
-await test('مفتاح الإيقاف: outbox_enabled = false → مفيش رسايل خالص', async () => {
-  assert((await rows('select * from v_alert_outbox')).length === 0, 'paused by default');
+console.log('\nالواتساب والإيميل (Edge Functions):');
+await test('مفتاح الإيقاف: outbox_enabled = false → مفيش واتساب خالص', async () => {
+  await db.query(`select queue_alert('usage_high', 'qa-off', '{client}', $1)`, [client]);
+  assert((await rows('select * from claim_wa_messages(10)')).length === 0, 'paused by default');
   await db.query(`update settings set value = 'true' where key = 'outbox_enabled'`);
-  assert((await rows('select * from v_alert_outbox')).length > 0, 'enabled');
 });
-const n8nSql = (file, nodeName) => JSON.parse(readFileSync(join(root, 'n8n', file), 'utf8')).nodes.find((n) => n.name === nodeName).parameters.query;
-await test('Outbox: بيحجز قبل الإرسال — نفس الرسالة متتبعتش مرتين + 3 في اليوم للعميل', async () => {
-  // رسايل كتير لنفس العميل
+await test('الواتساب: بيحجز قبل الإرسال — مبيكررش + 3 أوتوماتيك في اليوم للعميل', async () => {
   for (let i = 0; i < 6; i++) await db.query(`select queue_alert('usage_high', 'qa-burst:' || $1::text, '{client}', $2)`, [i, client]);
-  const q = n8nSql('03_outbox.json', 'v_alert_outbox');
-  const first = await rows(q);
-  const second = await rows(q);
-  const ids1 = first.map((r) => r.alert_id);
-  assert(first.length > 0 && first.length <= 10, `first=${first.length}`);
-  assert(!second.some((r) => ids1.includes(r.alert_id)), 'اتبعتت مرتين');
-  assert(first.every((r) => r.channel === 'email' || r.phone), 'no phone');
-  const perPhone = await rows(`select cl.phone_wa, count(*)::int n from alerts a join clients cl on cl.id = a.client_id
-     where a.audience = 'client' and a.status = 'sent' and a.sent_at > now() - interval '24 hours' group by 1`);
-  assert(perPhone.every((p) => p.n <= 3), JSON.stringify(perPhone));
-  assert(Number(await val(`select count(*) from alerts where status = 'queued' and audience = 'client' and dedupe_key like 'qa-burst:%'`)) > 0, 'الزيادة لازم تستنى');
-  assert(first.some((r) => r.balance_text !== undefined && 'feedback_code' in r), 'columns');
+  const first = await rows('select * from claim_wa_messages(10)');
+  const second = await rows('select * from claim_wa_messages(10)');
+  assert(first.length > 0 && first.length <= 3, `first=${first.length}`);
+  assert(!second.some((r) => first.map((x) => x.alert_id).includes(r.alert_id)), 'اتبعتت مرتين');
+  assert(first.every((r) => r.destination === '201012345678'), 'رقم العميل');
+  assert(Number(await val(`select count(*) from alerts where status = 'queued' and dedupe_key like 'qa-burst:%'`)) > 0, 'الزيادة لازم تستنى');
+  assert('feedback_code' in first[0] && 'balance_text' in first[0], 'columns');
+  assert((await rows('select * from v_alert_outbox')).length === 0, 'الـ view القديم بتاع n8n لازم يفضل فاضي');
 });
-await test('إيميلات الفريق: claim_staff_emails بيحجز ومبيكررش، والواتساب للعملاء بس', async () => {
+await test('الواتساب بيروح جروب العميل لو موجود، ورسايل الفريق اليدوية مش بتتحسب في الحد', async () => {
+  await db.query(`update clients set wa_group_jid = '120363000000000000@g.us' where id = $1`, [client]);
+  await as(team.am);
+  await db.query(`select send_client_message($1, 'client_rules')`, [client]);
+  await db.query(`select send_client_message($1, 'booking_request')`, [client]);
+  await throws(`select send_client_message($1, 'spam')`, [client], 'نوع رسالة غير معروف');
+  await as(team.studio);
+  await throws(`select send_client_message($1, 'welcome')`, [client], 'مش متاحة لدورك');
+  await as(null);
+  const r = await rows('select * from claim_wa_messages(10)');
+  const manual = r.filter((x) => x.payload.manual);
+  assert(manual.length === 2 && manual.every((x) => x.destination === '120363000000000000@g.us'), JSON.stringify(r.map((x) => [x.alert_key, x.destination])));
+  assert(manual.find((x) => x.alert_key === 'client_rules').payload.rules.includes('قرأت'), 'rules text');
+  const done = await rows(`select i.action from checklist_runs r join checklist_template_items i on i.id = r.item_id where r.client_id = $1`, [client]);
+  assert(done.some((d) => d.action === 'send_rules') && done.some((d) => d.action === 'send_booking'), JSON.stringify(done));
+});
+await test('ردود الجروب: "قرأت" بتعلّم القواعد، و1 / 2 للجلسة', async () => {
+  const g = '120363000000000000@g.us';
+  const a = await val(`select handle_wa_reply($1, '201012345678', 'تمام قرأت')`, [g]);
+  assert(a.action === 'rules_ack', JSON.stringify(a));
+  assert(Number(await val(`select count(*) from checklist_runs r join checklist_template_items i on i.id = r.item_id where r.client_id = $1 and i.action = 'rules_ack'`, [client])) === 1);
+  const s = await val(`insert into studio_sessions (client_id, studio_id, booked_start, planned_qty) values ($1, $2, now() + interval '20 hours', 1) returning id`, [client, studio2]);
+  const b = await val(`select handle_wa_reply($1, '201012345678', '١')`, [g]);
+  assert(b.action === 'confirmed' && (await val('select confirmation from studio_sessions where id = $1', [s])) === 'confirmed', JSON.stringify(b));
+  const c = await val(`select handle_wa_reply('201012345678@s.whatsapp.net', '201012345678', '2')`);
+  assert(c.action === 'reschedule_requested', JSON.stringify(c));
+  assert((await val(`select handle_wa_reply('999@g.us', '1', '1')`)).action === 'unknown_chat');
+  await as(team.am);
+  await throws(`select handle_wa_reply($1, '1', '1')`, [g], 'permission denied');
+  await as(null);
+});
+await test('إيميلات الفريق: claim_staff_emails بيحجز ومبيكررش', async () => {
   await db.query(`select queue_alert('client_unhappy', 'qa-ch', '{client,sales,media_lead}', $1, '{"comment":"x"}')`, [client]);
-  const wa = await rows(`select channel, audience from v_alert_outbox`);
-  assert(wa.every((x) => x.audience === 'client' && x.channel === 'whatsapp'), JSON.stringify(wa));
   const first = await rows(`select * from claim_staff_emails(50)`);
   const second = await rows(`select * from claim_staff_emails(50)`);
   assert(first.some((r) => r.alert_key === 'client_unhappy' && r.email.endsWith('@x.com')), JSON.stringify(first.slice(0, 3)));
@@ -492,21 +515,13 @@ await test('لينك التقييم القصير: بيتحوّل لفورم مت
   assert(after === `https://docs.google.com/forms/d/e/X/viewform?usp=pp_url&entry.1=C001&entry.2=${reel}`, after);
   assert(none === null);
 });
-await test('Feedback: insert من الشيت مرة واحدة بس', async () => {
+const n8nSql = (file, nodeName) => JSON.parse(readFileSync(join(root, 'n8n', file), 'utf8')).nodes.find((n) => n.name === nodeName).parameters.query;
+await test('Feedback (n8n): insert من الشيت مرة واحدة بس', async () => {
   const q = n8nSql('04_feedback.json', 'insert feedback');
   const args = [reel, '4', '5', '', 'false', 'إضاءة|صوت', 'حلو', 'false', 'sheet-row-9'];
   await db.query(q, args);
   await db.query(q, args);
   assert(Number(await val(`select count(*) from feedback where source_ref = 'sheet-row-9'`)) === 1);
-});
-await test('Inbound WhatsApp: "1" بيأكد و "2" بيطلب تغيير + تنبيه', async () => {
-  const s = await val(`insert into studio_sessions (client_id, studio_id, booked_start, planned_qty) values ($1, $2, now() + interval '20 hours', 1) returning id`, [client, studio2]);
-  const q = n8nSql('05_inbound_whatsapp.json', 'تأكيد / تغيير الحجز');
-  const a = await one(q, ['201012345678', '1']);
-  assert(a.id === s && a.confirmation === 'confirmed', JSON.stringify(a));
-  const b = await one(q, ['201012345678', '2']);
-  assert(b.confirmation === 'reschedule_requested' && b.queued === 2, JSON.stringify(b));
-  assert(!(await one(q, ['201000000000', '1'])), 'رقم مش عميل');
 });
 
 await test('السكربت: "ابعت للعميل" بيحط رسالة واتساب (مرة لكل نسخة)', async () => {

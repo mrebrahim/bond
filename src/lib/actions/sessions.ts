@@ -130,7 +130,7 @@ export async function completeSession(sessionId: string, fd: FormData): Promise<
 }
 
 /** علّم/شيل بند من المانوال */
-export async function toggleChecklist(itemId: string, target: { session_id?: string; deliverable_id?: string }, done: boolean): Promise<ActionResult> {
+export async function toggleChecklist(itemId: string, target: { session_id?: string; deliverable_id?: string; client_id?: string }, done: boolean): Promise<ActionResult> {
   const staff = await getStaff();
   const supabase = await createClient();
   if (done) {
@@ -138,7 +138,8 @@ export async function toggleChecklist(itemId: string, target: { session_id?: str
     if (error && !error.message.includes('duplicate')) return fail(error);
   } else {
     let q = supabase.from('checklist_runs').delete().eq('item_id', itemId);
-    q = target.session_id ? q.eq('session_id', target.session_id) : q.eq('deliverable_id', target.deliverable_id!);
+    q = target.session_id ? q.eq('session_id', target.session_id)
+      : target.client_id ? q.eq('client_id', target.client_id) : q.eq('deliverable_id', target.deliverable_id!);
     const { error } = await q;
     if (error) return fail(error);
   }
