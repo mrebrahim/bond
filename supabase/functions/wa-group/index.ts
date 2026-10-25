@@ -23,23 +23,32 @@ async function evo(method: string, path: string, body?: unknown) {
   return json;
 }
 
-async function markCreateGroupDone(clientId: string, uid: string) {
+async function markCreateGroupDone(clientId: string, uid: string | null) {
   const { data: item } = await admin.from('checklist_template_items').select('id').eq('action', 'create_group').maybeSingle();
   if (item) await admin.from('checklist_runs').upsert({ item_id: item.id, client_id: clientId, done_by: uid }, { onConflict: 'item_id,client_id', ignoreDuplicates: true });
 }
 
 Deno.serve(async (req) => {
   if (!EVO_KEY) return fail('EVO_API_KEY مش متحط في الـ secrets', 500);
-  // صلاحيات الموظف من الـ JWT بتاعه
-  const user = createClient(SUPABASE_URL, Deno.env.get('SUPABASE_ANON_KEY')!, {
-    global: { headers: { Authorization: req.headers.get('Authorization') ?? '' } }, auth: { persistSession: false },
-  });
-  const { data: claims } = await user.auth.getUser();
-  const uid = claims?.user?.id;
-  if (!uid) return fail('غير مصرح', 401);
   const body = await req.json().catch(() => ({}));
-  const isAdmin = (await user.rpc('has_role', { p_roles: [] })).data === true;
-  const canManage = (await user.rpc('has_role', { p_roles: ['sales', 'support', 'account_manager'] })).data === true;
+  let uid: string | null = null, isAdmin = false, canManage = false;
+  const sysToken = req.headers.get('x-dse-token');
+  if (sysToken) {
+    // نداء من جوه السيستم (SQL / pg_net) بالكود السري اللي في settings.wa_webhook_token
+    const { data: tok } = await admin.from('settings').select('value').eq('key', 'wa_webhook_token').maybeSingle();
+    if (sysToken !== String(tok?.value ?? '')) return fail('غير مصرح', 401);
+    isAdmin = canManage = true;
+  } else {
+    // صلاحيات الموظف من الـ JWT بتاعه
+    const user = createClient(SUPABASE_URL, Deno.env.get('SUPABASE_ANON_KEY')!, {
+      global: { headers: { Authorization: req.headers.get('Authorization') ?? '' } }, auth: { persistSession: false },
+    });
+    const { data: claims } = await user.auth.getUser();
+    uid = claims?.user?.id ?? null;
+    if (!uid) return fail('غير مصرح', 401);
+    isAdmin = (await user.rpc('has_role', { p_roles: [] })).data === true;
+    canManage = (await user.rpc('has_role', { p_roles: ['sales', 'support', 'account_manager'] })).data === true;
+  }
 
   try {
     if (body.action === 'status') {
