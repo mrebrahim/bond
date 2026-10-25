@@ -64,11 +64,26 @@ Deno.serve(async (req) => {
       const s = await evo('GET', `/instance/connectionState/${INSTANCE}`);
       return Response.json({ instance: INSTANCE, state: (s.instance as { state?: string })?.state ?? s.state ?? 'unknown' });
     }
+    if (body.action === 'webhook') {
+      if (!isAdmin) return fail('للأدمن بس', 403);
+      return Response.json({ instance: INSTANCE, webhook: await evo('GET', `/webhook/find/${INSTANCE}`), settings: await evo('GET', `/settings/find/${INSTANCE}`) });
+    }
+    if (body.action === 'messages') {
+      if (!isAdmin) return fail('للأدمن بس', 403);
+      const r = await evo('POST', `/chat/findMessages/${INSTANCE}`, { where: { key: { remoteJid: body.jid } }, limit: 10 });
+      return Response.json(r);
+    }
     if (body.action === 'setup') {
       if (!isAdmin) return fail('للأدمن بس', 403);
       const { data: tok } = await admin.from('settings').select('value').eq('key', 'wa_webhook_token').maybeSingle();
       const url = `${SUPABASE_URL}/functions/v1/wa-inbound?token=${tok?.value}`;
       await evo('POST', `/webhook/set/${INSTANCE}`, { webhook: { enabled: true, url, byEvents: false, base64: false, events: ['MESSAGES_UPSERT'] } });
+      // لازم رسايل الجروبات متتجاهلش — الردود (قرأت / 1 / 2) بتيجي من جروب العميل
+      const cur = await evo('GET', `/settings/find/${INSTANCE}`);
+      if (cur.groupsIgnore !== false) {
+        const keep = ['rejectCall', 'msgCall', 'alwaysOnline', 'readMessages', 'readStatus', 'syncFullHistory'];
+        await evo('POST', `/settings/set/${INSTANCE}`, { ...Object.fromEntries(keep.map((k) => [k, cur[k] ?? (k === 'msgCall' ? '' : false)])), groupsIgnore: false });
+      }
       return Response.json({ ok: true, message: 'استقبال الردود اتظبط' });
     }
     if (!canManage) return fail('العملية دي مش متاحة لدورك', 403);
