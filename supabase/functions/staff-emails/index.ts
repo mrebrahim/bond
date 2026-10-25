@@ -41,6 +41,10 @@ function message(r: Row): { subject: string; lines: string[] } | null {
     case 'session_unconfirmed': return { subject: `${c} لسه مأكدش الجلسة`, lines: [`الجلسة ${d(p.start)} ${t(p.start)} — كلّمه`] };
     case 'slot_missed': return { subject: `ميعاد نشر فات من غير محتوى — ${c}`, lines: [`${d(p.date)}`] };
     case 'slot_missed_internal': return { subject: `ميعاد نشر ${c} فات والمحتوى كان جاهز!`, lines: [`${d(p.date)}`] };
+    case 'client_inactive': return { subject: `${p.content_out ? '⚠️ ' : ''}${c} بقاله ${s(p.days)} يوم مابيصوّرش${p.content_out ? ' والمحتوى خلص' : ''}`, lines: [
+      p.last_session ? `آخر تصوير ${d(p.last_session)}` : 'مصوّرش خالص في الباقة دي', `فاضله في الباقة: ${s(p.remaining)}`,
+      p.content_out ? 'مفيش أي محتوى جاهز ننزله على السوشيال بتاعه' : `جاهز للنشر: ${s(p.ready)}`,
+      p.first_gap_date ? `أول ميعاد نشر فاضي ${d(p.first_gap_date)}` : '', 'كلّمه واحجزله ميعاد تصوير.'] };
     case 'content_runway_low': return { subject: `المحتوى قرب يخلص — ${c}`, lines: [`أول ميعاد فاضي ${d(p.first_gap_date)} · لازم يصوّر قبل ${d(p.shoot_deadline)}`] };
     case 'power_low': return { subject: '⚡ كارت الكهرباء قرب يخلص', lines: [`الرصيد ${s(p.balance)} ج.م · هيخلص ${d(p.runs_out_at)} ${t(p.runs_out_at)}`] };
     case 'reschedule_requested': return { subject: `${c} عايز يغيّر ميعاد الجلسة`, lines: ['كلّمه وظبّط ميعاد جديد.'] };

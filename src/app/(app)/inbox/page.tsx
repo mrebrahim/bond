@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getStaff } from '@/lib/auth';
 import { CAN, hasRole } from '@/lib/roles';
 import { ALERT_LABELS, AUDIENCE_LABELS } from '@/lib/labels';
-import { ago, dayTime, minutesLabel, waLink } from '@/lib/format';
+import { ago, day, dayTime, minutesLabel, waLink } from '@/lib/format';
 import type { Json } from '@/types/database';
 import { Badge, Card, Empty, Field, LinkButton, PageHeader, Table, Td, Textarea, Th, cn } from '@/components/ui';
 import { ActionForm, Modal, SubmitButton } from '@/components/ui/client';
@@ -22,6 +22,11 @@ function summary(key: string, p: P): string | null {
     case 'editing_late': return s('title');
     case 'power_low': return `الرصيد ${s('balance')} ج.م`;
     case 'content_runway_low': return `أول ميعاد فاضي ${s('first_gap_date')} — لازم يصوّر قبل ${s('shoot_deadline')}`;
+    case 'client_inactive':
+      return [`مصوّرش من ${s('days')} يوم`, s('last_session') ? `آخر تصوير ${day(s('last_session'))}` : 'مصوّرش خالص في الباقة دي',
+        `فاضله ${s('remaining')}`,
+        p.content_out ? '⚠️ المحتوى خلص — مفيش حاجة جاهزة ننزلها على السوشيال' : `جاهز للنشر ${s('ready')}`,
+        s('first_gap_date') && `أول ميعاد نشر فاضي ${day(s('first_gap_date'))}`].filter(Boolean).join(' · ');
     default: return null;
   }
 }

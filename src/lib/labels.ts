@@ -94,6 +94,7 @@ export const ALERT_LABELS: Record<string, string> = {
   usage_full_early: 'الرصيد خلص بدري — فرصة upgrade',
   hours_low: 'ساعات المدربين قربت تخلص',
   low_usage_mid: 'استهلاك ضعيف — خطر churn',
+  client_inactive: 'العميل بقاله فترة مابيصوّرش',
   content_runway_low: 'المحتوى قرب يخلص',
   slot_missed: 'ميعاد نشر فات من غير محتوى',
   slot_missed_internal: 'ميعاد نشر فات والمحتوى كان جاهز',

@@ -553,6 +553,26 @@ await test('السكربت: "ابعت للعميل" بيحط رسالة واتس
   assert(a.length === 2 && a[0].payload.title === 'افتتاح الفرع', JSON.stringify(a));
 });
 
+await test('العميل بقاله فترة مابيصوّرش → تنبيه للسيلز (urgent لو المحتوى خلص)', async () => {
+  await db.query(`update settings set value = '0' where key = 'client_inactive_days'`);
+  const booked = (await rows(`select id from studio_sessions where client_id = $1 and status = 'booked' and booked_start > now()`, [client])).map((r) => r.id);
+  if (booked.length) {
+    assert(Number(await val('select check_inactive_clients()')) === 0, 'عنده حجز جاي — مفيش تنبيه');
+    await db.query(`alter table studio_sessions disable trigger user`);
+    await db.query(`update studio_sessions set status = 'cancelled' where id = any($1)`, [booked]);
+  }
+  assert(Number(await val('select check_inactive_clients()')) >= 1, 'لازم يطلع تنبيه');
+  assert(Number(await val('select check_inactive_clients()')) === 0, 'مرة واحدة بس');
+  const a = await rows(`select audience, priority, payload from alerts where alert_key = 'client_inactive' and client_id = $1`, [client]);
+  assert(a.some((x) => x.audience === 'sales') && a.some((x) => x.audience === 'account_manager'), JSON.stringify(a));
+  assert('ready' in a[0].payload && 'remaining' in a[0].payload && a[0].priority === (a[0].payload.content_out ? 'urgent' : 'normal'), JSON.stringify(a[0]));
+  if (booked.length) {
+    await db.query(`update studio_sessions set status = 'booked' where id = any($1)`, [booked]);
+    await db.query(`alter table studio_sessions enable trigger user`);
+  }
+  await db.query(`update settings set value = '21' where key = 'client_inactive_days'`);
+});
+
 await test('انتهاء الدورة بيحسب الضايع', async () => {
   await db.query(`update cycles set start_date = start_date - 40, end_date = cairo_today() - 1 where id = $1`, [cycle]);
   await db.query(`update subscriptions set auto_renew = false where id = $1`, [sub]);
