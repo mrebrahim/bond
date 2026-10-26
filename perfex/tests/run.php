@@ -412,7 +412,7 @@ function render($view, $vars) {
     return $html;
 }
 set_error_handler(function ($no, $str, $file, $line) { throw new ErrorException($str . ' in ' . basename($file) . ':' . $line); });
-test('كل الصفحات بتترسم من غير أخطاء', function () use ($m, $client) {
+test('كل الصفحات بتترسم من غير أخطاء', function () use ($m, $client, $db) {
     $sum = $m->client_summary($client);
     $balances = [];
     $pi = $pe = $pp = [];
@@ -423,12 +423,16 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
         'balances' => $balances, 'pkg_invoices' => $pi, 'pkg_events' => $pe, 'pkg_paid' => $pp, 'free_invoices' => []]);
     // صفحة عميل اترقّى
     $up = q("SELECT clientid FROM tbldse_packages WHERE name = 'Basic'")[0]['clientid'];
+    $db->query("UPDATE tbldse_packages SET status = 'active' WHERE name = 'Basic'");
+    $m->fixed_time = strtotime('2026-11-10 10:00:00');
     $sum = $m->client_summary($up);
     $pi = $pe = $pp = $balances = [];
     foreach ($sum['packages'] as $p) { $balances[$p['id']] = $m->balance($p['id']); $pi[$p['id']] = $m->package_invoices($p['id']); $pe[$p['id']] = $m->package_events($p['id']); $pp[$p['id']] = $m->package_paid_amount($p); }
     $html = render('client', $sum + ['studios' => $m->studios(), 'staff' => [], 'sessions' => $m->client_sessions($up), 'scripts' => [], 'posts' => [],
         'outbox' => [], 'invoices' => [], 'balances' => $balances, 'pkg_invoices' => $pi, 'pkg_events' => $pe, 'pkg_paid' => $pp, 'free_invoices' => []]);
     file_put_contents(sys_get_temp_dir() . '/dse_client.html', $html);
+    ok(strpos($html, 'سجّل دفعة / قسط') !== false && strpos($html, 'ترقية / تعديل الباقة') !== false && strpos($html, 'احفظ الترقية') !== false, 'الزراير على الباقة الشغالة');
+    $m->fixed_time = strtotime('2026-11-02 10:00:00');
     ok(strpos($html, 'ترقية') !== false && strpos($html, 'ريلز 8←20') !== false && strpos($html, 'فرق الترقية') !== false, 'تاريخ الترقية');
     render('index', ['clients' => [['userid' => 1, 'company' => 'x']], 'packages' => $m->clients_with_packages(),
         'today' => $m->sessions_between('2026-11-01', '2026-12-01'), 'alerts' => 2]);
