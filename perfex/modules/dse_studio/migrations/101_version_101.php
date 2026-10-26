@@ -8,7 +8,7 @@ class Migration_Version_101 extends App_module_migration
     public function up()
     {
         $CI = &get_instance();
-        $CI->load->helper('dse_studio/dse_studio_schema');
+        require_once __DIR__ . '/../helpers/dse_studio_setup.php';
         dse_studio_ensure_schema();
     }
 }

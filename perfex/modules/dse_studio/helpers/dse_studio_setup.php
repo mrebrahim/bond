@@ -2,6 +2,10 @@
 
 defined('BASEPATH') or exit('No direct script access allowed');
 
+// جداول الـ module + إنشاء الناقص منها.
+// بيتحمّل بـ require_once من dse_studio.php و install.php (مش من load->helper)
+
+if (!function_exists('dse_studio_schema')) {
 /**
  * جداول الـ module — نفس التعريف بيتطبق على MySQL (Perfex) و SQLite (الاختبارات)
  * {pk} = primary key أوتوماتيك
@@ -187,7 +191,9 @@ function dse_studio_schema()
         ],
     ];
 }
+}
 
+if (!function_exists('dse_studio_create_sql')) {
 /** بيرجّع أوامر الـ SQL لجدول واحد حسب الداتابيز */
 function dse_studio_create_sql($table, $def, $prefix, $driver = 'mysql', $charset = 'utf8mb4')
 {
@@ -202,7 +208,9 @@ function dse_studio_create_sql($table, $def, $prefix, $driver = 'mysql', $charse
     }
     return $sql;
 }
+}
 
+if (!function_exists('dse_studio_default_options')) {
 /** القيم الافتراضية للإعدادات */
 function dse_studio_default_options()
 {
@@ -226,9 +234,14 @@ function dse_studio_default_options()
         'dse_last_daily_run'       => '',
     ];
 }
+}
 
+if (!defined('DSE_STUDIO_SCHEMA_VERSION')) {
 /** نسخة الجداول — زوّدها مع أي جدول جديد */
-define('DSE_STUDIO_SCHEMA_VERSION', '2');
+    define('DSE_STUDIO_SCHEMA_VERSION', '2');
+}
+
+if (!function_exists('dse_studio_ensure_schema')) {
 
 /**
  * بيعمل أي جدول ناقص (لو Perfex ماشغّلش الـ migration بعد رفع نسخة جديدة).
@@ -257,4 +270,4 @@ function dse_studio_ensure_schema()
     }
     update_option('dse_schema_version', DSE_STUDIO_SCHEMA_VERSION);
 }
-
+}

@@ -4,7 +4,7 @@
 
 define('BASEPATH', __DIR__);
 $mod = __DIR__ . '/../modules/dse_studio';
-require $mod . '/helpers/dse_studio_schema_helper.php';
+require $mod . '/helpers/dse_studio_setup.php';
 require $mod . '/helpers/dse_studio_helper.php';
 require $mod . '/libraries/Dse_evolution.php';
 

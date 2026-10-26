@@ -13,7 +13,7 @@ Author: Digital Solution
 define('DSE_STUDIO_MODULE_NAME', 'dse_studio');
 
 $CI = &get_instance();
-$CI->load->helper(DSE_STUDIO_MODULE_NAME . '/dse_studio_schema');
+require_once __DIR__ . '/helpers/dse_studio_setup.php';
 $CI->load->helper(DSE_STUDIO_MODULE_NAME . '/dse_studio');
 
 register_activation_hook(DSE_STUDIO_MODULE_NAME, 'dse_studio_activation_hook');
