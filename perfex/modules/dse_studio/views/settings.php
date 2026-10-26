@@ -9,7 +9,13 @@
           <h4 class="tw-font-semibold">⚙️ إعدادات الاستوديو والواتساب</h4>
           <?= form_open(admin_url('dse_studio/settings')); ?>
             <h5 class="bold mtop20">الواتساب (Evolution API)</h5>
-            <div class="checkbox"><label><input type="checkbox" name="dse_wa_enabled" value="1" <?= get_option('dse_wa_enabled') === '1' ? 'checked' : ''; ?>> <b>الإرسال شغال</b> (لو مقفول الرسايل بتتجمع ومبتتبعتش)</label></div>
+            <div class="form-group">
+              <label>إرسال الرسايل للعملاء</label>
+              <select name="dse_wa_enabled" class="form-control">
+                <option value="1" <?= get_option('dse_wa_enabled') === '1' ? 'selected' : ''; ?>>✅ شغال</option>
+                <option value="0" <?= get_option('dse_wa_enabled') !== '1' ? 'selected' : ''; ?>>⛔ مقفول (الرسايل بتتجمع ومبتتبعتش)</option>
+              </select>
+            </div>
             <?php if ($state !== null) { ?><p>حالة الرقم: <b><?= html_escape($state); ?></b> <?= $state === 'open' ? '✅' : '⚠️'; ?></p><?php } ?>
             <div class="form-group"><label>Evolution URL</label><input name="dse_evo_url" value="<?= $o('dse_evo_url'); ?>" class="form-control" dir="ltr"></div>
             <div class="form-group"><label>API key <?= get_option('dse_evo_key') ? '(متسجل — سيبه فاضي علشان يفضل زي ما هو)' : ''; ?></label><input type="password" name="dse_evo_key" class="form-control" dir="ltr" autocomplete="new-password"></div>
@@ -51,6 +57,14 @@
             <input name="name" class="form-control input-sm" placeholder="اسم الاستوديو" required>
             <button class="btn btn-default btn-sm">ضيف</button>
           <?= form_close(); ?>
+        </div></div>
+        <div class="panel_s"><div class="panel-body">
+          <h5 class="bold">جرّب الواتساب</h5>
+          <?= form_open(admin_url('dse_studio/test_wa'), ['class' => 'form-inline']); ?>
+            <input name="to" class="form-control input-sm" dir="ltr" placeholder="01xxxxxxxxx" required>
+            <button class="btn btn-default btn-sm">ابعت رسالة تجربة</button>
+          <?= form_close(); ?>
+          <p class="small text-muted mtop5">بتتبعت على طول (حتى لو الإرسال مقفول) — علشان تتأكد إن الربط مع Evolution شغال.</p>
         </div></div>
         <div class="panel_s"><div class="panel-body small">
           <b>مهم:</b> الرسايل والتنبيهات بتشتغل مع الـ cron بتاع Perfex — اتأكد إنه متظبط على السيرفر (Setup → Settings → Cron Job)، وإن التوقيت Africa/Cairo.

@@ -140,7 +140,7 @@ class Dse_studio extends AdminController
                 }
                 update_option($k, trim($this->input->post($k, false)));
             }
-            update_option('dse_wa_enabled', $this->input->post('dse_wa_enabled') ? '1' : '0');
+            update_option('dse_wa_enabled', $this->input->post('dse_wa_enabled') === '1' ? '1' : '0');
             set_alert('success', 'الإعدادات اتحفظت');
             redirect(admin_url('dse_studio/settings'));
         }
@@ -321,6 +321,27 @@ class Dse_studio extends AdminController
     {
         $m = $this->dse_studio_model;
         $this->act('view', function () use ($m, $id) { $m->resolve_alert($id, $this->post('resolution')); return 'التنبيه اتقفل'; }, admin_url('dse_studio/alerts'));
+    }
+
+    public function test_wa()
+    {
+        if (!is_admin()) {
+            access_denied(DSE_STUDIO_MODULE_NAME);
+        }
+        try {
+            $to = dse_normalize_phone($this->input->post('to'));
+            if (!$to) {
+                throw new Exception('اكتب رقم مصري صح: 01xxxxxxxxx');
+            }
+            if (!$this->dse_evolution->configured()) {
+                throw new Exception('حط الـ URL والـ API key واسم الـ instance الأول واحفظ');
+            }
+            $this->dse_evolution->send_text($to, 'رسالة تجربة من Perfex ✅');
+            set_alert('success', 'الرسالة اتبعتت لـ ' . $to . ' — شوف الواتساب');
+        } catch (Exception $e) {
+            set_alert('danger', $e->getMessage());
+        }
+        redirect(admin_url('dse_studio/settings'));
     }
 
     public function studio($action, $id = null)
