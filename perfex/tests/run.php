@@ -65,6 +65,9 @@ foreach (dse_studio_schema() as $t => $def) {
 }
 // جداول Perfex اللي بنقرا منها
 $db->pdo->exec('CREATE TABLE tblclients (userid INTEGER PRIMARY KEY AUTOINCREMENT, company TEXT, phonenumber TEXT)');
+$db->pdo->exec('CREATE TABLE tblcontacts (id INTEGER PRIMARY KEY AUTOINCREMENT, userid INT, firstname TEXT, lastname TEXT, is_primary INT)');
+$db->pdo->exec('CREATE TABLE tblstaff (staffid INTEGER PRIMARY KEY, firstname TEXT, lastname TEXT, email TEXT, active INT, admin INT)');
+$db->pdo->exec("INSERT INTO tblstaff VALUES (7, 'أندرو', 'إسحاق', 'a@x.com', 1, 0)");
 $db->pdo->exec('CREATE TABLE tblinvoices (id INTEGER PRIMARY KEY AUTOINCREMENT, clientid INT, total REAL, status INT)');
 
 $sent = [];
@@ -96,10 +99,22 @@ $db->insert('tblclients', ['company' => 'مطعم الشيف', 'phonenumber' => 
 $client = 1;
 $db->insert('tblclients', ['company' => 'جيم', 'phonenumber' => '123']);
 $client2 = 2;
+$db->pdo->exec("ALTER TABLE tblclients ADD COLUMN active INT DEFAULT 1");
+$db->insert('tblclients', ['company' => '', 'phonenumber' => '⁦+20 12 10010360⁩']);
+$db->insert('tblcontacts', ['userid' => 3, 'firstname' => 'دكتورة', 'lastname' => 'سارة', 'is_primary' => 0]);
+$db->insert('tblcontacts', ['userid' => 3, 'firstname' => 'سارة', 'lastname' => 'محمود', 'is_primary' => 1]);
+$db->insert('tblclients', ['company' => '', 'phonenumber' => '']);
 $studio  = $m->add_studio('استوديو 1');
 $studio2 = $m->add_studio('استوديو 2');
 
 echo "العملاء والباقات:\n";
+test('اسم العميل: الشركة ولو فاضية جهة الاتصال الأساسية ولو مفيش الرقم', function () use ($m) {
+    ok($m->client(3)['company'] === 'سارة محمود', $m->client(3)['company']);
+    ok($m->client(3)['wa_phone'] === '201210010360', $m->client(3)['wa_phone']);
+    ok($m->client(4)['company'] === 'عميل #4', $m->client(4)['company']);
+    $names = array_column($m->clients_list(), 'company');
+    ok(in_array('سارة محمود', $names, true) && in_array('مطعم الشيف', $names, true), json_encode($names, JSON_UNESCAPED_UNICODE));
+});
 test('كود العميل C001 ورقم الواتساب بيتظبط من 01...', function () use ($m, $client, $client2) {
     $c = $m->client($client);
     ok($c['code'] === 'C001' && $c['wa_phone'] === '201012345678', json_encode($c));
@@ -303,7 +318,12 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
         'balances' => $balances]);
     render('index', ['clients' => [['userid' => 1, 'company' => 'x']], 'packages' => $m->clients_with_packages(),
         'today' => $m->sessions_between('2026-11-01', '2026-12-01'), 'alerts' => 2]);
-    render('calendar', ['start' => '2026-10-31', 'sessions' => $m->sessions_between('2026-10-31', '2026-11-07')]);
+    $cal = render('calendar', ['start' => '2026-10-31', 'studio' => 0, 'cancelled' => true, 'studios' => $m->studios(),
+        'sessions' => $m->sessions_between('2026-10-31', '2026-11-07')]);
+    file_put_contents(sys_get_temp_dir() . '/dse_calendar.html', $cal);
+    ok(strpos($cal, 'مطعم الشيف') !== false && strpos($cal, '📷 أندرو إسحاق') !== false, 'الاسم والمصور');
+    ok(count($m->sessions_between('2026-10-31', '2026-11-30', null, 999)) === 0, 'فلتر الاستوديو');
+    ok(count($m->sessions_between('2026-10-31', '2026-11-30', null, null, false)) < count($m->sessions_between('2026-10-31', '2026-11-30')), 'من غير الملغية');
     render('alerts', ['all' => true, 'alerts' => $m->alerts(false)]);
     render('outbox', ['outbox' => $m->outbox(), 'enabled' => false]);
     render('settings', ['studios' => $m->studios(false), 'staff' => [['staffid' => 1, 'firstname' => 'Ibrahim']], 'state' => 'open']);

@@ -46,7 +46,7 @@ class Dse_studio extends AdminController
 
     private function clients_list()
     {
-        return $this->db->query('SELECT userid, company FROM ' . db_prefix() . 'clients WHERE active = 1 ORDER BY company')->result_array();
+        return $this->dse_studio_model->clients_list();
     }
 
     private function staff_list()
@@ -95,13 +95,15 @@ class Dse_studio extends AdminController
     public function calendar()
     {
         $this->need('view');
-        $start = $this->input->get('week') ?: date('Y-m-d', strtotime('saturday this week -7 days'));
-        if (date('w', strtotime($start)) != 6) {
-            $start = date('Y-m-d', strtotime('last saturday', strtotime($start . ' +1 day')));
-        }
+        $ts    = strtotime($this->input->get('week') ?: date('Y-m-d')) ?: time();
+        $start = date('Y-m-d', strtotime('-' . ((date('w', $ts) + 1) % 7) . ' days', $ts)); // الأسبوع بيبدأ السبت
+        $studio = (int) $this->input->get('studio');
         $data['title']    = _l('dse_menu_calendar');
         $data['start']    = $start;
-        $data['sessions'] = $this->dse_studio_model->sessions_between($start . ' 00:00:00', date('Y-m-d 00:00:00', strtotime($start . ' +7 days')));
+        $data['studio']   = $studio;
+        $data['studios']  = $this->dse_studio_model->studios();
+        $data['cancelled'] = (bool) $this->input->get('cancelled');
+        $data['sessions'] = $this->dse_studio_model->sessions_between($start . ' 00:00:00', date('Y-m-d 00:00:00', strtotime($start . ' +7 days')), null, $studio ?: null, $data['cancelled']);
         $this->load->view('calendar', $data);
     }
 

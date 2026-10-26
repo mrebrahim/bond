@@ -60,9 +60,25 @@ class Dse_studio_model extends App_Model
     // =================================================================
     // العملاء
     // =================================================================
+    /**
+     * اسم العميل: الشركة، ولو فاضية اسم جهة الاتصال الأساسية، ولو مفيش الرقم
+     * (عملاء الأفراد في Perfex اسمهم بيبقى في جهة الاتصال مش في company)
+     */
+    public function name_sql($a = 'c')
+    {
+        return "COALESCE(NULLIF(TRIM($a.company), ''), (SELECT NULLIF(TRIM(CONCAT(ct.firstname, ' ', ct.lastname)), '') FROM " . $this->tbl('contacts')
+            . " ct WHERE ct.userid = $a.userid ORDER BY ct.is_primary DESC, ct.id LIMIT 1), NULLIF(TRIM($a.phonenumber), ''), CONCAT('عميل #', $a.userid))";
+    }
+
+    /** للقايمة: كل العملاء الشغالين بأسمائهم */
+    public function clients_list()
+    {
+        return $this->rows('SELECT c.userid, ' . $this->name_sql('c') . ' AS company FROM ' . $this->tbl('clients') . ' c WHERE c.active = 1 ORDER BY company');
+    }
+
     public function client($clientid)
     {
-        $c = $this->row('SELECT userid, company, phonenumber FROM ' . $this->tbl('clients') . ' WHERE userid = ?', [(int) $clientid]);
+        $c = $this->row('SELECT c.userid, ' . $this->name_sql('c') . ' AS company, c.phonenumber FROM ' . $this->tbl('clients') . ' c WHERE c.userid = ?', [(int) $clientid]);
         if (!$c) {
             throw new Exception('العميل مش موجود');
         }
@@ -378,7 +394,7 @@ class Dse_studio_model extends App_Model
     public function session($id)
     {
         $s = $this->row(
-            'SELECT s.*, st.name AS studio, c.company FROM ' . $this->tbl('dse_sessions') . ' s
+            'SELECT s.*, st.name AS studio, ' . $this->name_sql('c') . ' AS company FROM ' . $this->tbl('dse_sessions') . ' s
                JOIN ' . $this->tbl('dse_studios') . ' st ON st.id = s.studio_id
                JOIN ' . $this->tbl('clients') . ' c ON c.userid = s.clientid WHERE s.id = ?',
             [(int) $id]
@@ -494,9 +510,11 @@ class Dse_studio_model extends App_Model
         return ['late' => $late, 'penalty' => $pen];
     }
 
-    public function sessions_between($from, $to, $clientid = null)
+    public function sessions_between($from, $to, $clientid = null, $studio_id = null, $with_cancelled = true)
     {
-        $sql   = 'SELECT s.*, st.name AS studio, c.company FROM ' . $this->tbl('dse_sessions') . ' s
+        $sql   = 'SELECT s.*, st.name AS studio, ' . $this->name_sql('c') . ' AS company,
+                         (SELECT CONCAT(sf.firstname, \' \', sf.lastname) FROM ' . $this->tbl('staff') . ' sf WHERE sf.staffid = s.photographer_id) AS photographer
+                    FROM ' . $this->tbl('dse_sessions') . ' s
                     JOIN ' . $this->tbl('dse_studios') . ' st ON st.id = s.studio_id
                     JOIN ' . $this->tbl('clients') . ' c ON c.userid = s.clientid
                    WHERE s.start_at >= ? AND s.start_at < ?';
@@ -504,6 +522,13 @@ class Dse_studio_model extends App_Model
         if ($clientid) {
             $sql .= ' AND s.clientid = ?';
             $binds[] = (int) $clientid;
+        }
+        if ($studio_id) {
+            $sql .= ' AND s.studio_id = ?';
+            $binds[] = (int) $studio_id;
+        }
+        if (!$with_cancelled) {
+            $sql .= " AND s.status <> 'cancelled'";
         }
         return $this->rows($sql . ' ORDER BY s.start_at', $binds);
     }
@@ -740,7 +765,7 @@ class Dse_studio_model extends App_Model
 
     public function outbox($limit = 100, $clientid = null)
     {
-        $sql = 'SELECT o.*, c.company FROM ' . $this->tbl('dse_wa_outbox') . ' o JOIN ' . $this->tbl('clients') . ' c ON c.userid = o.clientid';
+        $sql = 'SELECT o.*, ' . $this->name_sql('c') . ' AS company FROM ' . $this->tbl('dse_wa_outbox') . ' o JOIN ' . $this->tbl('clients') . ' c ON c.userid = o.clientid';
         $b   = [];
         if ($clientid) {
             $sql .= ' WHERE o.clientid = ?';
@@ -804,7 +829,7 @@ class Dse_studio_model extends App_Model
     public function alerts($open_only = true, $limit = 200)
     {
         return $this->rows(
-            'SELECT a.*, c.company FROM ' . $this->tbl('dse_alerts') . ' a LEFT JOIN ' . $this->tbl('clients') . ' c ON c.userid = a.clientid'
+            'SELECT a.*, ' . $this->name_sql('c') . ' AS company FROM ' . $this->tbl('dse_alerts') . ' a LEFT JOIN ' . $this->tbl('clients') . ' c ON c.userid = a.clientid'
             . ($open_only ? ' WHERE a.handled_at IS NULL' : '') . " ORDER BY a.handled_at IS NULL DESC, a.priority = 'urgent' DESC, a.id DESC LIMIT " . (int) $limit
         );
     }
@@ -895,7 +920,7 @@ class Dse_studio_model extends App_Model
     {
         $this->sync_all_packages();
         $out = [];
-        foreach ($this->rows('SELECT p.*, c.company FROM ' . $this->tbl('dse_packages') . ' p JOIN ' . $this->tbl('clients') . " c ON c.userid = p.clientid WHERE p.status IN ('pending','active') ORDER BY c.company") as $p) {
+        foreach ($this->rows('SELECT p.*, ' . $this->name_sql('c') . ' AS company FROM ' . $this->tbl('dse_packages') . ' p JOIN ' . $this->tbl('clients') . " c ON c.userid = p.clientid WHERE p.status IN ('pending','active') ORDER BY company") as $p) {
             $p['balance_text'] = $this->balance_text($p['id'], false);
             $out[]             = $p;
         }
