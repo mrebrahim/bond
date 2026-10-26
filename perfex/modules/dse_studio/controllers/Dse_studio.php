@@ -20,14 +20,25 @@ class Dse_studio extends AdminController
     }
 
     /** بينفّذ العملية ويعرض رسالة الموظف (الأخطاء عربي جاهزة) وبيرجع للصفحة */
-    private function act($cap, callable $fn, $back, $ok = 'تم')
+    private function act($cap, callable $fn, $back, $ok = 'تم', $skip_check = false)
     {
-        $this->need($cap);
+        if (!$skip_check) {
+            $this->need($cap);
+        }
+        $ok = $ok ?? 'تم';
         try {
             $msg = $fn();
             set_alert('success', is_string($msg) ? $msg : $ok);
         } catch (Exception $e) {
             set_alert('danger', $e->getMessage());
+        }
+        // تنبيهات اتعملت دلوقتي (دفع / مفيش جروب) → إشعار + إيميل على طول
+        if ($this->dse_studio_model->new_alerts) {
+            try {
+                dse_studio_notify_staff($this->dse_studio_model->new_alerts);
+            } catch (Exception $e) {
+                log_message('error', 'dse_studio notify: ' . $e->getMessage());
+            }
         }
         // ابعت الرسايل اللي اتحطت دلوقتي على طول (والباقي مع الـ cron)
         try {
@@ -277,13 +288,39 @@ class Dse_studio extends AdminController
         }, admin_url('dse_studio/client/' . $s['clientid']));
     }
 
-    public function publish($clientid)
+    private function can_publish()
     {
-        $m = $this->dse_studio_model;
-        $this->act('create', function () use ($m, $clientid) {
+        return staff_can('publish', DSE_STUDIO_MODULE_NAME) || staff_can('create', DSE_STUDIO_MODULE_NAME);
+    }
+
+    /** صفحة المودريشن: يختار العميل ويحط لينك البوست ← يتبعت لجروب العميل */
+    public function publishing()
+    {
+        if (!$this->can_publish()) {
+            access_denied(DSE_STUDIO_MODULE_NAME);
+        }
+        $data['title']   = _l('dse_menu_publish');
+        $data['clients'] = $this->dse_studio_model->clients_for_publishing();
+        $data['recent']  = $this->dse_studio_model->recent_posts(40);
+        $data['selected'] = (int) $this->input->get('client');
+        $this->load->view('publishing', $data);
+    }
+
+    public function publish($clientid = null)
+    {
+        if (!$this->can_publish()) {
+            access_denied(DSE_STUDIO_MODULE_NAME);
+        }
+        $clientid = $clientid ?: (int) $this->input->post('clientid');
+        $back     = $this->input->post('back') === 'publishing' ? admin_url('dse_studio/publishing') : admin_url('dse_studio/client/' . (int) $clientid);
+        $m        = $this->dse_studio_model;
+        $this->act('view', function () use ($m, $clientid) {
+            if (!$clientid) {
+                throw new Exception('اختار العميل');
+            }
             $m->publish_post($clientid, $this->post('type', 'reel'), $this->post('post_url'), $this->post('title'));
-            return 'اتسجل إنه نزل ورسالة اللينك والتقييم راحت للعميل';
-        }, admin_url('dse_studio/client/' . (int) $clientid));
+            return 'اتسجل إنه نزل ورسالة اللينك والتقييم راحت لجروب العميل';
+        }, $back, null, true);
     }
 
     public function wa($clientid, $action)

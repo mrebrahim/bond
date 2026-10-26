@@ -130,6 +130,11 @@ function dse_wa_text($key, array $p)
     return null;
 }
 
+function dse_wa_labels()
+{
+    return dse_manual_keys() + ['script_sent' => 'السكربت', 'session_booked' => 'تم الحجز', 'published' => 'البوست نزل'];
+}
+
 function dse_manual_keys()
 {
     return [

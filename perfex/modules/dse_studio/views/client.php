@@ -33,6 +33,12 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                 </div>
               <?php } ?>
             </div>
+            <?php if ($paid < 0.999) { ?>
+              <div class="alert alert-warning mtop10">
+                💰 دافع <b><?= (int) round($paid * 100); ?>%</b> من الباقة (<?= dse_money($package['price'] * $paid); ?> من <?= dse_money($package['price']); ?>) —
+                الشغل اللي اتسلّم: <?php foreach ($delivered as $t => $d) { if ($d['total'] > 0) { echo dse_num($d['done']) . '/' . dse_num($d['total']) . ' ' . dse_unit($t) . ' (' . (int) round($d['ratio'] * 100) . '%) &nbsp; '; } } ?>
+              </div>
+            <?php } ?>
             <?php if ($next) { ?><p class="mtop10">📅 الجلسة الجاية: <?= dse_day($next['start_at']) . ' ' . dse_time($next['start_at']) . ' — ' . html_escape($next['studio']); ?></p><?php } ?>
           <?php } else { ?>
             <p class="text-warning bold">مفيش باقة شغالة — الباقة بتتفعل لما الفاتورة المربوطة بيها تتدفع.</p>

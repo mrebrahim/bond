@@ -68,6 +68,7 @@ $db->pdo->exec('CREATE TABLE tblclients (userid INTEGER PRIMARY KEY AUTOINCREMEN
 $db->pdo->exec('CREATE TABLE tblcontacts (id INTEGER PRIMARY KEY AUTOINCREMENT, userid INT, firstname TEXT, lastname TEXT, is_primary INT)');
 $db->pdo->exec('CREATE TABLE tblstaff (staffid INTEGER PRIMARY KEY, firstname TEXT, lastname TEXT, email TEXT, active INT, admin INT)');
 $db->pdo->exec("INSERT INTO tblstaff VALUES (7, 'أندرو', 'إسحاق', 'a@x.com', 1, 0)");
+$db->pdo->exec('CREATE TABLE tblinvoicepaymentrecords (id INTEGER PRIMARY KEY AUTOINCREMENT, invoiceid INT, amount REAL)');
 $db->pdo->exec('CREATE TABLE tblinvoices (id INTEGER PRIMARY KEY AUTOINCREMENT, clientid INT, total REAL, status INT)');
 
 $sent = [];
@@ -139,6 +140,28 @@ test('فاتورة عميل تاني مينفعش تتربط', function () use (
 });
 test('باقة من غير خدمات بتترفض', function () use ($m, $client) {
     throws(function () use ($m, $client) { $m->create_package($client, 'x', 1, null, 30, []); }, 'ضيف خدمة');
+});
+
+echo "\nالجروب:\n";
+test('من غير جروب: مفيش رسايل على الخاص خالص — تنبيه للفريق بدالها', function () use ($m, $client, $studio) {
+    $m->new_alerts = [];
+    $sid = $m->book_session($client, $studio, '2026-11-25 12:00', 'reel', 1);
+    ok(count(q('SELECT id FROM tbldse_wa_outbox')) === 0, 'مفيش رسالة');
+    $a = q("SELECT * FROM tbldse_alerts WHERE alert_key = 'no_group'");
+    ok(count($a) === 1 && strpos($a[0]['message'], 'تم الحجز') !== false && count($m->new_alerts) === 1, json_encode($a, JSON_UNESCAPED_UNICODE));
+    throws(function () use ($m, $client) { $m->send_manual($client, 'welcome'); }, 'مالوش جروب');
+    $m->cancel_session($sid);
+    $m->resolve_alert($a[0]['id'], 'اتعمل');
+});
+test('الجروب: العميل + أرقام الفريق، والرسايل بتروح الجروب بعد كده', function () use ($m, $client) {
+    $g = $m->create_group($client);
+    ok($g['jid'] === '120363000000000001@g.us' && $g['link'] === 'https://chat.whatsapp.com/AbCdEfGhIj12', json_encode($g));
+    ok(count($GLOBALS['group_members']) === 5 && $GLOBALS['group_members'][0] === '201012345678', json_encode($GLOBALS['group_members']));
+    throws(function () use ($m, $client) { $m->create_group($client); }, 'عنده جروب');
+    $m->send_manual($client, 'rules');
+    $o = q("SELECT * FROM tbldse_wa_outbox WHERE msg_key = 'rules'");
+    ok($o[0]['destination'] === '120363000000000001@g.us' && $o[0]['manual'] == 1 && strpos($o[0]['body'], 'قواعد التعامل') !== false);
+    throws(function () use ($m, $client) { $m->send_manual($client, 'spam'); }, 'نوع رسالة غير معروف');
 });
 
 echo "\nالحجز:\n";
@@ -222,20 +245,42 @@ test('البوست نزل: رسالة فيها اللينك والتقييم و�
     ok(strpos($o[1]['body'], 'التصميم بتاعك نزل') === 0);
 });
 
+echo "\nالدفع الجزئي:\n";
+test('دافع 50%: الباقة بتتفعل، ولما الشغل يوصل 50% تنبيه + إيميل لإنجي ومريم (مرة واحدة)', function () use ($m, $db, $client2) {
+    $m->save_client_wa($client2, ['wa_group_jid' => '120363000000000002@g.us']);
+    $db->insert('tblinvoices', ['clientid' => $client2, 'total' => 10000, 'status' => 1]);
+    $inv = $db->insert_id();
+    $pkg = $m->create_package($client2, 'Starter', 10000, '2026-11-01', 30, ['reel' => 4, 'design' => 4], $inv);
+    $db->insert('tblinvoicepaymentrecords', ['invoiceid' => $inv, 'amount' => 3000]);
+    $db->update('tblinvoices', ['status' => 3], ['id' => $inv]);
+    ok($m->sync_package_status($pkg) === 'pending', '30% مش كفاية');
+    $db->insert('tblinvoicepaymentrecords', ['invoiceid' => $inv, 'amount' => 2000]);
+    ok($m->sync_package_status($pkg) === 'active', '50% بتفعّل');
+    ok(abs($m->package_paid_ratio($m->package($pkg)) - 0.5) < 0.001);
+    $m->new_alerts = [];
+    $m->publish_post($client2, 'design', 'https://instagram.com/p/d1');
+    ok(count(q("SELECT id FROM tbldse_alerts WHERE alert_key = 'payment_due'")) === 0, '25% لسه');
+    $m->publish_post($client2, 'design', 'https://instagram.com/p/d2');
+    $a = q("SELECT * FROM tbldse_alerts WHERE alert_key = 'payment_due'");
+    ok(count($a) === 1 && $a[0]['priority'] === 'urgent' && count($m->new_alerts) === 1, json_encode($a, JSON_UNESCAPED_UNICODE));
+    ok(strpos($a[0]['message'], 'دافع 50%') !== false && strpos($a[0]['message'], '2 من 4 تصميم') !== false && strpos($a[0]['message'], '5,000 ج.م من 10,000 ج.م') !== false, $a[0]['message']);
+    $m->publish_post($client2, 'reel', 'https://instagram.com/p/r1');
+    $m->publish_post($client2, 'reel', 'https://instagram.com/p/r2');
+    ok(count(q("SELECT id FROM tbldse_alerts WHERE alert_key = 'payment_due'")) === 1, 'مرة واحدة');
+    ok(count($m->check_all_payments()) === 0);
+    $o = q("SELECT destination FROM tbldse_wa_outbox WHERE clientid = ?", [$client2]);
+    ok(count($o) === 4 && $o[0]['destination'] === '120363000000000002@g.us', 'كله على الجروب');
+    $db->insert('tblinvoicepaymentrecords', ['invoiceid' => $inv, 'amount' => 5000]);
+    $db->update('tblinvoices', ['status' => 2], ['id' => $inv]);
+    $m->publish_post($client2, 'design', 'https://instagram.com/p/d3');
+    ok(count(q("SELECT id FROM tbldse_alerts WHERE alert_key = 'payment_due'")) === 1, 'دفع الباقي');
+    $m->cancel_package($pkg);
+});
+
 echo "\nالواتساب:\n";
 test('مقفول: مفيش ولا رسالة بتتبعت', function () use ($m, &$sent) {
     $r = $m->process_outbox(50);
     ok($r['sent'] === 0 && count($sent) === 0);
-});
-test('الجروب: العميل + أرقام الفريق، والرسايل بتروح الجروب بعد كده', function () use ($m, $client) {
-    $g = $m->create_group($client);
-    ok($g['jid'] === '120363000000000001@g.us' && $g['link'] === 'https://chat.whatsapp.com/AbCdEfGhIj12', json_encode($g));
-    ok(count($GLOBALS['group_members']) === 5 && $GLOBALS['group_members'][0] === '201012345678', json_encode($GLOBALS['group_members']));
-    throws(function () use ($m, $client) { $m->create_group($client); }, 'عنده جروب');
-    $m->send_manual($client, 'rules');
-    $o = q("SELECT * FROM tbldse_wa_outbox WHERE msg_key = 'rules'");
-    ok($o[0]['destination'] === '120363000000000001@g.us' && $o[0]['manual'] == 1 && strpos($o[0]['body'], 'قواعد التعامل') !== false);
-    throws(function () use ($m, $client) { $m->send_manual($client, 'spam'); }, 'نوع رسالة غير معروف');
 });
 test('الإرسال: بيحجز قبل ما يبعت (مفيش تكرار) + 6 أوتوماتيك في اليوم + اليدوي مش بيتحسب', function () use ($m, $client, &$sent) {
     update_option('dse_wa_enabled', '1');
@@ -276,7 +321,7 @@ test('العميل بقاله فترة مابيصوّرش → تنبيه مرة 
     ok(count($m->check_inactive_clients()) === 0, 'مرة واحدة');
     throws(function () use ($m, $a) { $m->resolve_alert($a['id'], ''); }, 'حصل إيه');
     $m->resolve_alert($a['id'], 'كلمته وحجز');
-    ok(count($m->alerts(true)) === 0);
+    ok(count(array_filter($m->alerts(true), function ($x) { return $x['alert_key'] === 'client_inactive'; })) === 0);
 });
 test('الباقة بتخلص لوحدها بعد مدتها', function () use ($m, $pkg) {
     $m->fixed_time = strtotime('2026-12-01 10:00:00');
@@ -326,6 +371,9 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
     ok(count($m->sessions_between('2026-10-31', '2026-11-30', null, null, false)) < count($m->sessions_between('2026-10-31', '2026-11-30')), 'من غير الملغية');
     render('alerts', ['all' => true, 'alerts' => $m->alerts(false)]);
     render('outbox', ['outbox' => $m->outbox(), 'enabled' => false]);
+    $pub = render('publishing', ['clients' => $m->clients_for_publishing(), 'recent' => $m->recent_posts(), 'selected' => 1]);
+    ok(strpos($pub, 'وصل الجروب') !== false || strpos($pub, 'مستني') !== false, 'حالة الرسالة');
+    ok(strpos($pub, '⚠️ مفيش جروب') !== false, 'العملاء من غير جروب متعلّمين');
     render('settings', ['studios' => $m->studios(false), 'staff' => [['staffid' => 1, 'firstname' => 'Ibrahim']], 'state' => 'open']);
     $client = (object) ['userid' => 1];
     render('customer_tab', ['client' => $client]);

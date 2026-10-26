@@ -215,21 +215,41 @@ class Dse_studio_model extends App_Model
         return implode(' · ', $parts);
     }
 
-    /** الفاتورة اتدفعت؟ (حالات Perfex: 1 مش مدفوعة · 2 مدفوعة · 3 جزئي · 4 متأخرة · 5 ملغية · 6 درافت) */
-    public function invoice_paid($invoice_id)
+    /**
+     * نسبة اللي اتدفع من الفاتورة (0 → 1) من مدفوعات Perfex
+     * (حالات الفاتورة: 1 مش مدفوعة · 2 مدفوعة · 3 جزئي · 4 متأخرة · 5 ملغية · 6 درافت)
+     */
+    public function invoice_paid_ratio($invoice_id)
     {
         if (!$invoice_id) {
-            return false;
+            return 0.0;
         }
-        $inv = $this->row('SELECT status FROM ' . $this->tbl('invoices') . ' WHERE id = ?', [(int) $invoice_id]);
-        return $inv && (int) $inv['status'] === 2;
+        $inv = $this->row('SELECT total, status FROM ' . $this->tbl('invoices') . ' WHERE id = ?', [(int) $invoice_id]);
+        if (!$inv || (int) $inv['status'] === 5) {
+            return 0.0;
+        }
+        if ((int) $inv['status'] === 2 || (float) $inv['total'] <= 0) {
+            return 1.0;
+        }
+        $paid = $this->row('SELECT SUM(amount) AS s FROM ' . $this->tbl('invoicepaymentrecords') . ' WHERE invoiceid = ?', [(int) $invoice_id]);
+        return min(1.0, (float) ($paid['s'] ?? 0) / (float) $inv['total']);
     }
 
-    /** بيفعّل الباقة لما فاتورتها تتدفع، وبيقفلها لما مدتها تخلص */
+    /** الباقة مدفوع منها كام (الباقة اللي اتفعلت يدوي من غير فاتورة = متدفعة كلها) */
+    public function package_paid_ratio(array $p)
+    {
+        if ($p['invoice_id']) {
+            return $this->invoice_paid_ratio($p['invoice_id']);
+        }
+        return $p['status'] === 'pending' ? 0.0 : 1.0;
+    }
+
+    /** بيفعّل الباقة لما اللي اتدفع من فاتورتها يوصل لنسبة التفعيل (50% افتراضي)، وبيقفلها لما مدتها تخلص */
     public function sync_package_status($package_id)
     {
         $p = $this->package($package_id);
-        if ($p['status'] === 'pending' && $this->invoice_paid($p['invoice_id'])) {
+        if ($p['status'] === 'pending' && $p['invoice_id']
+            && $this->invoice_paid_ratio($p['invoice_id']) * 100 >= (float) $this->opt('dse_activation_paid_pct', 50) - 0.001) {
             $this->db->update($this->tbl('dse_packages'), ['status' => 'active', 'activated_at' => $this->now()], ['id' => $p['id']]);
             $p['status'] = 'active';
         }
@@ -472,7 +492,67 @@ class Dse_studio_model extends App_Model
         }
         $this->db->update($this->tbl('dse_sessions'), ['status' => 'done', 'actual_qty' => $actual_qty, 'updated_at' => $this->now()], ['id' => $s['id']]);
         $this->add_usage($s['package_id'], $s['type'], $actual_qty, 'session', $s['id']);
+        $this->check_payment_due($s['package_id']);
     }
+
+    /**
+     * الشغل اللي اتسلّم لكل نوع: الريلز = الأكبر بين اللي اتصور واللي نزل، التصميمات = اللي نزل، الساعات = اللي اتستخدم
+     * @return array type => [done, total, ratio]
+     */
+    public function delivered($package_id)
+    {
+        $out    = [];
+        $posts  = [];
+        foreach ($this->rows('SELECT type, COUNT(*) AS n FROM ' . $this->tbl('dse_posts') . ' WHERE package_id = ? GROUP BY type', [(int) $package_id]) as $r) {
+            $posts[$r['type']] = (float) $r['n'];
+        }
+        $filmed = [];
+        foreach ($this->rows('SELECT type, SUM(qty) AS q FROM ' . $this->tbl('dse_usage') . " WHERE package_id = ? AND reason = 'session' GROUP BY type", [(int) $package_id]) as $r) {
+            $filmed[$r['type']] = (float) $r['q'];
+        }
+        foreach ($this->balance($package_id) as $type => $b) {
+            $done = $type === 'design' ? ($posts['design'] ?? 0) : max($filmed[$type] ?? 0, $posts[$type] ?? 0);
+            $out[$type] = ['done' => $done, 'total' => $b['total'], 'ratio' => $b['total'] > 0 ? min(1, $done / $b['total']) : 0];
+        }
+        return $out;
+    }
+
+    /**
+     * العميل دافع جزء بس (50% مثلًا) والشغل اللي اتسلّم وصل لنفس النسبة → تنبيه + إيميل لإنجي ومريم
+     * (مرة واحدة لكل نسبة دفع — لو دفع زيادة والشغل وصلها تاني بيطلع تنبيه جديد)
+     */
+    public function check_payment_due($package_id)
+    {
+        $p = $this->package($package_id);
+        if ($p['status'] !== 'active') {
+            return false;
+        }
+        $paid = $this->package_paid_ratio($p);
+        if ($paid >= 0.999) {
+            return false;
+        }
+        $del  = $this->delivered($p['id']);
+        $hit  = array_filter($del, function ($d) use ($paid) { return $d['total'] > 0 && $d['ratio'] >= $paid - 0.001; });
+        if (!$hit) {
+            return false;
+        }
+        $c     = $this->client($p['clientid']);
+        $parts = [];
+        foreach ($hit as $type => $d) {
+            $parts[] = dse_num($d['done']) . ' من ' . dse_num($d['total']) . ' ' . dse_unit($type);
+        }
+        $pct = (int) round($paid * 100);
+        $msg = $c['company'] . ' دافع ' . $pct . '% بس من باقة "' . $p['name'] . '" (' . dse_money($p['price'] * $paid) . ' من ' . dse_money($p['price']) . ')'
+            . ' والشغل وصل لـ ' . implode(' · ', $parts) . ' — لازم يدفع الباقي قبل ما نكمل.';
+        $id = $this->add_alert($p['clientid'], 'payment_due', 'payment_due:' . $p['id'] . ':' . $pct, $msg, 'urgent');
+        if ($id) {
+            $this->new_alerts[] = $id;
+        }
+        return $id;
+    }
+
+    /** @var int[] تنبيهات اتعملت في الطلب ده (الكنترولر بيبعت عنها إشعار وإيميل) */
+    public $new_alerts = [];
 
     private function penalty($s, $avail_extra = 0)
     {
@@ -664,7 +744,27 @@ class Dse_studio_model extends App_Model
             'type' => $type, 'post_url' => $post_url, 'feedback_url' => $feedback,
             'balance' => $pkg ? $this->balance_text($pkg['id']) : '', 'end_date' => $pkg ? $pkg['end_date'] : '',
         ]);
+        if ($pkg) {
+            $this->check_payment_due($pkg['id']);
+        }
         return $id;
+    }
+
+    /** العملاء اللي عندهم جروب أو باقة — للمودريشن */
+    public function clients_for_publishing()
+    {
+        return $this->rows('SELECT c.userid, ' . $this->name_sql('c') . ' AS company, x.wa_group_jid,
+                   (SELECT p.status FROM ' . $this->tbl('dse_packages') . " p WHERE p.clientid = c.userid AND p.status = 'active' LIMIT 1) AS pkg
+              FROM " . $this->tbl('clients') . ' c LEFT JOIN ' . $this->tbl('dse_clients') . ' x ON x.clientid = c.userid
+             WHERE c.active = 1 ORDER BY (x.wa_group_jid IS NULL), company');
+    }
+
+    public function recent_posts($limit = 40)
+    {
+        return $this->rows('SELECT po.*, ' . $this->name_sql('c') . ' AS company,
+                   (SELECT o.status FROM ' . $this->tbl('dse_wa_outbox') . " o WHERE o.dedupe_key = CONCAT('published:', po.id)) AS wa_status
+              FROM " . $this->tbl('dse_posts') . ' po JOIN ' . $this->tbl('clients') . ' c ON c.userid = po.clientid
+             ORDER BY po.id DESC LIMIT ' . (int) $limit);
     }
 
     public function client_posts($clientid, $limit = 30)
@@ -675,21 +775,37 @@ class Dse_studio_model extends App_Model
     // =================================================================
     // الواتساب: جروب العميل + الـ outbox (بيتبعت من الـ cron)
     // =================================================================
+    /** رسايل العميل بتروح جروبه بس — مفيش خاص */
     public function wa_destination($clientid)
     {
         $c = $this->client($clientid);
-        return $c['wa_group_jid'] ?: $c['wa_phone'];
+        return $c['wa_group_jid'] ?: null;
     }
 
-    /** بيحط رسالة في الطابور مرة واحدة بس لكل dedupe_key */
+    /**
+     * بيحط رسالة في الطابور مرة واحدة بس لكل dedupe_key.
+     * لو العميل مالوش جروب: الرسالة اليدوية بترجع خطأ، والأوتوماتيك بيطلع تنبيه للفريق (ومبتتبعتش خاص)
+     */
     public function queue_wa($clientid, $key, $dedupe, array $payload, $manual = false)
     {
         if ($this->row('SELECT id FROM ' . $this->tbl('dse_wa_outbox') . ' WHERE dedupe_key = ?', [$dedupe])) {
             return false;
         }
-        $dest = $this->wa_destination($clientid);
         $body = dse_wa_text($key, $payload);
-        if (!$dest || $body === null || $body === '') {
+        if ($body === null || $body === '') {
+            return false;
+        }
+        $dest = $this->wa_destination($clientid);
+        if (!$dest) {
+            if ($manual) {
+                throw new Exception('العميل مالوش جروب واتساب — اعمل الجروب أو اربطه الأول (الرسايل بتروح الجروب بس)');
+            }
+            $c  = $this->client($clientid);
+            $id = $this->add_alert($clientid, 'no_group', 'no_group:' . $clientid . ':' . $this->today(),
+                $c['company'] . ' مالوش جروب واتساب — رسالة "' . (dse_wa_labels()[$key] ?? $key) . '" ماتبعتتش. اعمل الجروب من صفحة العميل.');
+            if ($id) {
+                $this->new_alerts[] = $id;
+            }
             return false;
         }
         $this->db->insert($this->tbl('dse_wa_outbox'), [
@@ -707,9 +823,6 @@ class Dse_studio_model extends App_Model
             throw new Exception('نوع رسالة غير معروف');
         }
         $c = $this->client($clientid);
-        if (!$c['wa_group_jid'] && !$c['wa_phone']) {
-            throw new Exception('العميل مالوش جروب ولا رقم واتساب');
-        }
         return $this->queue_wa($clientid, $key, 'manual:' . $key . ':' . $clientid . ':' . microtime(true), [
             'client_name' => $c['company'], 'rules' => $this->opt('dse_rules_text', ''),
         ], true);
@@ -732,6 +845,10 @@ class Dse_studio_model extends App_Model
         foreach ($queue as $m) {
             if ($done >= $limit) {
                 break;
+            }
+            if (substr($m['destination'], -5) !== '@g.us') {
+                $this->db->update($this->tbl('dse_wa_outbox'), ['status' => 'failed', 'error' => 'مش جروب — رسايل العملاء بتروح الجروب بس'], ['id' => $m['id'], 'status' => 'queued']);
+                continue;
             }
             if (!$m['manual']) {
                 $n = $this->row('SELECT COUNT(*) AS n FROM ' . $this->tbl('dse_wa_outbox') . " WHERE destination = ? AND manual = 0 AND status IN ('sent','sending') AND sent_at >= ?", [$m['destination'], $since]);
@@ -893,6 +1010,16 @@ class Dse_studio_model extends App_Model
         return $new;
     }
 
+    /** كل الباقات الشغالة: هل الشغل سبق الفلوس؟ (مع الـ cron — لو اتسجل دفع أو اتلغى) */
+    public function check_all_payments()
+    {
+        $this->new_alerts = [];
+        foreach ($this->rows('SELECT id FROM ' . $this->tbl('dse_packages') . " WHERE status = 'active'") as $p) {
+            $this->check_payment_due($p['id']);
+        }
+        return $this->new_alerts;
+    }
+
     /** كل الباقات: تفعيل بالفاتورة + انتهاء المدة */
     public function sync_all_packages()
     {
@@ -911,6 +1038,8 @@ class Dse_studio_model extends App_Model
             'client'   => $this->client($clientid),
             'package'  => $pkg,
             'balance'  => $pkg ? $this->balance($pkg['id']) : [],
+            'paid'     => $pkg ? $this->package_paid_ratio($pkg) : 0,
+            'delivered'=> $pkg ? $this->delivered($pkg['id']) : [],
             'packages' => $this->client_packages($clientid),
             'next'     => $this->row('SELECT s.*, st.name AS studio FROM ' . $this->tbl('dse_sessions') . ' s JOIN ' . $this->tbl('dse_studios') . " st ON st.id = s.studio_id WHERE s.clientid = ? AND s.status = 'booked' AND s.start_at >= ? ORDER BY s.start_at LIMIT 1", [(int) $clientid, $this->now()]),
         ];

@@ -38,9 +38,17 @@ function dse_studio_admin_init()
             'create' => _l('dse_cap_create'),
             'edit'   => _l('dse_cap_edit'),
             'delete' => _l('dse_cap_delete'),
+            'publish' => _l('dse_cap_publish'),
         ],
     ], _l('dse_studio'));
 
+    $can_publish = staff_can('publish', DSE_STUDIO_MODULE_NAME) || staff_can('create', DSE_STUDIO_MODULE_NAME);
+    if (!staff_can('view', DSE_STUDIO_MODULE_NAME) && $can_publish) {
+        // المودريشن: صفحة النشر بس
+        $CI->app_menu->add_sidebar_menu_item('dse-studio-publish', [
+            'name' => _l('dse_menu_publish'), 'href' => admin_url('dse_studio/publishing'), 'position' => 6, 'icon' => 'fa fa-share-square-o',
+        ]);
+    }
     if (staff_can('view', DSE_STUDIO_MODULE_NAME)) {
         $CI->app_menu->add_sidebar_menu_item('dse-studio', [
             'name'     => _l('dse_studio'),
@@ -51,6 +59,7 @@ function dse_studio_admin_init()
         $children = [
             ['dse-studio-home', 'dse_menu_home', 'dse_studio', 1],
             ['dse-studio-calendar', 'dse_menu_calendar', 'dse_studio/calendar', 2],
+            ['dse-studio-publish', 'dse_menu_publish', 'dse_studio/publishing', 2],
             ['dse-studio-alerts', 'dse_menu_alerts', 'dse_studio/alerts', 3],
             ['dse-studio-outbox', 'dse_menu_outbox', 'dse_studio/outbox', 4],
         ];
@@ -95,7 +104,7 @@ function dse_studio_cron()
     update_option('dse_last_daily_run', date('Y-m-d'));
     try {
         $CI->dse_studio_model->sync_all_packages();
-        $new = $CI->dse_studio_model->check_inactive_clients();
+        $new = array_merge($CI->dse_studio_model->check_inactive_clients(), $CI->dse_studio_model->check_all_payments());
         if ($new) {
             dse_studio_notify_staff($new);
         }
@@ -104,32 +113,45 @@ function dse_studio_cron()
     }
 }
 
-/** إشعار جوه Perfex + إيميل للموظفين اللي في الإعدادات (أو كل الأدمنز) */
+/**
+ * إشعار جوه Perfex (الجرس) + إيميل للموظفين المسؤولين عن نوع التنبيه:
+ * payment_due → dse_payment_notify_staff_ids · الباقي → dse_notify_staff_ids (فاضي = الأدمنز)
+ */
 function dse_studio_notify_staff(array $alert_ids)
 {
-    $CI  = &get_instance();
-    $ids = array_filter(array_map('intval', preg_split('/[\s,;]+/', (string) get_option('dse_notify_staff_ids'))));
-    $where = $ids ? 'staffid IN (' . implode(',', $ids) . ')' : 'admin = 1';
-    $staff = $CI->db->query('SELECT staffid, email FROM ' . db_prefix() . 'staff WHERE active = 1 AND ' . $where)->result_array();
+    $CI = &get_instance();
     $CI->load->model('emails_model');
+    $subjects = [
+        'payment_due'     => 'العميل محتاج يدفع الباقي',
+        'client_inactive' => 'عميل مابيصوّرش',
+        'no_group'        => 'عميل مالوش جروب واتساب',
+    ];
 
-    foreach ($alert_ids as $aid) {
+    foreach (array_unique($alert_ids) as $aid) {
         $a = $CI->db->query('SELECT * FROM ' . db_prefix() . 'dse_alerts WHERE id = ?', [(int) $aid])->row_array();
         if (!$a) {
             continue;
         }
+        $opt   = $a['alert_key'] === 'payment_due' ? 'dse_payment_notify_staff_ids' : 'dse_notify_staff_ids';
+        $ids   = array_filter(array_map('intval', preg_split('/[\s,;]+/', (string) get_option($opt))));
+        $where = $ids ? 'staffid IN (' . implode(',', $ids) . ')' : 'admin = 1';
+        $staff = $CI->db->query('SELECT staffid, email FROM ' . db_prefix() . 'staff WHERE active = 1 AND ' . $where)->result_array();
+        $subject = ($a['priority'] === 'urgent' ? '⚠️ ' : '') . ($subjects[$a['alert_key']] ?? 'تنبيه من الاستوديو');
+        $link    = $a['clientid'] ? 'dse_studio/client/' . $a['clientid'] : 'dse_studio/alerts';
+
         $notified = [];
         foreach ($staff as $s) {
             if (function_exists('add_notification') && add_notification([
                 'description'     => 'dse_notification_alert',
                 'touserid'        => $s['staffid'],
-                'link'            => 'dse_studio/alerts',
+                'link'            => $link,
                 'additional_data' => serialize([mb_substr($a['message'], 0, 150)]),
             ])) {
                 $notified[] = $s['staffid'];
             }
             if (method_exists($CI->emails_model, 'send_simple_email')) {
-                $CI->emails_model->send_simple_email($s['email'], ($a['priority'] === 'urgent' ? '⚠️ ' : '') . 'تنبيه: عميل مابيصوّرش', nl2br(html_escape($a['message'])) . '<br><br><a href="' . admin_url('dse_studio/client/' . $a['clientid']) . '">افتح العميل</a>');
+                $CI->emails_model->send_simple_email($s['email'], $subject,
+                    '<div dir="rtl">' . nl2br(html_escape($a['message'])) . '<br><br><a href="' . admin_url($link) . '">افتح في Perfex</a></div>');
             }
         }
         if ($notified && function_exists('pusher_trigger_notification')) {
