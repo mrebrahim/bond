@@ -96,10 +96,18 @@ class Dse_studio extends AdminController
         $data['posts']    = $this->dse_studio_model->client_posts($id);
         $data['outbox']   = $this->dse_studio_model->outbox(20, $id);
         $data['invoices'] = $this->db->query('SELECT id, prefix, number, total, status, date FROM ' . db_prefix() . 'invoices WHERE clientid = ? ORDER BY id DESC LIMIT 30', [(int) $id])->result_array();
-        $data['balances'] = [];
+        $data['balances'] = $data['pkg_invoices'] = $data['pkg_events'] = $data['pkg_paid'] = [];
+        $linked = [];
         foreach ($data['packages'] as $p) {
-            $data['balances'][$p['id']] = $this->dse_studio_model->balance($p['id']);
+            $data['balances'][$p['id']]     = $this->dse_studio_model->balance($p['id']);
+            $data['pkg_invoices'][$p['id']] = $this->dse_studio_model->package_invoices($p['id']);
+            $data['pkg_events'][$p['id']]   = $this->dse_studio_model->package_events($p['id']);
+            $data['pkg_paid'][$p['id']]     = $this->dse_studio_model->package_paid_amount($p);
+            $linked = array_merge($linked, array_column($data['pkg_invoices'][$p['id']], 'invoice_id'));
         }
+        // الفواتير اللي لسه مش متربطة بباقة
+        $all_linked = array_column($this->db->query('SELECT invoice_id FROM ' . db_prefix() . 'dse_package_invoices')->result_array(), 'invoice_id');
+        $data['free_invoices'] = array_values(array_filter($data['invoices'], function ($i) use ($all_linked) { return !in_array($i['id'], $all_linked); }));
         $this->load->view('client', $data);
     }
 
@@ -187,8 +195,27 @@ class Dse_studio extends AdminController
         $m = $this->dse_studio_model;
         $p = $m->package($package_id);
         $this->act('edit', function () use ($m, $package_id) {
-            $st = $m->link_invoice($package_id, $this->post('invoice_id'));
+            $st = $m->link_invoice($package_id, $this->post('invoice_id'), $this->post('note'));
             return $st === 'active' ? 'الفاتورة اتربطت والباقة اتفعلت' : 'الفاتورة اتربطت — الباقة هتتفعل أول ما تتدفع';
+        }, admin_url('dse_studio/client/' . $p['clientid']));
+    }
+
+    public function unlink_invoice($package_id, $invoice_id)
+    {
+        $m = $this->dse_studio_model;
+        $p = $m->package($package_id);
+        $this->act('edit', function () use ($m, $package_id, $invoice_id) { $m->unlink_invoice($package_id, $invoice_id); return 'الفاتورة اتشالت من الباقة'; },
+            admin_url('dse_studio/client/' . $p['clientid']));
+    }
+
+    public function upgrade_package($package_id)
+    {
+        $m = $this->dse_studio_model;
+        $p = $m->package($package_id);
+        $this->act('edit', function () use ($m, $package_id) {
+            $ev = $m->upgrade_package($package_id, (array) $this->input->post('items'), $this->post('price', 0),
+                $this->post('extend_days', 0), $this->post('invoice_id'), $this->post('note'));
+            return ['upgrade' => 'الباقة اترقّت ✅', 'downgrade' => 'الباقة اتعدّلت (أقل)', 'edit' => 'الباقة اتعدّلت'][$ev];
         }, admin_url('dse_studio/client/' . $p['clientid']));
     }
 

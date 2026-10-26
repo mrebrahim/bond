@@ -69,7 +69,7 @@ $db->pdo->exec('CREATE TABLE tblcontacts (id INTEGER PRIMARY KEY AUTOINCREMENT, 
 $db->pdo->exec('CREATE TABLE tblstaff (staffid INTEGER PRIMARY KEY, firstname TEXT, lastname TEXT, email TEXT, active INT, admin INT)');
 $db->pdo->exec("INSERT INTO tblstaff VALUES (7, 'أندرو', 'إسحاق', 'a@x.com', 1, 0)");
 $db->pdo->exec('CREATE TABLE tblinvoicepaymentrecords (id INTEGER PRIMARY KEY AUTOINCREMENT, invoiceid INT, amount REAL)');
-$db->pdo->exec('CREATE TABLE tblinvoices (id INTEGER PRIMARY KEY AUTOINCREMENT, clientid INT, total REAL, status INT)');
+$db->pdo->exec('CREATE TABLE tblinvoices (id INTEGER PRIMARY KEY AUTOINCREMENT, clientid INT, total REAL, status INT, prefix TEXT DEFAULT "INV-", number INT DEFAULT 1, date TEXT)');
 
 $sent = [];
 $evo  = new Dse_evolution();
@@ -277,6 +277,60 @@ test('دافع 50%: الباقة بتتفعل، ولما الشغل يوصل 50%
     $m->cancel_package($pkg);
 });
 
+echo "\nالأقساط والترقية:\n";
+test('مثال: 5000 (8 ريل + 4 تصميم) اتدفعوا ← ترقية لـ 20 ريل والسعر 13000 ← فاتورة الفرق على قسطين', function () use ($m, $db) {
+    $db->insert('tblclients', ['company' => 'كافيه الترقية', 'phonenumber' => '01099999999']);
+    $cl = $db->insert_id();
+    $m->save_client_wa($cl, ['wa_group_jid' => '120363000000000009@g.us']);
+    $db->insert('tblinvoices', ['clientid' => $cl, 'total' => 5000, 'status' => 2]);
+    $inv1 = $db->insert_id();
+    $pkg = $m->create_package($cl, 'Basic', 5000, '2026-11-01', 30, ['reel' => 8, 'design' => 4], $inv1);
+    ok($m->package($pkg)['status'] === 'active' && $m->package_paid_ratio($m->package($pkg)) == 1.0);
+    // صوّر 6 ريل
+    $st = $m->add_studio('استوديو الترقية');
+    $sid = $m->book_session($cl, $st, '2026-11-03 12:00', 'reel', 6);
+    $m->complete_session($sid, 6);
+    // الترقية: مينفعش ينزل أقل من اللي اتستخدم
+    throws(function () use ($m, $pkg) { $m->upgrade_package($pkg, ['reel' => 5, 'design' => 4], 5000); }, 'مينفعش أقل من 6');
+    $db->insert('tblinvoices', ['clientid' => $cl, 'total' => 8000, 'status' => 1]);
+    $inv2 = $db->insert_id();
+    $m->new_alerts = [];
+    ok($m->upgrade_package($pkg, ['reel' => 20, 'design' => 4], 13000, 0, $inv2, 'ترقية لـ 20 ريل') === 'upgrade');
+    $b = $m->balance($pkg);
+    ok($b['reel']['total'] == 20 && $b['reel']['used'] == 6 && $b['reel']['remaining'] == 14, json_encode($b));
+    ok(abs($m->package_paid_amount($m->package($pkg)) - 5000) < 0.01);
+    ok(count($m->package_invoices($pkg)) === 2 && $m->package_invoices($pkg)[1]['note'] === 'فرق الترقية');
+    ok(count($m->package_events($pkg)) === 1);
+    // دافع 5000/13000 = 38% والريلز 6/20 = 30% ← لسه مفيش تنبيه
+    ok(count(q("SELECT id FROM tbldse_alerts WHERE alert_key = 'payment_due' AND clientid = ?", [$cl])) === 0, 'لسه');
+    // القسط الأول من الفرق 3000 ← 8000/13000 = 62%
+    $db->insert('tblinvoicepaymentrecords', ['invoiceid' => $inv2, 'amount' => 3000]);
+    $db->update('tblinvoices', ['status' => 3], ['id' => $inv2]);
+    ok(abs($m->package_paid_amount($m->package($pkg)) - 8000) < 0.01);
+    // صوّر لحد 13 ريل (65%) ← تنبيه "الباقي 5000"
+    $sid = $m->book_session($cl, $st, '2026-11-05 12:00', 'reel', 7);
+    $m->complete_session($sid, 7);
+    $a = q("SELECT message FROM tbldse_alerts WHERE alert_key = 'payment_due' AND clientid = ?", [$cl]);
+    ok(count($a) === 1 && strpos($a[0]['message'], 'دافع 62%') !== false && strpos($a[0]['message'], 'الباقي 5,000 ج.م') !== false && strpos($a[0]['message'], '13 من 20 ريل') !== false, json_encode($a, JSON_UNESCAPED_UNICODE));
+    // دفع الباقي ← مفيش تنبيهات تانية
+    $db->insert('tblinvoicepaymentrecords', ['invoiceid' => $inv2, 'amount' => 5000]);
+    $db->update('tblinvoices', ['status' => 2], ['id' => $inv2]);
+    ok($m->package_paid_ratio($m->package($pkg)) == 1.0);
+    ok(count($m->check_all_payments()) === 0);
+    // نفس الفاتورة مينفعش تتربط مرتين
+    throws(function () use ($m, $pkg, $inv2) { $m->link_invoice($pkg, $inv2); }, 'متربطة');
+});
+test('باقة جديدة على قسطين: بتتفعل بعد 50% من السعر', function () use ($m, $db) {
+    $db->insert('tblclients', ['company' => 'أقساط', 'phonenumber' => '']);
+    $cl = $db->insert_id();
+    $db->insert('tblinvoices', ['clientid' => $cl, 'total' => 3000, 'status' => 2]);
+    $i1 = $db->insert_id();
+    $pkg = $m->create_package($cl, 'X', 10000, '2026-11-01', 30, ['reel' => 10], $i1);
+    ok($m->package($pkg)['status'] === 'pending', '30%');
+    $db->insert('tblinvoices', ['clientid' => $cl, 'total' => 2000, 'status' => 2]);
+    ok($m->link_invoice($pkg, $db->insert_id(), 'القسط التاني') === 'active', '50%');
+});
+
 echo "\nالواتساب:\n";
 test('مقفول: مفيش ولا رسالة بتتبعت', function () use ($m, &$sent) {
     $r = $m->process_outbox(50);
@@ -315,13 +369,14 @@ test('العميل بقاله فترة مابيصوّرش → تنبيه مرة 
     ok(count($m->check_inactive_clients()) === 0, 'لسه بادئ');
     $m->fixed_time = strtotime('2026-11-27 10:00:00');
     $new = $m->check_inactive_clients();
-    ok(count($new) === 1, count($new));
-    $a = q('SELECT * FROM tbldse_alerts WHERE id = ?', [$new[0]])[0];
+    $mine = array_values(array_filter($new, function ($id) use ($client) { return q('SELECT clientid FROM tbldse_alerts WHERE id = ?', [$id])[0]['clientid'] == $client; }));
+    ok(count($mine) === 1, count($mine));
+    $a = q('SELECT * FROM tbldse_alerts WHERE id = ?', [$mine[0]])[0];
     ok($a['priority'] === 'urgent' && strpos($a['message'], 'بقاله 22 يوم') !== false && strpos($a['message'], 'المحتوى خلص') !== false, $a['message']);
     ok(count($m->check_inactive_clients()) === 0, 'مرة واحدة');
     throws(function () use ($m, $a) { $m->resolve_alert($a['id'], ''); }, 'حصل إيه');
     $m->resolve_alert($a['id'], 'كلمته وحجز');
-    ok(count(array_filter($m->alerts(true), function ($x) { return $x['alert_key'] === 'client_inactive'; })) === 0);
+    ok(count(array_filter($m->alerts(true), function ($x) { return $x['alert_key'] === 'client_inactive' && $x['clientid'] == $GLOBALS['client']; })) === 0, 'اتقفل');
 });
 test('الباقة بتخلص لوحدها بعد مدتها', function () use ($m, $pkg) {
     $m->fixed_time = strtotime('2026-12-01 10:00:00');
@@ -356,11 +411,21 @@ set_error_handler(function ($no, $str, $file, $line) { throw new ErrorException(
 test('كل الصفحات بتترسم من غير أخطاء', function () use ($m, $client) {
     $sum = $m->client_summary($client);
     $balances = [];
-    foreach ($sum['packages'] as $p) { $balances[$p['id']] = $m->balance($p['id']); }
+    $pi = $pe = $pp = [];
+    foreach ($sum['packages'] as $p) { $balances[$p['id']] = $m->balance($p['id']); $pi[$p['id']] = $m->package_invoices($p['id']); $pe[$p['id']] = $m->package_events($p['id']); $pp[$p['id']] = $m->package_paid_amount($p); }
     render('client', $sum + ['studios' => $m->studios(), 'staff' => [['staffid' => 7, 'firstname' => 'أندرو', 'lastname' => 'إسحاق']],
         'sessions' => $m->client_sessions($client), 'scripts' => $m->client_scripts($client), 'posts' => $m->client_posts($client),
         'outbox' => $m->outbox(20, $client), 'invoices' => [['id' => 1, 'prefix' => 'INV-', 'number' => 5, 'total' => 15000, 'status' => 2, 'date' => '2026-11-01']],
-        'balances' => $balances]);
+        'balances' => $balances, 'pkg_invoices' => $pi, 'pkg_events' => $pe, 'pkg_paid' => $pp, 'free_invoices' => []]);
+    // صفحة عميل اترقّى
+    $up = q("SELECT clientid FROM tbldse_packages WHERE name = 'Basic'")[0]['clientid'];
+    $sum = $m->client_summary($up);
+    $pi = $pe = $pp = $balances = [];
+    foreach ($sum['packages'] as $p) { $balances[$p['id']] = $m->balance($p['id']); $pi[$p['id']] = $m->package_invoices($p['id']); $pe[$p['id']] = $m->package_events($p['id']); $pp[$p['id']] = $m->package_paid_amount($p); }
+    $html = render('client', $sum + ['studios' => $m->studios(), 'staff' => [], 'sessions' => $m->client_sessions($up), 'scripts' => [], 'posts' => [],
+        'outbox' => [], 'invoices' => [], 'balances' => $balances, 'pkg_invoices' => $pi, 'pkg_events' => $pe, 'pkg_paid' => $pp, 'free_invoices' => []]);
+    file_put_contents(sys_get_temp_dir() . '/dse_client.html', $html);
+    ok(strpos($html, 'ترقية') !== false && strpos($html, 'ريلز 8←20') !== false && strpos($html, 'فرق الترقية') !== false, 'تاريخ الترقية');
     render('index', ['clients' => [['userid' => 1, 'company' => 'x']], 'packages' => $m->clients_with_packages(),
         'today' => $m->sessions_between('2026-11-01', '2026-12-01'), 'alerts' => 2]);
     $cal = render('calendar', ['start' => '2026-10-31', 'studio' => 0, 'cancelled' => true, 'studios' => $m->studios(),

@@ -140,6 +140,36 @@ function dse_studio_schema()
                 'idx_dse_wa_outbox_status' => '(`status`, `id`)',
             ],
         ],
+        // الباقة ممكن تتدفع على أكتر من فاتورة (أقساط / فرق الترقية)
+        'dse_package_invoices' => [
+            'cols' => [
+                '{pk}',
+                '`package_id` INT NOT NULL',
+                '`invoice_id` INT NOT NULL',
+                '`note` VARCHAR(150) NULL',
+                '`created_by` INT NULL',
+                '`created_at` DATETIME NOT NULL',
+            ],
+            'indexes' => ['uq_dse_package_invoices' => 'UNIQUE (`invoice_id`)', 'idx_dse_package_invoices_pkg' => '(`package_id`)'],
+        ],
+        // تاريخ الباقة: ترقية / تعديل / تمديد
+        'dse_package_events' => [
+            'cols' => [
+                '{pk}',
+                '`package_id` INT NOT NULL',
+                '`event` VARCHAR(30) NOT NULL', // upgrade / downgrade / edit
+                '`old_price` DECIMAL(12,2) NULL',
+                '`new_price` DECIMAL(12,2) NULL',
+                '`old_items` TEXT NULL',
+                '`new_items` TEXT NULL',
+                '`old_end_date` DATE NULL',
+                '`new_end_date` DATE NULL',
+                '`note` VARCHAR(255) NULL',
+                '`staff_id` INT NULL',
+                '`created_at` DATETIME NOT NULL',
+            ],
+            'indexes' => ['idx_dse_package_events_pkg' => '(`package_id`)'],
+        ],
         'dse_alerts' => [
             'cols' => [
                 '{pk}',

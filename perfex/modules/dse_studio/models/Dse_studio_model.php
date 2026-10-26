@@ -141,7 +141,6 @@ class Dse_studio_model extends App_Model
             'start_date' => $start,
             'end_date'   => $end,
             'status'     => 'pending',
-            'invoice_id' => $invoice_id ? (int) $invoice_id : null,
             'notes'      => $notes,
             'created_by' => $this->staff_id(),
             'created_at' => $this->now(),
@@ -149,6 +148,9 @@ class Dse_studio_model extends App_Model
         $id = (int) $this->db->insert_id();
         foreach ($items as $type => $qty) {
             $this->db->insert($this->tbl('dse_package_items'), ['package_id' => $id, 'type' => $type, 'qty' => $qty]);
+        }
+        if ($invoice_id) {
+            $this->link_invoice($id, $invoice_id, 'الفاتورة الأولى');
         }
         $this->sync_package_status($id);
         return $id;
@@ -216,40 +218,66 @@ class Dse_studio_model extends App_Model
     }
 
     /**
-     * نسبة اللي اتدفع من الفاتورة (0 → 1) من مدفوعات Perfex
-     * (حالات الفاتورة: 1 مش مدفوعة · 2 مدفوعة · 3 جزئي · 4 متأخرة · 5 ملغية · 6 درافت)
+     * المدفوع من فاتورة واحدة (من مدفوعات Perfex)
+     * حالات الفاتورة: 1 مش مدفوعة · 2 مدفوعة · 3 جزئي · 4 متأخرة · 5 ملغية · 6 درافت
      */
-    public function invoice_paid_ratio($invoice_id)
+    public function invoice_paid_amount($invoice_id)
     {
-        if (!$invoice_id) {
-            return 0.0;
-        }
         $inv = $this->row('SELECT total, status FROM ' . $this->tbl('invoices') . ' WHERE id = ?', [(int) $invoice_id]);
         if (!$inv || (int) $inv['status'] === 5) {
             return 0.0;
         }
-        if ((int) $inv['status'] === 2 || (float) $inv['total'] <= 0) {
-            return 1.0;
+        if ((int) $inv['status'] === 2) {
+            return (float) $inv['total'];
         }
         $paid = $this->row('SELECT SUM(amount) AS s FROM ' . $this->tbl('invoicepaymentrecords') . ' WHERE invoiceid = ?', [(int) $invoice_id]);
-        return min(1.0, (float) ($paid['s'] ?? 0) / (float) $inv['total']);
+        return min((float) $inv['total'], (float) ($paid['s'] ?? 0));
     }
 
-    /** الباقة مدفوع منها كام (الباقة اللي اتفعلت يدوي من غير فاتورة = متدفعة كلها) */
+    /** فواتير الباقة (الأولى + الأقساط + فرق الترقية) ومدفوع من كل واحدة كام */
+    public function package_invoices($package_id)
+    {
+        $rows = $this->rows('SELECT pi.invoice_id, pi.note, i.prefix, i.number, i.total, i.status, i.date FROM ' . $this->tbl('dse_package_invoices') . ' pi
+             JOIN ' . $this->tbl('invoices') . ' i ON i.id = pi.invoice_id WHERE pi.package_id = ? ORDER BY pi.id', [(int) $package_id]);
+        foreach ($rows as &$r) {
+            $r['paid'] = $this->invoice_paid_amount($r['invoice_id']);
+        }
+        return $rows;
+    }
+
+    /** الباقة مدفوع منها كام جنيه (مجموع كل فواتيرها) */
+    public function package_paid_amount(array $p)
+    {
+        $sum = 0.0;
+        foreach ($this->rows('SELECT invoice_id FROM ' . $this->tbl('dse_package_invoices') . ' WHERE package_id = ?', [(int) $p['id']]) as $r) {
+            $sum += $this->invoice_paid_amount($r['invoice_id']);
+        }
+        return $sum;
+    }
+
+    /**
+     * نسبة اللي اتدفع من سعر الباقة (0 → 1).
+     * الباقة اللي اتفعلت يدوي ومن غير فواتير = متدفعة كلها.
+     */
     public function package_paid_ratio(array $p)
     {
-        if ($p['invoice_id']) {
-            return $this->invoice_paid_ratio($p['invoice_id']);
+        $has = $this->row('SELECT id FROM ' . $this->tbl('dse_package_invoices') . ' WHERE package_id = ? LIMIT 1', [(int) $p['id']]);
+        if (!$has) {
+            return $p['status'] === 'pending' ? 0.0 : 1.0;
         }
-        return $p['status'] === 'pending' ? 0.0 : 1.0;
+        if ((float) $p['price'] <= 0) {
+            return 1.0;
+        }
+        return min(1.0, $this->package_paid_amount($p) / (float) $p['price']);
     }
 
-    /** بيفعّل الباقة لما اللي اتدفع من فاتورتها يوصل لنسبة التفعيل (50% افتراضي)، وبيقفلها لما مدتها تخلص */
+    /** بيفعّل الباقة لما المدفوع يوصل لنسبة التفعيل (50% افتراضي)، وبيقفلها لما مدتها تخلص */
     public function sync_package_status($package_id)
     {
         $p = $this->package($package_id);
-        if ($p['status'] === 'pending' && $p['invoice_id']
-            && $this->invoice_paid_ratio($p['invoice_id']) * 100 >= (float) $this->opt('dse_activation_paid_pct', 50) - 0.001) {
+        if ($p['status'] === 'pending'
+            && $this->package_paid_ratio($p) * 100 >= (float) $this->opt('dse_activation_paid_pct', 50) - 0.001
+            && $this->row('SELECT id FROM ' . $this->tbl('dse_package_invoices') . ' WHERE package_id = ? LIMIT 1', [(int) $p['id']])) {
             $this->db->update($this->tbl('dse_packages'), ['status' => 'active', 'activated_at' => $this->now()], ['id' => $p['id']]);
             $p['status'] = 'active';
         }
@@ -267,15 +295,94 @@ class Dse_studio_model extends App_Model
         }
     }
 
-    public function link_invoice($package_id, $invoice_id)
+    /** يربط فاتورة (قسط / فرق ترقية) بالباقة — الفاتورة الواحدة لباقة واحدة بس */
+    public function link_invoice($package_id, $invoice_id, $note = null)
     {
         $p   = $this->package($package_id);
         $inv = $this->row('SELECT id, clientid FROM ' . $this->tbl('invoices') . ' WHERE id = ?', [(int) $invoice_id]);
         if (!$inv || (int) $inv['clientid'] !== (int) $p['clientid']) {
             throw new Exception('الفاتورة دي مش بتاعة العميل ده');
         }
-        $this->db->update($this->tbl('dse_packages'), ['invoice_id' => (int) $invoice_id], ['id' => $p['id']]);
-        return $this->sync_package_status($p['id']);
+        $used = $this->row('SELECT package_id FROM ' . $this->tbl('dse_package_invoices') . ' WHERE invoice_id = ?', [(int) $invoice_id]);
+        if ($used) {
+            throw new Exception((int) $used['package_id'] === (int) $p['id'] ? 'الفاتورة دي متربطة بالباقة دي خلاص' : 'الفاتورة دي متربطة بباقة تانية');
+        }
+        $this->db->insert($this->tbl('dse_package_invoices'), [
+            'package_id' => $p['id'], 'invoice_id' => (int) $invoice_id, 'note' => $note,
+            'created_by' => $this->staff_id(), 'created_at' => $this->now(),
+        ]);
+        $st = $this->sync_package_status($p['id']);
+        $this->check_payment_due($p['id']);
+        return $st;
+    }
+
+    public function unlink_invoice($package_id, $invoice_id)
+    {
+        $this->db->query('DELETE FROM ' . $this->tbl('dse_package_invoices') . ' WHERE package_id = ? AND invoice_id = ?', [(int) $package_id, (int) $invoice_id]);
+    }
+
+    /**
+     * ترقية / تعديل الباقة: العدد الجديد لكل خدمة + السعر الجديد (+ تمديد اختياري + فاتورة الفرق).
+     * اللي اتصوّر واتنشر قبل كده بيفضل محسوب من نفس الباقة.
+     * مينفعش تنزّل خدمة أقل من اللي اتستخدم + المحجوز.
+     */
+    public function upgrade_package($package_id, array $items, $new_price, $extend_days = 0, $invoice_id = null, $note = null)
+    {
+        $p = $this->package($package_id);
+        if (!in_array($p['status'], ['pending', 'active'], true)) {
+            throw new Exception('الباقة دي خلصت أو اتلغت — اعمل باقة جديدة');
+        }
+        $bal   = $this->balance($p['id']);
+        $items = array_intersect_key(array_map('floatval', $items), dse_types());
+        $new   = [];
+        foreach (dse_types() as $type => $_) {
+            $q = isset($items[$type]) ? max(0, $items[$type]) : ($bal[$type]['total'] ?? 0);
+            if (isset($bal[$type]) && $q < $bal[$type]['used'] + $bal[$type]['reserved']) {
+                throw new Exception(dse_type_name($type) . ': مينفعش أقل من ' . dse_num($bal[$type]['used'] + $bal[$type]['reserved']) . ' (اتستخدم ' . dse_num($bal[$type]['used']) . ' ومحجوز ' . dse_num($bal[$type]['reserved']) . ')');
+            }
+            if ($q > 0 || isset($bal[$type])) {
+                $new[$type] = $q;
+            }
+        }
+        if (!array_filter($new)) {
+            throw new Exception('الباقة لازم يبقى فيها خدمة واحدة على الأقل');
+        }
+        $new_price = (float) $new_price;
+        if ($new_price < 0) {
+            throw new Exception('السعر غلط');
+        }
+        $old_items = array_map(function ($b) { return $b['total']; }, $bal);
+        $old_value = array_sum($old_items);
+        $new_value = array_sum($new);
+        $event     = $new_value > $old_value || $new_price > (float) $p['price'] ? 'upgrade' : ($new_value < $old_value ? 'downgrade' : 'edit');
+        $new_end   = (int) $extend_days > 0 ? date('Y-m-d', strtotime($p['end_date'] . ' +' . (int) $extend_days . ' days')) : $p['end_date'];
+
+        foreach ($new as $type => $q) {
+            if (isset($bal[$type])) {
+                $this->db->update($this->tbl('dse_package_items'), ['qty' => $q], ['package_id' => $p['id'], 'type' => $type]);
+            } elseif ($q > 0) {
+                $this->db->insert($this->tbl('dse_package_items'), ['package_id' => $p['id'], 'type' => $type, 'qty' => $q]);
+            }
+        }
+        $this->db->update($this->tbl('dse_packages'), ['price' => $new_price, 'end_date' => $new_end], ['id' => $p['id']]);
+        $this->db->insert($this->tbl('dse_package_events'), [
+            'package_id' => $p['id'], 'event' => $event,
+            'old_price' => (float) $p['price'], 'new_price' => $new_price,
+            'old_items' => json_encode($old_items), 'new_items' => json_encode($new),
+            'old_end_date' => $p['end_date'], 'new_end_date' => $new_end,
+            'note' => $note, 'staff_id' => $this->staff_id(), 'created_at' => $this->now(),
+        ]);
+        if ($invoice_id) {
+            $this->link_invoice($p['id'], $invoice_id, $event === 'upgrade' ? 'فرق الترقية' : 'تعديل الباقة');
+        }
+        $this->sync_package_status($p['id']);
+        $this->check_payment_due($p['id']);
+        return $event;
+    }
+
+    public function package_events($package_id)
+    {
+        return $this->rows('SELECT * FROM ' . $this->tbl('dse_package_events') . ' WHERE package_id = ? ORDER BY id', [(int) $package_id]);
     }
 
     /** تفعيل يدوي (أدمن) — مثلًا لو الدفع كاش ومفيش فاتورة */
@@ -541,10 +648,12 @@ class Dse_studio_model extends App_Model
         foreach ($hit as $type => $d) {
             $parts[] = dse_num($d['done']) . ' من ' . dse_num($d['total']) . ' ' . dse_unit($type);
         }
-        $pct = (int) round($paid * 100);
-        $msg = $c['company'] . ' دافع ' . $pct . '% بس من باقة "' . $p['name'] . '" (' . dse_money($p['price'] * $paid) . ' من ' . dse_money($p['price']) . ')'
-            . ' والشغل وصل لـ ' . implode(' · ', $parts) . ' — لازم يدفع الباقي قبل ما نكمل.';
-        $id = $this->add_alert($p['clientid'], 'payment_due', 'payment_due:' . $p['id'] . ':' . $pct, $msg, 'urgent');
+        $pct    = (int) round($paid * 100);
+        $amount = $this->package_paid_amount($p);
+        $msg    = $c['company'] . ' دافع ' . $pct . '% بس من باقة "' . $p['name'] . '" (' . dse_money($amount) . ' من ' . dse_money($p['price'])
+            . ' — الباقي ' . dse_money(max(0, $p['price'] - $amount)) . ') والشغل وصل لـ ' . implode(' · ', $parts) . ' — لازم يدفع الباقي قبل ما نكمل.';
+        $units  = array_sum(array_column($del, 'total'));
+        $id     = $this->add_alert($p['clientid'], 'payment_due', 'payment_due:' . $p['id'] . ':' . $pct . ':' . dse_num($units) . ':' . dse_num($p['price']), $msg, 'urgent');
         if ($id) {
             $this->new_alerts[] = $id;
         }
