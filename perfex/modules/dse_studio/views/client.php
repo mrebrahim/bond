@@ -1,0 +1,254 @@
+<?php defined('BASEPATH') or exit('No direct script access allowed'); ?>
+<?php init_head(); ?>
+<?php
+$cid      = (int) $client['userid'];
+$can_book = staff_can('create', DSE_STUDIO_MODULE_NAME);
+$can_pkg  = staff_can('edit', DSE_STUDIO_MODULE_NAME);
+$inv_status = [1 => 'مش مدفوعة', 2 => 'مدفوعة', 3 => 'مدفوعة جزئيًا', 4 => 'متأخرة', 5 => 'ملغية', 6 => 'درافت'];
+$inv_name = function ($i) { return function_exists('format_invoice_number') ? format_invoice_number($i['id']) : ($i['prefix'] . $i['number']); };
+?>
+<div id="wrapper">
+  <div class="content dse">
+    <div class="row">
+      <div class="col-md-12">
+        <h4 class="tw-font-semibold">
+          <?= html_escape($client['company']); ?> <small><?= $client['code']; ?></small>
+          <a class="btn btn-default btn-sm pull-left" href="<?= admin_url('clients/client/' . $cid); ?>">ملف العميل في Perfex</a>
+        </h4>
+      </div>
+
+      <!-- ===== الرصيد ===== -->
+      <div class="col-md-12">
+        <div class="panel_s"><div class="panel-body">
+          <?php if ($package) { ?>
+            <h5 class="bold">الباقة الشغالة: <?= html_escape($package['name']); ?> <small>لحد <?= dse_day($package['end_date']); ?></small></h5>
+            <div class="row">
+              <?php foreach ($balance as $type => $b) { ?>
+                <div class="col-sm-4 col-xs-6">
+                  <div class="dse-stat">
+                    <div class="dse-stat-num"><?= dse_num($b['remaining']); ?></div>
+                    <div><?= dse_type_name($type); ?> فاضل</div>
+                    <small class="text-muted">من <?= dse_num($b['total']); ?> · اتستخدم <?= dse_num($b['used']); ?> · محجوز <?= dse_num($b['reserved']); ?></small>
+                  </div>
+                </div>
+              <?php } ?>
+            </div>
+            <?php if ($next) { ?><p class="mtop10">📅 الجلسة الجاية: <?= dse_day($next['start_at']) . ' ' . dse_time($next['start_at']) . ' — ' . html_escape($next['studio']); ?></p><?php } ?>
+          <?php } else { ?>
+            <p class="text-warning bold">مفيش باقة شغالة — الباقة بتتفعل لما الفاتورة المربوطة بيها تتدفع.</p>
+          <?php } ?>
+        </div></div>
+      </div>
+
+      <div class="col-md-6">
+        <!-- ===== الحجز ===== -->
+        <?php if ($can_book) { ?>
+        <div class="panel_s"><div class="panel-body">
+          <h5 class="bold">📅 احجز جلسة</h5>
+          <?= form_open(admin_url('dse_studio/book/' . $cid)); ?>
+            <div class="row">
+              <div class="col-xs-6 form-group"><label>الميعاد</label><input type="datetime-local" name="start_at" class="form-control" required></div>
+              <div class="col-xs-6 form-group"><label>الاستوديو</label>
+                <select name="studio_id" class="form-control" required><?php foreach ($studios as $s) { ?><option value="<?= (int) $s['id']; ?>"><?= html_escape($s['name']); ?></option><?php } ?></select></div>
+              <div class="col-xs-6 form-group"><label>النوع</label>
+                <select name="type" class="form-control"><option value="reel">ريلز</option><option value="trainer_hours">ساعات مدرب</option></select></div>
+              <div class="col-xs-6 form-group"><label>العدد</label><input type="number" name="qty" min="0.5" step="0.5" class="form-control" required></div>
+              <div class="col-xs-12 form-group"><label>المصور</label>
+                <select name="photographer_id" class="form-control"><option value="">—</option><?php foreach ($staff as $s) { ?><option value="<?= (int) $s['staffid']; ?>"><?= html_escape($s['firstname'] . ' ' . $s['lastname']); ?></option><?php } ?></select></div>
+              <div class="col-xs-12 form-group"><label>ملاحظات</label><input name="notes" class="form-control"></div>
+            </div>
+            <p class="text-muted small">المدة واللبسات بتتحسب لوحدها، والعميل بتوصله رسالة "تم الحجز" في الجروب.</p>
+            <button class="btn btn-primary">احجز</button>
+          <?= form_close(); ?>
+        </div></div>
+        <?php } ?>
+
+        <!-- ===== الجلسات ===== -->
+        <div class="panel_s"><div class="panel-body">
+          <h5 class="bold">الجلسات</h5>
+          <?php foreach ($sessions as $s) { ?>
+            <div class="dse-row">
+              <div>
+                <b><?= dse_day($s['start_at']) . ' ' . dse_time($s['start_at']); ?></b> · <?= html_escape($s['studio']); ?> ·
+                <?= dse_num($s['qty']) . ' ' . dse_unit($s['type']); ?><?= $s['outfits'] ? ' · ' . (int) $s['outfits'] . ' لبس' : ''; ?>
+                <span class="label label-<?= ['booked' => 'info', 'done' => 'success', 'no_show' => 'danger', 'cancelled' => 'default'][$s['status']]; ?>"><?= dse_session_statuses()[$s['status']]; ?></span>
+                <?= $s['status'] === 'done' ? ' (اتصور ' . dse_num($s['actual_qty']) . ')' : ''; ?><?= $s['late_cancel'] ? ' · إلغاء متأخر' : ''; ?>
+              </div>
+              <?php if ($s['status'] === 'booked' && $can_book) { ?>
+                <div class="dse-actions">
+                  <?= form_open(admin_url('dse_studio/complete/' . $s['id']), ['class' => 'form-inline']); ?>
+                    <input type="number" name="actual_qty" min="0.5" step="0.5" value="<?= dse_num($s['qty']); ?>" class="form-control input-sm" style="width:70px" required>
+                    <button class="btn btn-success btn-xs">اتصورت</button>
+                  <?= form_close(); ?>
+                  <?= form_open(admin_url('dse_studio/reschedule/' . $s['id']), ['class' => 'form-inline']); ?>
+                    <input type="datetime-local" name="start_at" class="form-control input-sm" required>
+                    <button class="btn btn-default btn-xs">غيّر الميعاد</button>
+                  <?= form_close(); ?>
+                  <?= form_open(admin_url('dse_studio/no_show/' . $s['id']), ['class' => 'form-inline', 'onsubmit' => "return confirm('العميل مجاش؟ هيتخصم من رصيده')"]); ?>
+                    <button class="btn btn-warning btn-xs">مجاش</button>
+                  <?= form_close(); ?>
+                  <?= form_open(admin_url('dse_studio/cancel_session/' . $s['id']), ['class' => 'form-inline', 'onsubmit' => "return confirm('تلغي الجلسة؟ لو قبل الميعاد بأقل من 24 ساعة هيتخصم')"]); ?>
+                    <input name="reason" placeholder="السبب" class="form-control input-sm">
+                    <button class="btn btn-danger btn-xs">الغي</button>
+                  <?= form_close(); ?>
+                </div>
+              <?php } ?>
+            </div>
+          <?php } ?>
+          <?php if (!$sessions) { ?><p class="text-muted">لسه مفيش جلسات</p><?php } ?>
+        </div></div>
+
+        <!-- ===== الباقات ===== -->
+        <div class="panel_s"><div class="panel-body">
+          <h5 class="bold">الباقات</h5>
+          <?php foreach ($packages as $p) { ?>
+            <div class="dse-row">
+              <div>
+                <b><?= html_escape($p['name']); ?></b> · <?= dse_money($p['price']); ?> · <?= dse_day($p['start_date']); ?> ← <?= dse_day($p['end_date']); ?>
+                <span class="label label-<?= ['pending' => 'warning', 'active' => 'success', 'expired' => 'default', 'cancelled' => 'default'][$p['status']]; ?>"><?= dse_package_statuses()[$p['status']]; ?></span>
+                <div class="small text-muted">
+                  <?php foreach ($balances[$p['id']] as $t => $b) { echo dse_type_name($t) . ': ' . dse_num($b['used']) . '/' . dse_num($b['total']) . ' &nbsp; '; } ?>
+                  <?php if ($p['invoice_id']) { ?> · الفاتورة <a href="<?= admin_url('invoices/list_invoices/' . $p['invoice_id']); ?>">#<?= (int) $p['invoice_id']; ?></a><?php } ?>
+                </div>
+              </div>
+              <?php if ($p['status'] === 'pending' && $can_pkg) { ?>
+                <div class="dse-actions">
+                  <?= form_open(admin_url('dse_studio/link_invoice/' . $p['id']), ['class' => 'form-inline']); ?>
+                    <select name="invoice_id" class="form-control input-sm" required>
+                      <option value="">اربط فاتورة…</option>
+                      <?php foreach ($invoices as $i) { ?><option value="<?= (int) $i['id']; ?>"><?= html_escape($inv_name($i)) . ' — ' . dse_money($i['total']) . ' — ' . ($inv_status[(int) $i['status']] ?? ''); ?></option><?php } ?>
+                    </select>
+                    <button class="btn btn-default btn-xs">اربط</button>
+                  <?= form_close(); ?>
+                  <?php if (is_admin()) { ?>
+                    <?= form_open(admin_url('dse_studio/activate_package/' . $p['id']), ['class' => 'form-inline', 'onsubmit' => "return confirm('تفعّل الباقة من غير فاتورة مدفوعة؟')"]); ?><button class="btn btn-success btn-xs">فعّل يدوي</button><?= form_close(); ?>
+                  <?php } ?>
+                </div>
+              <?php } ?>
+              <?php if (in_array($p['status'], ['pending', 'active'], true) && staff_can('delete', DSE_STUDIO_MODULE_NAME)) { ?>
+                <?= form_open(admin_url('dse_studio/cancel_package/' . $p['id']), ['class' => 'form-inline', 'onsubmit' => "return confirm('تلغي الباقة؟')"]); ?><button class="btn btn-link btn-xs text-danger">الغي الباقة</button><?= form_close(); ?>
+              <?php } ?>
+            </div>
+          <?php } ?>
+
+          <?php if ($can_pkg) { ?>
+          <hr><h5 class="bold">باقة جديدة</h5>
+          <?= form_open(admin_url('dse_studio/create_package/' . $cid)); ?>
+            <div class="row">
+              <div class="col-xs-6 form-group"><label>اسم الباقة</label><input name="name" class="form-control" placeholder="Growth" required></div>
+              <div class="col-xs-6 form-group"><label>السعر (ج.م)</label><input type="number" name="price" min="0" class="form-control" required></div>
+              <div class="col-xs-6 form-group"><label>تبدأ</label><input type="date" name="start_date" value="<?= date('Y-m-d'); ?>" class="form-control"></div>
+              <div class="col-xs-6 form-group"><label>المدة (أيام)</label><input type="number" name="validity_days" value="30" min="1" class="form-control"></div>
+              <?php foreach (dse_types() as $t => $info) { ?>
+                <div class="col-xs-4 form-group"><label><?= $info['name']; ?></label><input type="number" name="items[<?= $t; ?>]" min="0" step="0.5" class="form-control"></div>
+              <?php } ?>
+              <div class="col-xs-12 form-group"><label>الفاتورة (اعملها من Perfex الأول)</label>
+                <select name="invoice_id" class="form-control">
+                  <option value="">— بعدين —</option>
+                  <?php foreach ($invoices as $i) { ?><option value="<?= (int) $i['id']; ?>"><?= html_escape($inv_name($i)) . ' — ' . dse_money($i['total']) . ' — ' . ($inv_status[(int) $i['status']] ?? ''); ?></option><?php } ?>
+                </select>
+              </div>
+            </div>
+            <button class="btn btn-primary">اعمل الباقة</button>
+            <a class="btn btn-default" href="<?= admin_url('invoices/invoice?customer_id=' . $cid); ?>" target="_blank">اعمل فاتورة في Perfex</a>
+          <?= form_close(); ?>
+          <?php } ?>
+        </div></div>
+      </div>
+
+      <div class="col-md-6">
+        <!-- ===== الواتساب ===== -->
+        <div class="panel_s"><div class="panel-body">
+          <h5 class="bold">💬 واتساب العميل</h5>
+          <?php if ($client['wa_group_jid']) { ?>
+            <p>✅ الجروب متربط <?php if ($client['wa_group_link']) { ?>· <a href="<?= html_escape($client['wa_group_link']); ?>" target="_blank">لينك الجروب</a><?php } ?></p>
+          <?php } ?>
+          <?php if ($can_book) { ?>
+            <?= form_open(admin_url('dse_studio/wa/' . $cid . '/phone'), ['class' => 'form-inline mbot10']); ?>
+              <input name="wa_phone" value="<?= html_escape($client['wa_phone']); ?>" placeholder="01xxxxxxxxx" class="form-control input-sm" dir="ltr">
+              <button class="btn btn-default btn-sm">احفظ رقم الواتساب</button>
+            <?= form_close(); ?>
+            <?php if (!$client['wa_group_jid']) { ?>
+              <?= form_open(admin_url('dse_studio/wa/' . $cid . '/create_group'), ['class' => 'inline-block']); ?><button class="btn btn-success btn-sm">اعمل جروب واتساب</button><?= form_close(); ?>
+              <?= form_open(admin_url('dse_studio/wa/' . $cid . '/link_group'), ['class' => 'form-inline mtop5']); ?>
+                <input name="link" placeholder="أو لينك جروب موجود https://chat.whatsapp.com/..." class="form-control input-sm" dir="ltr" style="min-width:260px">
+                <button class="btn btn-default btn-sm">اربط</button>
+              <?= form_close(); ?>
+            <?php } else { ?>
+              <?= form_open(admin_url('dse_studio/wa/' . $cid . '/add_team'), ['class' => 'inline-block']); ?><button class="btn btn-default btn-sm">ضيف أرقام الفريق للجروب</button><?= form_close(); ?>
+            <?php } ?>
+            <hr>
+            <h6 class="bold">مانوال العميل الجديد</h6>
+            <?php foreach (dse_manual_keys() as $k => $label) { ?>
+              <?= form_open(admin_url('dse_studio/wa/' . $cid . '/manual'), ['class' => 'inline-block mbot5']); ?>
+                <input type="hidden" name="key" value="<?= $k; ?>"><button class="btn btn-default btn-xs">ابعت: <?= $label; ?></button>
+              <?= form_close(); ?>
+            <?php } ?>
+          <?php } ?>
+          <?php if ($outbox) { ?>
+            <hr><h6 class="bold">آخر الرسايل</h6>
+            <?php foreach ($outbox as $o) { ?>
+              <div class="small"><span class="label label-<?= ['sent' => 'success', 'queued' => 'info', 'sending' => 'info', 'failed' => 'danger'][$o['status']] ?? 'default'; ?>"><?= $o['status']; ?></span>
+                <?= html_escape(mb_substr($o['body'], 0, 70)); ?>… <span class="text-muted"><?= dse_day($o['created_at']) . ' ' . dse_time($o['created_at']); ?></span></div>
+            <?php } ?>
+          <?php } ?>
+        </div></div>
+
+        <!-- ===== السكربتات ===== -->
+        <div class="panel_s"><div class="panel-body">
+          <h5 class="bold">📝 السكربتات</h5>
+          <?php foreach ($scripts as $s) { ?>
+            <div class="dse-row">
+              <div><b><?= html_escape($s['title']); ?></b>
+                <span class="label label-<?= ['draft' => 'default', 'sent' => 'info', 'approved' => 'success', 'changes' => 'warning'][$s['status']]; ?>"><?= ['draft' => 'مسودة', 'sent' => 'اتبعت', 'approved' => 'العميل وافق', 'changes' => 'طالب تعديل'][$s['status']]; ?></span>
+                <div class="small text-muted" style="white-space:pre-line"><?= html_escape(mb_substr($s['body'], 0, 200)); ?></div>
+              </div>
+              <?php if ($can_book && $s['status'] !== 'approved') { ?>
+                <div class="dse-actions">
+                  <?php foreach (['send' => 'ابعت للعميل', 'approved' => 'وافق', 'changes' => 'طالب تعديل'] as $a => $l) { ?>
+                    <?= form_open(admin_url('dse_studio/script_action/' . $s['id'] . '/' . $a), ['class' => 'inline-block']); ?><button class="btn btn-default btn-xs"><?= $l; ?></button><?= form_close(); ?>
+                  <?php } ?>
+                </div>
+              <?php } ?>
+            </div>
+          <?php } ?>
+          <?php if ($can_book) { ?>
+            <?= form_open(admin_url('dse_studio/add_script/' . $cid)); ?>
+              <input name="title" class="form-control mbot5" placeholder="عنوان السكربت" required>
+              <textarea name="body" rows="5" class="form-control mbot5" placeholder="نص السكربت" required></textarea>
+              <button name="send" value="1" class="btn btn-primary btn-sm">احفظ وابعت للعميل</button>
+              <button class="btn btn-default btn-sm">احفظ بس</button>
+            <?= form_close(); ?>
+          <?php } ?>
+        </div></div>
+
+        <!-- ===== النشر ===== -->
+        <div class="panel_s"><div class="panel-body">
+          <h5 class="bold">🎬 نزل على السوشيال</h5>
+          <?php if ($can_book) { ?>
+            <?= form_open(admin_url('dse_studio/publish/' . $cid)); ?>
+              <div class="row">
+                <div class="col-xs-4"><select name="type" class="form-control"><option value="reel">ريل</option><option value="design">تصميم</option></select></div>
+                <div class="col-xs-8"><input name="post_url" class="form-control" dir="ltr" placeholder="https://instagram.com/p/..." required></div>
+              </div>
+              <p class="text-muted small mtop5">العميل بتوصله رسالة فيها لينك البوست ولينك التقييم والرصيد الباقي. التصميم بيتخصم من الرصيد.</p>
+              <button class="btn btn-primary btn-sm">سجّل إنه نزل</button>
+            <?= form_close(); ?>
+          <?php } ?>
+          <?php foreach ($posts as $p) { ?>
+            <div class="small"><?= $p['type'] === 'design' ? '🎨' : '🎬'; ?> <a href="<?= html_escape($p['post_url']); ?>" target="_blank" dir="ltr"><?= html_escape(mb_substr($p['post_url'], 0, 50)); ?></a> <span class="text-muted"><?= dse_day($p['published_at']); ?></span></div>
+          <?php } ?>
+        </div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<?php init_tail(); ?>
+<style>
+.dse .dse-stat{border:1px solid #e5e7eb;border-radius:8px;padding:10px;margin-bottom:10px;text-align:center}
+.dse .dse-stat-num{font-size:28px;font-weight:700}
+.dse .dse-row{border-bottom:1px solid #f1f5f9;padding:8px 0}
+.dse .dse-actions{margin-top:6px}
+.dse .dse-actions form,.dse .inline-block{display:inline-block;margin:2px}
+</style>
+</body></html>
