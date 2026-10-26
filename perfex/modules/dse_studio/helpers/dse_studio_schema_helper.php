@@ -226,3 +226,35 @@ function dse_studio_default_options()
         'dse_last_daily_run'       => '',
     ];
 }
+
+/** نسخة الجداول — زوّدها مع أي جدول جديد */
+define('DSE_STUDIO_SCHEMA_VERSION', '2');
+
+/**
+ * بيعمل أي جدول ناقص (لو Perfex ماشغّلش الـ migration بعد رفع نسخة جديدة).
+ * بيتنادى مع كل صفحة في الـ module ومع الـ cron — بيقرا option واحد بس لو كله تمام.
+ */
+function dse_studio_ensure_schema()
+{
+    if (get_option('dse_schema_version') === DSE_STUDIO_SCHEMA_VERSION) {
+        return;
+    }
+    $CI     = &get_instance();
+    $driver = ($CI->db->dbdriver ?? 'mysqli') === 'sqlite' ? 'sqlite' : 'mysql';
+    foreach (dse_studio_schema() as $table => $def) {
+        if (!$CI->db->table_exists(db_prefix() . $table)) {
+            foreach (dse_studio_create_sql($table, $def, db_prefix(), $driver, 'utf8mb4') as $sql) {
+                $CI->db->query($sql);
+            }
+        }
+    }
+    // 1.0.1: الفاتورة اللي كانت على الباقة نفسها ← جدول فواتير الباقة
+    $CI->db->query('INSERT INTO ' . db_prefix() . "dse_package_invoices (package_id, invoice_id, note, created_at)
+        SELECT p.id, p.invoice_id, 'الفاتورة الأولى', p.created_at FROM " . db_prefix() . 'dse_packages p
+         WHERE p.invoice_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ' . db_prefix() . 'dse_package_invoices x WHERE x.invoice_id = p.invoice_id)');
+    foreach (dse_studio_default_options() as $name => $value) {
+        add_option($name, $value, 0); // مبيغيّرش اللي متسجل
+    }
+    update_option('dse_schema_version', DSE_STUDIO_SCHEMA_VERSION);
+}
+

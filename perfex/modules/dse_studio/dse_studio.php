@@ -88,6 +88,7 @@ function dse_studio_admin_init()
 function dse_studio_cron()
 {
     $CI = &get_instance();
+    dse_studio_ensure_schema();
     $CI->load->model(DSE_STUDIO_MODULE_NAME . '/dse_studio_model');
     $CI->load->library(DSE_STUDIO_MODULE_NAME . '/dse_evolution');
     $CI->dse_studio_model->evo = $CI->dse_evolution;

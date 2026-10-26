@@ -7,6 +7,7 @@ class Dse_studio extends AdminController
     public function __construct()
     {
         parent::__construct();
+        dse_studio_ensure_schema();
         $this->load->model('dse_studio_model');
         $this->load->library(DSE_STUDIO_MODULE_NAME . '/dse_evolution');
         $this->dse_studio_model->evo = $this->dse_evolution;

@@ -16,6 +16,7 @@ foreach (dse_studio_schema() as $table => $def) {
 foreach (dse_studio_default_options() as $name => $value) {
     add_option($name, $value, 0);
 }
+dse_studio_ensure_schema();
 
 // استوديو افتراضي علشان الحجز يشتغل من أول يوم
 if ((int) $CI->db->count_all(db_prefix() . 'dse_studios') === 0) {

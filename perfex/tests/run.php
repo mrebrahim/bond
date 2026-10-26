@@ -16,6 +16,7 @@ function db_prefix() { return 'tbl'; }
 function get_option($k) { global $OPTIONS; return $OPTIONS[$k] ?? ''; }
 function update_option($k, $v) { global $OPTIONS; $OPTIONS[$k] = $v; }
 function get_staff_user_id() { global $STAFF; return $STAFF; }
+function add_option($k, $v, $a = 1) { global $OPTIONS; if (!array_key_exists($k, $OPTIONS)) { $OPTIONS[$k] = $v; } }
 
 class FakeResult
 {
@@ -28,6 +29,7 @@ class FakeResult
 class FakeDb
 {
     public $pdo;
+    public $dbdriver = 'sqlite';
     private $affected = 0;
     public function __construct() { $this->pdo = new PDO('sqlite::memory:'); $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION); }
     public function query($sql, $binds = [])
@@ -51,6 +53,7 @@ class FakeDb
         return true;
     }
     public function insert_id() { return (int) $this->pdo->lastInsertId(); }
+    public function table_exists($t) { return (bool) $this->pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name=" . $this->pdo->quote($t))->fetch(); }
     public function affected_rows() { return $this->affected; }
 }
 
@@ -396,7 +399,8 @@ function staff_can($c, $f) { return true; }
 function is_admin() { return true; }
 function html_escape($s) { return htmlspecialchars((string) $s, ENT_QUOTES); }
 function &get_instance() { global $CIStub; return $CIStub; }
-$CIStub = new class { public $dse_studio_model; public $load; };
+$CIStub = new class { public $dse_studio_model; public $load; public $db; };
+$CIStub->db = $db;
 $CIStub->dse_studio_model = $m;
 $CIStub->load = new class { public function model($x) {} };
 function render($view, $vars) {
@@ -444,6 +448,24 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
     render('customer_tab', ['client' => $client]);
 });
 restore_error_handler();
+
+echo "\nتحديث النسخة:\n";
+test('لو Perfex ماشغّلش الـ migration: الجداول الناقصة بتتعمل لوحدها والفواتير القديمة بتتنقل', function () use ($m, $db) {
+    global $OPTIONS;
+    // نسخة 1.0.0: الفاتورة كانت على الباقة نفسها
+    $db->insert('tblinvoices', ['clientid' => 1, 'total' => 1000, 'status' => 2]);
+    $old_inv = $db->insert_id();
+    $db->query('UPDATE tbldse_packages SET invoice_id = ? WHERE id = (SELECT MIN(id) FROM tbldse_packages)', [$old_inv]);
+    $db->pdo->exec('DROP TABLE tbldse_package_invoices');
+    $db->pdo->exec('DROP TABLE tbldse_package_events');
+    unset($OPTIONS['dse_schema_version']);
+    dse_studio_ensure_schema();
+    ok($db->table_exists('tbldse_package_invoices') && $db->table_exists('tbldse_package_events'), 'اتعملت');
+    ok($OPTIONS['dse_schema_version'] === DSE_STUDIO_SCHEMA_VERSION);
+    dse_studio_ensure_schema(); // مرة تانية مبتعملش حاجة
+    ok(count(q('SELECT id FROM tbldse_package_invoices WHERE invoice_id = ?', [$old_inv])) === 1, 'الفاتورة القديمة اتنقلت');
+    ok(count(q('SELECT id FROM tbldse_package_invoices')) === 1, 'مفيش تكرار');
+});
 
 echo "\n$passed passed · $failed failed\n";
 exit($failed ? 1 : 0);
