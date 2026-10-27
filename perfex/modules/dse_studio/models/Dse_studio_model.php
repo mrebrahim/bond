@@ -405,6 +405,78 @@ class Dse_studio_model extends App_Model
         $this->db->update($this->tbl('dse_packages'), ['status' => 'cancelled'], ['id' => $p['id']]);
     }
 
+    /** اتلغت بالغلط ← ترجع (مستنية الدفع لحد ما الفواتير تفعّلها تاني) */
+    public function restore_package($package_id)
+    {
+        $p = $this->package($package_id);
+        if ($p['status'] !== 'cancelled') {
+            throw new Exception('الباقة دي مش ملغية');
+        }
+        $this->db->update($this->tbl('dse_packages'), ['status' => $p['activated_at'] ? 'active' : 'pending'], ['id' => $p['id']]);
+        return $this->sync_package_status($p['id']);
+    }
+
+    /** تعديل بيانات الباقة لو اتكتبت غلط: الاسم والتواريخ والملاحظات (العدد والسعر من "ترقية / تعديل") */
+    public function edit_package($package_id, $name, $start_date, $end_date, $notes = null)
+    {
+        $p = $this->package($package_id);
+        $name = trim((string) $name);
+        if ($name === '') {
+            throw new Exception('اكتب اسم الباقة');
+        }
+        foreach ([$start_date, $end_date] as $d) {
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $d)) {
+                throw new Exception('التاريخ غلط');
+            }
+        }
+        if ($end_date < $start_date) {
+            throw new Exception('تاريخ النهاية لازم يبقى بعد البداية');
+        }
+        $out = $this->row('SELECT start_at FROM ' . $this->tbl('dse_sessions') . " WHERE package_id = ? AND status <> 'cancelled' AND (start_at < ? OR start_at >= ?) ORDER BY start_at LIMIT 1",
+            [$p['id'], $start_date . ' 00:00:00', date('Y-m-d', strtotime($end_date . ' +1 day')) . ' 00:00:00']);
+        if ($out) {
+            throw new Exception('فيه جلسة على الباقة يوم ' . dse_day($out['start_at']) . ' — خارج التواريخ الجديدة');
+        }
+        $this->db->update($this->tbl('dse_packages'), [
+            'name' => $name, 'start_date' => $start_date, 'end_date' => $end_date, 'notes' => $notes,
+        ], ['id' => $p['id']]);
+        if ($p['status'] === 'expired' && $end_date >= $this->today()) {
+            $this->db->update($this->tbl('dse_packages'), ['status' => 'active'], ['id' => $p['id']]);
+        }
+        $this->db->insert($this->tbl('dse_package_events'), [
+            'package_id' => $p['id'], 'event' => 'edit', 'old_price' => $p['price'], 'new_price' => $p['price'],
+            'old_end_date' => $p['end_date'], 'new_end_date' => $end_date,
+            'note' => 'تعديل البيانات' . ($p['name'] !== $name ? ' (الاسم: ' . $p['name'] . ' ← ' . $name . ')' : '') . ($p['start_date'] !== $start_date ? ' (البداية: ' . $start_date . ')' : ''),
+            'staff_id' => $this->staff_id(), 'created_at' => $this->now(),
+        ]);
+        return $this->sync_package_status($p['id']);
+    }
+
+    /** الباقة اتسجل عليها حاجة؟ (جلسات / خصم / نشر) — لو آه مينفعش تتمسح، تتلغي بس */
+    public function package_has_activity($package_id)
+    {
+        foreach (['dse_usage' => '', 'dse_posts' => '', 'dse_sessions' => " AND status <> 'cancelled'"] as $t => $extra) {
+            if ($this->row('SELECT id FROM ' . $this->tbl($t) . ' WHERE package_id = ?' . $extra . ' LIMIT 1', [(int) $package_id])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** مسح باقة اتعملت بالغلط — بس لو مفيش عليها أي شغل. الفواتير بتتفك وتفضل في Perfex زي ما هي */
+    public function delete_package($package_id)
+    {
+        $p = $this->package($package_id);
+        if ($this->package_has_activity($p['id'])) {
+            throw new Exception('الباقة دي اتسجل عليها شغل (تصوير / نشر / خصم) — مينفعش تتمسح، الغيها بدل كده');
+        }
+        foreach (['dse_package_items', 'dse_package_invoices', 'dse_package_events', 'dse_sessions'] as $t) {
+            $this->db->query('DELETE FROM ' . $this->tbl($t) . ' WHERE package_id = ?', [$p['id']]);
+        }
+        $this->db->query('DELETE FROM ' . $this->tbl('dse_packages') . ' WHERE id = ?', [$p['id']]);
+        return $p['clientid'];
+    }
+
     // =================================================================
     // الحجز
     // =================================================================

@@ -334,6 +334,37 @@ test('باقة جديدة على قسطين: بتتفعل بعد 50% من الس
     ok($m->link_invoice($pkg, $db->insert_id(), 'القسط التاني') === 'active', '50%');
 });
 
+echo "\nتصحيح الغلط:\n";
+test('تعديل بيانات الباقة / مسح باقة اتعملت غلط / رجوع باقة اتلغت', function () use ($m, $db) {
+    $db->insert('tblclients', ['company' => 'غلطة', 'phonenumber' => '']);
+    $cl = $db->insert_id();
+    $db->insert('tblinvoices', ['clientid' => $cl, 'total' => 4000, 'status' => 2]);
+    $inv = $db->insert_id();
+    $pkg = $m->create_package($cl, 'غلط', 4000, '2026-11-01', 30, ['reel' => 5], $inv);
+    // تعديل الاسم والتواريخ
+    $m->edit_package($pkg, 'Starter', '2026-11-02', '2026-12-15', 'اتصلحت');
+    $p = $m->package($pkg);
+    ok($p['name'] === 'Starter' && $p['start_date'] === '2026-11-02' && $p['end_date'] === '2026-12-15', json_encode($p, JSON_UNESCAPED_UNICODE));
+    throws(function () use ($m, $pkg) { $m->edit_package($pkg, 'x', '2026-12-01', '2026-11-01'); }, 'بعد البداية');
+    // مسح: مفيش عليها شغل ← تتمسح والفاتورة تتفك
+    ok(!$m->package_has_activity($pkg));
+    $m->delete_package($pkg);
+    throws(function () use ($m, $pkg) { $m->package($pkg); }, 'مش موجودة');
+    ok(count(q('SELECT id FROM tbldse_package_invoices WHERE invoice_id = ?', [$inv])) === 0, 'الفاتورة اتفكت');
+    // الفاتورة ترجع تتربط بباقة صح
+    $pkg2 = $m->create_package($cl, 'صح', 4000, '2026-11-01', 30, ['reel' => 5], $inv);
+    ok($m->package($pkg2)['status'] === 'active');
+    // اتصوّر عليها ← مينفعش تتمسح، تتلغي وترجع
+    $st  = $m->studios()[0]['id'];
+    $sid = $m->book_session($cl, $st, '2026-11-12 09:00', 'reel', 1);
+    throws(function () use ($m, $pkg2) { $m->edit_package($pkg2, 'صح', '2026-11-01', '2026-11-10'); }, 'خارج التواريخ');
+    $m->complete_session($sid, 1);
+    throws(function () use ($m, $pkg2) { $m->delete_package($pkg2); }, 'مينفعش تتمسح');
+    $m->cancel_package($pkg2);
+    ok($m->package($pkg2)['status'] === 'cancelled');
+    ok($m->restore_package($pkg2) === 'active', 'رجعت');
+});
+
 echo "\nالواتساب:\n";
 test('مقفول: مفيش ولا رسالة بتتبعت', function () use ($m, &$sent) {
     $r = $m->process_outbox(50);
@@ -415,21 +446,21 @@ set_error_handler(function ($no, $str, $file, $line) { throw new ErrorException(
 test('كل الصفحات بتترسم من غير أخطاء', function () use ($m, $client, $db) {
     $sum = $m->client_summary($client);
     $balances = [];
-    $pi = $pe = $pp = [];
-    foreach ($sum['packages'] as $p) { $balances[$p['id']] = $m->balance($p['id']); $pi[$p['id']] = $m->package_invoices($p['id']); $pe[$p['id']] = $m->package_events($p['id']); $pp[$p['id']] = $m->package_paid_amount($p); }
+    $pi = $pe = $pp = $pb = [];
+    foreach ($sum['packages'] as $p) { $balances[$p['id']] = $m->balance($p['id']); $pi[$p['id']] = $m->package_invoices($p['id']); $pe[$p['id']] = $m->package_events($p['id']); $pp[$p['id']] = $m->package_paid_amount($p); $pb[$p['id']] = $m->package_has_activity($p['id']); }
     render('client', $sum + ['studios' => $m->studios(), 'staff' => [['staffid' => 7, 'firstname' => 'أندرو', 'lastname' => 'إسحاق']],
         'sessions' => $m->client_sessions($client), 'scripts' => $m->client_scripts($client), 'posts' => $m->client_posts($client),
         'outbox' => $m->outbox(20, $client), 'invoices' => [['id' => 1, 'prefix' => 'INV-', 'number' => 5, 'total' => 15000, 'status' => 2, 'date' => '2026-11-01']],
-        'balances' => $balances, 'pkg_invoices' => $pi, 'pkg_events' => $pe, 'pkg_paid' => $pp, 'free_invoices' => []]);
+        'balances' => $balances, 'pkg_invoices' => $pi, 'pkg_events' => $pe, 'pkg_paid' => $pp, 'pkg_busy' => $pb, 'free_invoices' => []]);
     // صفحة عميل اترقّى
     $up = q("SELECT clientid FROM tbldse_packages WHERE name = 'Basic'")[0]['clientid'];
     $db->query("UPDATE tbldse_packages SET status = 'active' WHERE name = 'Basic'");
     $m->fixed_time = strtotime('2026-11-10 10:00:00');
     $sum = $m->client_summary($up);
-    $pi = $pe = $pp = $balances = [];
-    foreach ($sum['packages'] as $p) { $balances[$p['id']] = $m->balance($p['id']); $pi[$p['id']] = $m->package_invoices($p['id']); $pe[$p['id']] = $m->package_events($p['id']); $pp[$p['id']] = $m->package_paid_amount($p); }
+    $pi = $pe = $pp = $pb = $balances = [];
+    foreach ($sum['packages'] as $p) { $balances[$p['id']] = $m->balance($p['id']); $pi[$p['id']] = $m->package_invoices($p['id']); $pe[$p['id']] = $m->package_events($p['id']); $pp[$p['id']] = $m->package_paid_amount($p); $pb[$p['id']] = $m->package_has_activity($p['id']); }
     $html = render('client', $sum + ['studios' => $m->studios(), 'staff' => [], 'sessions' => $m->client_sessions($up), 'scripts' => [], 'posts' => [],
-        'outbox' => [], 'invoices' => [], 'balances' => $balances, 'pkg_invoices' => $pi, 'pkg_events' => $pe, 'pkg_paid' => $pp, 'free_invoices' => []]);
+        'outbox' => [], 'invoices' => [], 'balances' => $balances, 'pkg_invoices' => $pi, 'pkg_events' => $pe, 'pkg_paid' => $pp, 'pkg_busy' => $pb, 'free_invoices' => []]);
     file_put_contents(sys_get_temp_dir() . '/dse_client.html', $html);
     ok(strpos($html, 'سجّل دفعة / قسط') !== false && strpos($html, 'ترقية / تعديل الباقة') !== false && strpos($html, 'احفظ الترقية') !== false, 'الزراير على الباقة الشغالة');
     $m->fixed_time = strtotime('2026-11-02 10:00:00');

@@ -137,9 +137,38 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                       <?= form_open(admin_url('dse_studio/activate_package/' . $p['id']), ['class' => 'inline-block', 'onsubmit' => "return confirm('تفعّل الباقة من غير فاتورة مدفوعة؟')"]); ?><button class="btn btn-success btn-xs">فعّل يدوي</button><?= form_close(); ?>
                     <?php } ?>
                     <?php if (staff_can('delete', DSE_STUDIO_MODULE_NAME)) { ?>
-                      <?= form_open(admin_url('dse_studio/cancel_package/' . $p['id']), ['class' => 'inline-block', 'onsubmit' => "return confirm('تلغي الباقة؟')"]); ?><button class="btn btn-link btn-xs text-danger">الغي الباقة</button><?= form_close(); ?>
+                      <?= form_open(admin_url('dse_studio/cancel_package/' . $p['id']), ['class' => 'inline-block', 'onsubmit' => "return confirm('تلغي الباقة؟ (تقدر ترجّعها بعدين)')"]); ?><button class="btn btn-link btn-xs text-danger">الغي الباقة</button><?= form_close(); ?>
                     <?php } ?>
                   </div>
+                </div>
+              <?php } ?>
+
+              <?php if ($can_pkg) { ?>
+                <!-- تصحيح الغلط: تعديل البيانات / مسح / رجوع -->
+                <details class="dse-box">
+                  <summary>✏️ تعديل بيانات الباقة (الاسم والتواريخ)</summary>
+                  <?= form_open(admin_url('dse_studio/edit_package/' . $p['id'])); ?>
+                    <div class="row">
+                      <div class="col-xs-12 col-sm-4 form-group"><label>اسم الباقة</label><input name="name" value="<?= html_escape($p['name']); ?>" class="form-control" required></div>
+                      <div class="col-xs-6 col-sm-4 form-group"><label>تبدأ</label><input type="date" name="start_date" value="<?= $p['start_date']; ?>" class="form-control" required></div>
+                      <div class="col-xs-6 col-sm-4 form-group"><label>تخلص</label><input type="date" name="end_date" value="<?= $p['end_date']; ?>" class="form-control" required></div>
+                      <div class="col-xs-12 form-group"><label>ملاحظات</label><input name="notes" value="<?= html_escape($p['notes']); ?>" class="form-control"></div>
+                    </div>
+                    <p class="small text-muted">عدد الريلز والتصميمات والسعر بيتعدّلوا من "ترقية / تعديل الباقة".</p>
+                    <button class="btn btn-primary btn-sm">احفظ</button>
+                  <?= form_close(); ?>
+                </details>
+              <?php } ?>
+              <?php if (staff_can('delete', DSE_STUDIO_MODULE_NAME)) { ?>
+                <div class="mtop5">
+                  <?php if ($p['status'] === 'cancelled') { ?>
+                    <?= form_open(admin_url('dse_studio/restore_package/' . $p['id']), ['class' => 'inline-block']); ?><button class="btn btn-default btn-xs">↩️ رجّع الباقة (اتلغت بالغلط)</button><?= form_close(); ?>
+                  <?php } ?>
+                  <?php if (!$pkg_busy[$p['id']]) { ?>
+                    <?= form_open(admin_url('dse_studio/delete_package/' . $p['id']), ['class' => 'inline-block', 'onsubmit' => "return confirm('تمسح الباقة دي نهائي؟ (الفواتير بتفضل في Perfex زي ما هي)')"]); ?><button class="btn btn-danger btn-xs">🗑 امسح الباقة (اتعملت بالغلط)</button><?= form_close(); ?>
+                  <?php } else { ?>
+                    <span class="small text-muted">مينفعش تتمسح — اتسجل عليها تصوير أو نشر (الغيها بدل كده)</span>
+                  <?php } ?>
                 </div>
               <?php } ?>
             </div>
