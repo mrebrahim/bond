@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# بيعمل dse_studio.zip جاهز للرفع على Perfex (Setup → Modules → Upload)
+# بيعمل zip جاهز للرفع على Perfex (Setup → Modules → Upload)
+#   bash perfex/build.sh [out.zip] [module]     — الافتراضي dse_studio
 set -euo pipefail
 cd "$(dirname "$0")/modules"
-out="${1:-../dse_studio.zip}"
+module="${2:-dse_studio}"
+out="${1:-../$module.zip}"
 rm -f "$out"
-zip -qr "$out" dse_studio -x '*.DS_Store'
+zip -qr "$out" "$module" -x '*.DS_Store'
 echo "✔ $out"

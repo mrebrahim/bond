@@ -1,0 +1,44 @@
+<?php
+
+defined('BASEPATH') or exit('No direct script access allowed');
+
+$lang['doctor_visits']            = 'زيارات الدكاترة';
+$lang['dv_menu_settings']         = 'الإعدادات والفحص';
+$lang['dv_cap_view_own']          = 'يشوف دكاترته بس';
+$lang['dv_cap_view']              = 'يشوف كل الدكاترة';
+$lang['dv_cap_create']            = 'يسجّل زيارات ويضيف دكاترة وعماير';
+$lang['dv_cap_edit']              = 'يعدّل';
+$lang['dv_cap_delete']            = 'يمسح';
+$lang['dv_cap_manage_settings']   = 'يدير الإعدادات والقوالب';
+$lang['dv_smoke_title']           = 'زيارات الدكاترة — فحص المرحلة 1';
+$lang['dv_smoke_intro']           = 'الصفحة دي بتتأكد إن التثبيت تمام: الجداول، مراحل الـ Leads، الإعدادات، القوالب، ونسخة Perfex والـ Hooks المتاحة لتاب الـ Lead.';
+$lang['dv_perfex_env']            = 'بيئة السيرفر';
+$lang['dv_perfex_version']        = 'نسخة Perfex (رقم الـ migration)';
+$lang['dv_php']                   = 'PHP';
+$lang['dv_database']              = 'الداتابيز';
+$lang['dv_timezone']              = 'التوقيت';
+$lang['dv_timezone_warn']         = 'لازم يبقى Africa/Cairo (Setup ← Settings ← Localization)';
+$lang['dv_tables']                = 'الجداول';
+$lang['dv_table']                 = 'الجدول';
+$lang['dv_rows']                  = 'عدد الصفوف';
+$lang['dv_missing']               = 'ناقص';
+$lang['dv_stages']                = 'سلم المراحل ↔ Lead Status';
+$lang['dv_stage']                 = 'المرحلة';
+$lang['dv_progress']              = 'التقدم';
+$lang['dv_lead_status']           = 'Lead Status في Perfex';
+$lang['dv_settings']              = 'الإعدادات';
+$lang['dv_key']                   = 'المفتاح';
+$lang['dv_value']                 = 'القيمة';
+$lang['dv_scope']                 = 'لمين';
+$lang['dv_global']                = 'عام';
+$lang['dv_hidden']                = '(متخبي)';
+$lang['dv_templates']             = 'قوالب الواتساب';
+$lang['dv_template_stages']       = 'المراحل';
+$lang['dv_template_days']         = 'بعد كام يوم من آخر Touch';
+$lang['dv_lead_hooks']            = 'الـ Hooks المتاحة في صفحة الـ Lead على السيرفر ده';
+$lang['dv_lead_hooks_help']       = 'دي المتاحة فعلًا في نسختكم — هنختار منها مكان تاب "زيارات" في المرحلة 2.';
+$lang['dv_lead_hooks_none']       = 'مالقيتش ملفات views للـ Leads — ابعت الصفحة دي للمطوّر.';
+$lang['dv_file']                  = 'الملف';
+$lang['dv_type']                  = 'النوع';
+$lang['dv_hook']                  = 'الـ Hook';
+$lang['dv_ok']                    = 'تمام';
