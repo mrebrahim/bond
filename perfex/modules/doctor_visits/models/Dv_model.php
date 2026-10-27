@@ -203,7 +203,7 @@ class Dv_model extends App_Model
         $d['next_step_xp'] = $ns[1] ? $this->xp_for_stage_outcome($ns[1]) : 0;
         $last              = $this->row('SELECT MAX(visited_at) AS d FROM ' . $this->tbl('dv_visits') . ' WHERE lead_id = ?', [$d['lead_id']]);
         $d['last_touch']   = $last['d'] ?? null;
-        $d['days_since_touch'] = $d['last_touch'] ? (int) floor(($this->t() - strtotime($d['last_touch'])) / 86400) : null;
+        $d['days_since_touch'] = $d['last_touch'] ? max(0, (int) floor(($this->t() - strtotime($d['last_touch'])) / 86400)) : null;
         $d['overdue']      = $d['next_action_at'] && strtotime($d['next_action_at']) < strtotime($this->today() . ' 23:59:59') && !$lost && (int) $d['stage'] < 9;
         return $d;
     }

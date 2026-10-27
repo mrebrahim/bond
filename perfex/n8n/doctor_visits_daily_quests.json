@@ -1,0 +1,48 @@
+{
+  "name": "Doctor Visits — مهام النهارده للمندوب على الواتساب (2 الضهر)",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [ { "field": "cronExpression", "expression": "0 14 * * 0-4,6" } ] } },
+      "id": "b1", "name": "2 PM (من غير الجمعة)", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// المندوبين: staff_id في Perfex ورقم الواتساب بتاعه — عدّل القايمة\nreturn [\n  { json: { staff_id: 7, phone: '2012XXXXXXXX', name: 'Andrew' } },\n];"
+      },
+      "id": "b2", "name": "Reps", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.PERFEX_URL || 'https://YOUR-PERFEX' }}/doctor_visits/dv_api/queue?staff_id={{ $json.staff_id }}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [ { "name": "X-DV-Token", "value": "={{ $env.DV_TOKEN || 'PASTE_TOKEN_FROM_SETTINGS' }}" } ] },
+        "options": {}
+      },
+      "id": "b3", "name": "Perfex queue", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [480, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = [];\nconst reps = $('Reps').all();\n$input.all().forEach((item, i) => {\n  const q = item.json; const rep = reps[i].json;\n  const lines = [];\n  lines.push(`🎯 مهام النهارده يا ${rep.name}`);\n  lines.push(`1) زور ${q.quests[0].target} عيادة (عملت ${q.done_today})`);\n  lines.push(`2) ابعت 3 متابعات واتساب في ميعادها`);\n  lines.push(`3) حرّك دكتور من الـ Warm لمنطقة التقفيل`);\n  lines.push('');\n  lines.push('📋 أول 5 في القايمة:');\n  q.queue.slice(0, 5).forEach((d, n) => lines.push(`${n + 1}. ${d.name} — ${d.building ?? ''}${d.floor ? ' (دور ' + d.floor + ')' : ''} · ${d.next_step}`));\n  out.push({ json: { number: rep.phone, text: lines.join('\\n') } });\n});\nreturn out;"
+      },
+      "id": "b4", "name": "Build message", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [720, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EVO_URL || 'https://evolutoin-api-evolution-api.4tqpgc.easypanel.host' }}/message/sendText/{{ $env.EVO_INSTANCE || '010' }}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [ { "name": "apikey", "value": "={{ $env.EVO_API_KEY }}" } ] },
+        "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ number: $json.number, text: $json.text }) }}",
+        "options": {}
+      },
+      "id": "b5", "name": "Send to rep (Evolution)", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [960, 0]
+    }
+  ],
+  "connections": {
+    "2 PM (من غير الجمعة)": { "main": [ [ { "node": "Reps", "type": "main", "index": 0 } ] ] },
+    "Reps": { "main": [ [ { "node": "Perfex queue", "type": "main", "index": 0 } ] ] },
+    "Perfex queue": { "main": [ [ { "node": "Build message", "type": "main", "index": 0 } ] ] },
+    "Build message": { "main": [ [ { "node": "Send to rep (Evolution)", "type": "main", "index": 0 } ] ] }
+  },
+  "settings": { "executionOrder": "v1", "timezone": "Africa/Cairo" }
+}

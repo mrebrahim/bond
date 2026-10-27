@@ -1,0 +1,31 @@
+{
+  "name": "Doctor Visits — QR من الواتساب ← Perfex",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "dv-evolution", "responseMode": "onReceived", "options": {} },
+      "id": "a1", "name": "Evolution webhook (MESSAGES_UPSERT)", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// بيلقط كود الدكتور DV-XXXX أو كلمة إلغاء من رسالة واردة\nconst out = [];\nfor (const item of $input.all()) {\n  const b = item.json.body ?? item.json;\n  const d = b.data ?? {};\n  if (d.key?.fromMe) continue;\n  const m = d.message?.ephemeralMessage?.message ?? d.message ?? {};\n  const text = m.conversation ?? m.extendedTextMessage?.text ?? '';\n  const phone = String(d.key?.remoteJid ?? '').split('@')[0];\n  const code = (text.match(/DV-[A-Z0-9]{4}/i) ?? [])[0];\n  const stop = /^\\s*(إلغاء|الغاء|stop)\\s*$/i.test(text);\n  if (code) out.push({ json: { action: 'qr_event', body: { code: code.toUpperCase(), phone, message: text, received_at: new Date().toISOString().slice(0, 19).replace('T', ' ') } } });\n  else if (stop) out.push({ json: { action: 'opt_out', body: { phone } } });\n}\nreturn out;"
+      },
+      "id": "a2", "name": "Detect DV code / stop", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PERFEX_URL || 'https://YOUR-PERFEX' }}/doctor_visits/dv_api/{{ $json.action }}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [ { "name": "X-DV-Token", "value": "={{ $env.DV_TOKEN || 'PASTE_TOKEN_FROM_SETTINGS' }}" } ] },
+        "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      },
+      "id": "a3", "name": "Perfex dv_api", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [520, 0]
+    }
+  ],
+  "connections": {
+    "Evolution webhook (MESSAGES_UPSERT)": { "main": [ [ { "node": "Detect DV code / stop", "type": "main", "index": 0 } ] ] },
+    "Detect DV code / stop": { "main": [ [ { "node": "Perfex dv_api", "type": "main", "index": 0 } ] ] }
+  },
+  "settings": { "executionOrder": "v1", "timezone": "Africa/Cairo" }
+}

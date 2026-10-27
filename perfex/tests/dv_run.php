@@ -30,7 +30,7 @@ class DB
     function field_exists($f, $t) { foreach ($this->pdo->query("PRAGMA table_info(\"$t\")")->fetchAll() as $c) { if ($c['name'] === $f) return true; } return false; }
     function platform() { return 'sqlite'; } function version() { return '3'; }
 }
-$CI = new class { public $db; };
+$CI = new class { public $db; public $load; public $dv_model; };
 $CI->db = new DB();
 function &get_instance() { global $CI; return $CI; }
 
@@ -310,32 +310,140 @@ test('أوامر MySQL: utf8mb4 + الـ PRIMARY KEY المركّب في الإ�
     ok($x[1] === 'CREATE UNIQUE INDEX `tbluq_dv_xp_ledger_once` ON `tbldv_xp_ledger` (`uniq_key`)', $x[1]);
 });
 
-echo "\nصفحة الفحص:\n";
-test('صفحة الإعدادات/الفحص بتترسم وبتلاقي الـ Hooks من ملفات الـ Leads', function () use ($mod) {
+echo "\nالشاشات (من الكنترولر زي Perfex):\n";
+// ---- stubs لـ Perfex / CodeIgniter ----
+$app = sys_get_temp_dir() . '/dv_app/';
+if (!is_dir($app . 'views/admin/leads')) { mkdir($app . 'views/admin/leads', 0777, true); }
+file_put_contents($app . 'views/admin/leads/lead.php', "<?php hooks()->do_action('after_lead_lead_tabs', \$lead); ?>\n<?php hooks()->do_action('after_lead_tabs_content', \$lead); ?>\n<?php echo hooks()->apply_filters('lead_modal_profile_bottom', ''); ?>");
+define('APPPATH', $app);
+define('DV_VIEWS', $mod . '/views/');
+function init_head() {} function init_tail() {}
+function html_escape($s) { return htmlspecialchars((string) $s, ENT_QUOTES); }
+function access_denied($x) { throw new Exception('denied'); }
+function admin_url($p = '') { return '/admin/' . $p; } function site_url($p = '') { return '/' . $p; } function current_url() { return '/admin/current'; }
+class Redirected extends Exception {}
+function redirect($u) { throw new Redirected($u); }
+$ALERTS = [];
+function set_alert($t, $m) { global $ALERTS; $ALERTS[] = [$t, $m]; }
+function form_open($a, $attrs = []) { return '<form method="post" action="' . $a . '">'; } function form_close() { return '</form>'; }
+class FakeInput { public $post = []; public $get = []; public $raw_input_stream = ''; public $headers = [];
+    function post($k = null, $x = true) { return $k === null ? ($this->post ?: null) : ($this->post[$k] ?? null); }
+    function get($k = null) { return $k === null ? $this->get : ($this->get[$k] ?? null); }
+    function get_request_header($h) { return $this->headers[$h] ?? null; } }
+class FakeSession { public $flash = []; function set_flashdata($k, $v) { $this->flash[$k] = $v; } function flashdata($k) { $v = $this->flash[$k] ?? null; unset($this->flash[$k]); return $v; } }
+class FakeUri { public $seg3 = 'queue'; function segment($n) { return $n === 3 ? $this->seg3 : null; } }
+class FakeLoader {
+    public $out = ''; public $ctrl;
+    function model($m) { $this->ctrl->dv_model = $GLOBALS['M']; }
+    function view($v, $data = []) {
+        $v = str_replace('doctor_visits/', '', $v);
+        $ctl = $this->ctrl; $data += $ctl->_vars ?? [];
+        $ctl->_vars = $data;
+        $render = function () use ($v, $data) { extract($data); include DV_VIEWS . $v . '.php'; };
+        $render = Closure::bind($render, $ctl, get_class($ctl));
+        static $depth = 0;
+        $depth++; ob_start(); $render(); $html = ob_get_clean(); $depth--;
+        if ($depth === 0) { $this->out .= $html; } else { echo $html; }
+    }
+}
+class AdminController {
+    public $db; public $load; public $input; public $session; public $uri; public $app = null; public $dv_model; public $_vars = [];
+    function __construct() { global $CI; $this->db = $CI->db; $this->load = new FakeLoader(); $this->load->ctrl = $this; $this->input = new FakeInput(); $this->session = new FakeSession(); $this->uri = new FakeUri(); }
+}
+require $mod . '/controllers/Doctor_visits.php';
+$GLOBALS['CAN_ALL'] = true;
+$M->fixed_time = null;
+function page($method, $args = [], $seg = null) {
+    $c = new Doctor_visits(); $c->uri->seg3 = $seg ?: $method;
+    ob_start();
+    try { call_user_func_array([$c, $method], $args); } catch (Redirected $r) { ob_end_clean(); return 'REDIRECT ' . $r->getMessage(); }
+    ob_end_clean();
+    return $c->load->out;
+}
+set_error_handler(function ($n, $s, $f, $l) { throw new ErrorException("$s in " . basename($f) . ":$l"); });
+test('الإعدادات والفحص: نسخة Perfex، الـ Hooks، المراحل، القوالب، الـ API', function () {
     global $CI;
-    // ملف lead view مزيّف بالـ hooks الحقيقية اللي في Perfex
-    $app = sys_get_temp_dir() . '/dv_app/';
-    if (!is_dir($app . 'views/admin/leads')) { mkdir($app . 'views/admin/leads', 0777, true); }
-    file_put_contents($app . 'views/admin/leads/lead.php', "<?php hooks()->do_action('after_lead_lead_tabs', \$lead); ?>\n<?php hooks()->do_action('after_lead_tabs_content', \$lead); ?>\n<?php echo hooks()->apply_filters('lead_modal_profile_bottom', ''); ?>");
-    define('APPPATH', $app);
-    // stubs لـ Perfex
-    function init_head() {} function init_tail() {}
-    function html_escape($s) { return htmlspecialchars((string) $s, ENT_QUOTES); }
-    $GLOBALS['CAN_ALL'] = true;
-    function access_denied($x) { throw new Exception('denied'); }
-    function admin_url($p = '') { return '/admin/' . $p; } function redirect($u) {}
-    class AdminController { public $db; public $load; public $app = null; function __construct() { global $CI; $this->db = $CI->db; $this->load = new class { public $out = ''; function view($v, $data) { extract($data); ob_start(); include __DIR__ . '/../modules/doctor_visits/views/' . $v . '.php'; $this->out = ob_get_clean(); } }; } }
     $CI->db->pdo->exec('CREATE TABLE IF NOT EXISTS tblmigrations (version INT)');
     $CI->db->pdo->exec('INSERT INTO tblmigrations VALUES (341)');
-    require $mod . '/controllers/Doctor_visits.php';
+    $h = page('settings');
+    file_put_contents(sys_get_temp_dir() . '/dv_settings.html', $h);
+    ok(strpos($h, 'after_lead_lead_tabs') !== false && strpos($h, 'after_lead_tabs_content') !== false && strpos($h, 'lead_modal_profile_bottom') !== false, 'الـ hooks');
+    ok(strpos($h, 'DV 9 · Won') !== false && strpos($h, 'followup_48h') !== false && strpos($h, '341') !== false && strpos($h, '/doctor_visits/dv_api') !== false);
+    ok(substr_count($h, 'label-danger') === 0, 'مفيش حاجة ناقصة');
+});
+test('أزور مين النهارده + سجّل زيارة (اختيار + فورم) + الداشبورد + العماير + العمارة + الدكتور + الواتساب + التقارير', function () use (&$D, $B) {
+    $pages = [
+        'queue' => page('queue'), 'log' => page('log'), 'log_doc' => page('log', [$D], 'log'), 'dashboard' => page('dashboard'),
+        'buildings' => page('buildings'), 'building' => page('building', [$B]), 'doctor' => page('doctor', [$D]), 'wa' => page('wa', [$D]),
+        'reports' => page('reports'),
+    ];
+    foreach ($pages as $k => $h) {
+        ok(strlen($h) > 500 && strpos($h, 'REDIRECT') !== 0, $k . ': ' . substr($h, 0, 200));
+        file_put_contents(sys_get_temp_dir() . '/dv_' . $k . '.html', $h);
+    }
+    ok(substr_count($pages['log_doc'], 'class="dv-out') === 11, 'الـ 11 زرار');
+    ok(strpos($pages['wa'], 'wa.me') !== false && strpos($pages['wa'], 'DV_T') !== false);
+    ok(strpos($pages['doctor'], 'QRCode') !== false && strpos($pages['doctor'], 'DV-') !== false);
+    ok(strpos($pages['dashboard'], _l('dv_closing_zone')) !== false && strpos($pages['dashboard'], _l('dv_quests')) !== false);
+});
+test('Quick Log من الفورم: بيحفظ ويعرض الـ Toast في الصفحة الجاية', function () use (&$D) {
     $c = new Doctor_visits();
-    $c->settings();
-    $html = $c->load->out;
-    file_put_contents(sys_get_temp_dir() . '/dv_settings.html', $html);
-    ok(strpos($html, 'after_lead_lead_tabs') !== false && strpos($html, 'after_lead_tabs_content') !== false && strpos($html, 'lead_modal_profile_bottom') !== false, 'الـ hooks');
-    ok(strpos($html, 'DV 9 · Won') !== false && strpos($html, 'followup_48h') !== false && strpos($html, '341') !== false);
-    ok(strpos($html, dv_setting('api_token')) === false, 'الـ token متخبي');
-    ok(substr_count($html, 'label-danger') === 0, 'مفيش حاجة ناقصة');
+    $c->input->post = ['outcome' => 'DOC', 'lead_id' => $D, 'next_action' => 'أطلب الواتساب', 'next_action_at' => date('Y-m-d H:i', time() + 86400), 'back' => '/admin/doctor_visits/queue'];
+    try { $c->log(); } catch (Redirected $r) { ok($r->getMessage() === '/admin/doctor_visits/queue'); }
+    $fb = json_decode($c->session->flash['dv_feedback'] ?? '', true);
+    ok($fb && isset($fb['toast']['value']), json_encode($fb));
+    // الصفحة الجاية بتعرض الـ Toast
+    $c2 = new Doctor_visits(); $c2->session->flash = $c->session->flash; $c2->uri->seg3 = 'queue';
+    ob_start(); $c2->queue(); ob_end_clean();
+    ok(strpos($c2->load->out, 'dv-toast') !== false);
+});
+test('تاب "زيارات" في صفحة الـ Lead', function () use (&$D) {
+    global $CI;
+    $CI->load = new class { function model($m) { $GLOBALS['CI']->dv_model = $GLOBALS['M']; } function view($v, $data = []) { extract($data); include DV_VIEWS . str_replace('doctor_visits/', '', $v) . '.php'; } };
+    $lead = (object) ['id' => $D];
+    ob_start(); doctor_visits_lead_tab($lead); doctor_visits_lead_tab_content($lead); $h = ob_get_clean();
+    ok(strpos($h, 'tab_doctor_visits') !== false && strpos($h, 'tab-pane') !== false, substr($h, 0, 300));
+    ob_start(); doctor_visits_lead_tab((object) ['id' => 99999]); ok(ob_get_clean() === '', 'Lead مش دكتور ← مفيش تاب');
+});
+restore_error_handler();
+
+echo "\nالـ API (n8n):\n";
+class App_Controller { public $db; public $load; public $input; public $output; public $dv_model;
+    function __construct() { global $CI; $this->db = $CI->db; $this->input = $GLOBALS['API_IN']; $this->load = new class { function model($m) {} }; $this->dv_model = $GLOBALS['M'];
+        $this->output = new class { public $status; public $body; function set_status_header($s) { $this->status = $s; return $this; } function set_content_type($t, $c = null) { return $this; } function set_output($o) { $this->body = $o; return $this; } function _display() { throw new ApiDone($this->status . ' ' . $this->body); } }; } }
+class ApiDone extends Error {}
+require $mod . '/controllers/Dv_api.php';
+function api($method, $headers, $body = [], $get = []) {
+    $in = new FakeInput(); $in->headers = $headers; $in->raw_input_stream = json_encode($body); $in->get = $get; $GLOBALS['API_IN'] = $in;
+    try { $c = new Dv_api(); $c->$method(); } catch (ApiDone $e) { [$st, $js] = explode(' ', $e->getMessage(), 2); return [(int) $st, json_decode($js, true)]; }
+    return [0, null];
+}
+test('من غير Token صح ← 401', function () {
+    [$st] = api('queue', ['X-DV-Token' => 'غلط'], [], ['staff_id' => 7]);
+    ok($st === 401, (string) $st);
+});
+test('qr_event / queue / followups_due / opt_out بالـ Token', function () use ($M, $B) {
+    $tok = dv_setting('api_token');
+    $GLOBALS['ME'] = 7;
+    $L = $M->quick_add(['name' => 'API', 'specialty' => 'جلدية', 'building_id' => $B]);
+    $code = $M->doctor($L)['qr_code'];
+    [$st, $r] = api('qr_event', ['X-DV-Token' => $tok], ['code' => $code, 'phone' => '01055555555', 'message' => 'أنا د. API (' . $code . ')']);
+    ok($st === 200 && $r['ok'] && $r['stage'] === 5, json_encode($r, JSON_UNESCAPED_UNICODE));
+    [$st, $r] = api('qr_event', ['X-DV-Token' => $tok], ['code' => 'DV-0000']);
+    ok($st === 422, (string) $st);
+    [$st, $r] = api('queue', ['X-DV-Token' => $tok], [], ['staff_id' => 7]);
+    ok($st === 200 && isset($r['today_target']) && is_array($r['queue']) && isset($r['quests']), json_encode(array_keys($r ?? [])));
+    [$st, $r] = api('followups_due', ['X-DV-Token' => $tok], [], ['staff_id' => 7]);
+    ok($st === 200 && isset($r['followups']));
+    [$st, $r] = api('opt_out', ['X-DV-Token' => $tok], ['phone' => '01055555555']);
+    ok($st === 200 && $r['updated'] === 1);
+});
+test('Rate limit: أكتر من 60 طلب في الدقيقة ← 429', function () {
+    $tok = dv_setting('api_token');
+    update_option('dv_api_rl', date('YmdHi') . '|60');
+    [$st] = api('followups_due', ['X-DV-Token' => $tok]);
+    ok($st === 429, (string) $st);
+    update_option('dv_api_rl', '');
 });
 
 echo "\n$passed passed · $failed failed\n";
