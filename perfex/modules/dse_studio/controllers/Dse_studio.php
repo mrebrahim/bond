@@ -296,6 +296,15 @@ class Dse_studio extends AdminController
         $this->session_action($id, 'create', function () use ($m, $id) { $m->complete_session($id, $this->post('actual_qty')); }, 'الجلسة اتقفلت والرصيد اتخصم');
     }
 
+    public function correct_qty($id)
+    {
+        $m = $this->dse_studio_model;
+        $this->session_action($id, 'create', function () use ($m, $id) {
+            $old = $m->correct_session_qty($id, $this->post('actual_qty'), $this->post('reason'));
+            return 'العدد اتصحح من ' . dse_num($old) . ' لـ ' . dse_num($this->post('actual_qty')) . ' والرصيد اتظبط';
+        }, '');
+    }
+
     public function no_show($id)
     {
         $m = $this->dse_studio_model;

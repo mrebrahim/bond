@@ -237,7 +237,19 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                 <?= dse_num($s['qty']) . ' ' . dse_unit($s['type']); ?><?= $s['outfits'] ? ' · ' . (int) $s['outfits'] . ' لبس' : ''; ?>
                 <span class="label label-<?= ['booked' => 'info', 'done' => 'success', 'no_show' => 'danger', 'cancelled' => 'default'][$s['status']]; ?>"><?= dse_session_statuses()[$s['status']]; ?></span>
                 <?= $s['status'] === 'done' ? ' (اتصور ' . dse_num($s['actual_qty']) . ')' : ''; ?><?= $s['late_cancel'] ? ' · إلغاء متأخر' : ''; ?>
+                <?php if ($s['notes']) { ?><div class="small text-muted" style="white-space:pre-line"><?= html_escape($s['notes']); ?></div><?php } ?>
               </div>
+              <?php if ($s['status'] === 'done' && $can_book) { ?>
+                <details class="dse-box dse-box-sm">
+                  <summary>✏️ صحّح العدد</summary>
+                  <?= form_open(admin_url('dse_studio/correct_qty/' . $s['id']), ['class' => 'form-inline']); ?>
+                    <label class="small">اتصور فعلًا</label>
+                    <input type="number" name="actual_qty" min="0.5" step="0.5" value="<?= dse_num($s['actual_qty']); ?>" class="form-control input-sm" style="width:80px" required>
+                    <input name="reason" class="form-control input-sm" placeholder="السبب (اتكتب غلط…)" required style="min-width:180px">
+                    <button class="btn btn-primary btn-xs">صحّح</button>
+                  <?= form_close(); ?>
+                </details>
+              <?php } ?>
               <?php if ($s['status'] === 'booked' && $can_book) { ?>
                 <div class="dse-actions">
                   <?= form_open(admin_url('dse_studio/complete/' . $s['id']), ['class' => 'form-inline']); ?>
@@ -368,6 +380,7 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
 .dse details.dse-box>summary{cursor:pointer;font-weight:600;color:#1d4ed8;list-style:none}
 .dse details.dse-box>summary::-webkit-details-marker{display:none}
 .dse details.dse-box[open]>summary{margin-bottom:8px}
+.dse details.dse-box-sm{padding:4px 10px;margin-top:4px;font-size:12px}
 .dse .dse-actions{margin-top:6px}
 .dse .dse-actions form,.dse .inline-block{display:inline-block;margin:2px}
 </style>

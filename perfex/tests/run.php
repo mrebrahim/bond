@@ -375,6 +375,29 @@ test('تعديل بيانات الباقة / مسح باقة اتعملت غلط
     ok($m->restore_package($pkg2) === 'active', 'رجعت');
 });
 
+test('صحّح العدد: الجلسة اتقفلت بعدد غلط ← الرصيد يتظبط والسبب يتسجل', function () use ($m, $db) {
+    $db->insert('tblclients', ['company' => 'تصحيح', 'phonenumber' => '']);
+    $cl = $db->insert_id();
+    $db->insert('tblinvoices', ['clientid' => $cl, 'total' => 1000, 'status' => 2]);
+    $pkg = $m->create_package($cl, 'P', 1000, '2026-11-01', 30, ['reel' => 10], $db->insert_id());
+    $st  = $m->studios()[0]['id'];
+    $sid = $m->book_session($cl, $st, '2026-11-13 09:00', 'reel', 4);
+    throws(function () use ($m, $sid) { $m->correct_session_qty($sid, 3, 'x'); }, 'اللي اتقفلت بس');
+    $m->complete_session($sid, 8); // اتكتب 8 بدل 3
+    ok($m->balance($pkg)['reel']['remaining'] == 2);
+    throws(function () use ($m, $sid) { $m->correct_session_qty($sid, 3, ''); }, 'سبب التصحيح');
+    throws(function () use ($m, $sid) { $m->correct_session_qty($sid, 11, 'x'); }, 'أكبر من رصيد');
+    ok($m->correct_session_qty($sid, 3, 'اتكتب غلط') == 8);
+    $b = $m->balance($pkg)['reel'];
+    ok($b['used'] == 3 && $b['remaining'] == 7, json_encode($b));
+    $s = $m->session($sid);
+    ok($s['actual_qty'] == 3 && strpos($s['notes'], 'تصحيح العدد 8 ← 3: اتكتب غلط') !== false, $s['notes']);
+    ok(count(q("SELECT id FROM tbldse_usage WHERE session_id = ? AND reason = 'session'", [$sid])) === 1, 'مفيش تكرار في الخصم');
+    // تصحيح لفوق برضه
+    $m->correct_session_qty($sid, 5, 'نسيت ريلين');
+    ok($m->balance($pkg)['reel']['remaining'] == 5);
+});
+
 echo "\nالواتساب:\n";
 test('مقفول: مفيش ولا رسالة بتتبعت', function () use ($m, &$sent) {
     $r = $m->process_outbox(50);

@@ -738,6 +738,42 @@ class Dse_studio_model extends App_Model
     /** @var int[] تنبيهات اتعملت في الطلب ده (الكنترولر بيبعت عنها إشعار وإيميل) */
     public $new_alerts = [];
 
+    /**
+     * صحّح العدد: جلسة اتقفلت بعدد غلط ← بيعدّل اللي اتصور واللي اتخصم من الرصيد، ويسجّل مين صحّح وليه
+     */
+    public function correct_session_qty($id, $new_qty, $reason)
+    {
+        $s = $this->session($id);
+        if ($s['status'] !== 'done') {
+            throw new Exception('التصحيح للجلسات اللي اتقفلت بس ("اتصورت")');
+        }
+        $new_qty = (float) $new_qty;
+        $old     = (float) $s['actual_qty'];
+        if ($new_qty <= 0) {
+            throw new Exception('العدد لازم يبقى أكبر من صفر — لو العميل مجاش اكتب ده في السبب وكلّم الأدمن');
+        }
+        if (trim((string) $reason) === '') {
+            throw new Exception('اكتب سبب التصحيح');
+        }
+        if (abs($new_qty - $old) < 0.001) {
+            throw new Exception('ده نفس العدد المتسجل');
+        }
+        $bal   = $this->balance($s['package_id']);
+        $avail = ($bal[$s['type']]['remaining'] ?? 0) + $old;
+        if ($new_qty > $avail) {
+            throw new Exception('العدد أكبر من رصيد الباقة (المتاح ' . dse_num($avail) . ')');
+        }
+        $who  = function_exists('get_staff_full_name') ? get_staff_full_name() : '';
+        $line = 'تصحيح العدد ' . dse_num($old) . ' ← ' . dse_num($new_qty) . ': ' . trim($reason) . ($who ? ' (' . $who . ')' : '') . ' — ' . date('d/m H:i', $this->t());
+        $this->db->update($this->tbl('dse_sessions'), [
+            'actual_qty' => $new_qty, 'updated_at' => $this->now(),
+            'notes' => trim(($s['notes'] ? $s['notes'] . "\n" : '') . $line),
+        ], ['id' => $s['id']]);
+        $this->db->update($this->tbl('dse_usage'), ['qty' => $new_qty, 'note' => mb_substr($line, 0, 255)], ['session_id' => $s['id'], 'reason' => 'session']);
+        $this->check_payment_due($s['package_id']);
+        return $old;
+    }
+
     private function penalty($s, $avail_extra = 0)
     {
         $bal   = $this->balance($s['package_id']);
