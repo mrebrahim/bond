@@ -62,6 +62,8 @@
                       <?= form_open(admin_url('dse_studio/delete_package/' . $p['id'] . '?back=home'), ['style' => 'display:inline', 'onsubmit' => "return confirm('تمسح باقة " . html_escape(addslashes($p['company'])) . " نهائي؟ (الفواتير بتفضل في Perfex)')"]); ?>
                         <button class="btn btn-danger btn-xs" title="الباقة اتعملت بالغلط ومفيش عليها شغل">🗑 امسح</button>
                       <?= form_close(); ?>
+                    <?php } else { ?>
+                      <span class="small text-muted" title="مينفعش تتمسح علشان عليها شغل — الغيها بدل كده">🔒 عليها: <?= html_escape($p['activity']); ?></span>
                     <?php } ?>
                     <?= form_open(admin_url('dse_studio/cancel_package/' . $p['id'] . '?back=home'), ['style' => 'display:inline', 'onsubmit' => "return confirm('تلغي باقة " . html_escape(addslashes($p['company'])) . "؟ (تقدر ترجّعها من صفحة العميل)')"]); ?>
                       <button class="btn btn-default btn-xs">الغي</button>

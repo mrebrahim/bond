@@ -466,6 +466,33 @@ class Dse_studio_model extends App_Model
         return false;
     }
 
+    /** ملخص الشغل اللي على الباقة — علشان يبان ليه مينفعش تتمسح */
+    public function package_activity_text($package_id)
+    {
+        $parts = [];
+        $done  = $this->row('SELECT COUNT(*) n, SUM(actual_qty) q FROM ' . $this->tbl('dse_sessions') . " WHERE package_id = ? AND status = 'done'", [(int) $package_id]);
+        if ((int) $done['n']) {
+            $parts[] = (int) $done['n'] . ' جلسة اتصورت (' . dse_num($done['q']) . ')';
+        }
+        $ns = $this->row('SELECT COUNT(*) n FROM ' . $this->tbl('dse_sessions') . " WHERE package_id = ? AND status = 'no_show'", [(int) $package_id]);
+        if ((int) $ns['n']) {
+            $parts[] = (int) $ns['n'] . ' مجاش';
+        }
+        $bk = $this->row('SELECT COUNT(*) n FROM ' . $this->tbl('dse_sessions') . " WHERE package_id = ? AND status = 'booked'", [(int) $package_id]);
+        if ((int) $bk['n']) {
+            $parts[] = (int) $bk['n'] . ' جلسة محجوزة';
+        }
+        $po = $this->row('SELECT COUNT(*) n FROM ' . $this->tbl('dse_posts') . ' WHERE package_id = ?', [(int) $package_id]);
+        if ((int) $po['n']) {
+            $parts[] = (int) $po['n'] . ' بوست نزل';
+        }
+        $lc = $this->row('SELECT COUNT(*) n FROM ' . $this->tbl('dse_usage') . " WHERE package_id = ? AND reason = 'late_cancel'", [(int) $package_id]);
+        if ((int) $lc['n']) {
+            $parts[] = (int) $lc['n'] . ' إلغاء متأخر';
+        }
+        return implode(' · ', $parts);
+    }
+
     /** مسح باقة اتعملت بالغلط — بس لو مفيش عليها أي شغل. الفواتير بتتفك وتفضل في Perfex زي ما هي */
     public function delete_package($package_id)
     {
@@ -1272,6 +1299,7 @@ class Dse_studio_model extends App_Model
         foreach ($this->rows('SELECT p.*, ' . $this->name_sql('c') . ' AS company FROM ' . $this->tbl('dse_packages') . ' p JOIN ' . $this->tbl('clients') . " c ON c.userid = p.clientid WHERE p.status IN ('pending','active') ORDER BY company") as $p) {
             $p['balance_text'] = $this->balance_text($p['id'], false);
             $p['busy']         = $this->package_has_activity($p['id']);
+            $p['activity']     = $p['busy'] ? $this->package_activity_text($p['id']) : '';
             $out[]             = $p;
         }
         return $out;
