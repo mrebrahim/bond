@@ -304,3 +304,8 @@ $lang['dv_verification']         = 'حالة التحقق';
 $lang['dv_sheet_notes']          = 'ملاحظات / زاوية البيع';
 $lang['dv_ask_nurse_hours']      = 'المواعيد مش معروفة — اسأل الممرضة';
 
+// F9 مسار ما بعد التحليل
+$lang['dv_path_title']   = 'مسار ما بعد التحليل';
+$lang['dv_path_seeded']  = '%s خطوة · %s بند · %s سكريبت';
+$lang['dv_path_no_seed'] = 'المحتوى لسه متزرعش — ارفع checklist_seed.json';
+$lang['dv_path_upload']  = 'ارفع checklist_seed.json (بيضيف الناقص بس)';

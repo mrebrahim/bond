@@ -341,8 +341,18 @@ class Doctor_visits extends AdminController
             access_denied(DOCTOR_VISITS_MODULE_NAME);
         }
         $p = db_prefix();
+        if (!empty($_FILES['path_seed']['tmp_name'])) { // F9: محتوى المسار
+            try {
+                $r = dv_path_seed($_FILES['path_seed']['tmp_name'], true);
+                set_alert($r['warnings'] ? 'warning' : 'success', 'المسار: ' . $r['counts']['steps'] . ' خطوة · ' . $r['counts']['items'] . ' بند · ' . $r['counts']['scripts']
+                    . ' سكريبت (اتضاف: ' . $r['added']['steps'] . ' · ' . $r['added']['items'] . ' · ' . $r['added']['scripts'] . ')' . ($r['warnings'] ? ' — ' . implode(' · ', $r['warnings']) : ''));
+            } catch (Exception $e) {
+                set_alert('danger', $e->getMessage());
+            }
+            redirect(admin_url('doctor_visits/settings#path'));
+        }
         if ($this->input->post('save_settings')) {
-            $editable = ['monthly_target', 'avg_deal_value', 'default_visits_per_close', 'default_touches_to_win', 'off_days', 'min_daily_for_streak',
+            $editable = ['monthly_target', 'avg_deal_value', 'sprint_price', 'path_stalled_days', 'default_visits_per_close', 'default_touches_to_win', 'off_days', 'min_daily_for_streak',
                 'cold_start_min_wins', 'quest_hour', 'qr_whatsapp_number', 'api_rate_limit', 'xp_rules', 'level_thresholds', 'level_names', 'level_rewards'];
             try {
                 foreach ($editable as $k) {
@@ -379,6 +389,7 @@ class Doctor_visits extends AdminController
         $data['title']     = _l('dv_menu_settings');
         $data['settings']  = $this->db->query('SELECT * FROM `' . $p . 'dv_settings` ORDER BY staff_id, `key`')->result_array();
         $data['templates'] = $this->dv_model->templates(false);
+        $data['path_seed'] = json_decode((string) get_option('dv_path_seed_report'), true);
         $data['tables']    = [];
         foreach (array_keys(dv_schema()) as $t) {
             $data['tables'][$t] = $this->db->table_exists($p . $t) ? (int) $this->db->count_all($p . $t) : null;

@@ -148,6 +148,81 @@ test('qr_code فريد', function () {
     $CI->db->insert('tbldv_doctor_meta', ['lead_id' => 4]);
 });
 
+
+echo "\nF9 مسار ما بعد التحليل — المرحلة 1 (Migration + Seed):\n";
+/** ملف seed تجريبي بنفس شكل checklist_seed.json: 8 خطوات · 61 بند · 25 سكريبت (النصوص هنا تجريبية) */
+function f9_fixture($path, $mutate = null) {
+    $plan = [['audit', 'before', 8, 0], ['kit', 'before', 8, 0], ['time', 'before', 5, 1], ['visit', 'during', 9, 9], ['log', 'during', 7, 0], ['follow', 'after', 8, 4], ['close', 'after', 9, 9], ['grow', 'after', 7, 2]];
+    $steps = [];
+    foreach ($plan as $i => [$k, $ph, $ni, $ns]) {
+        $s = ['key' => $k, 'phase' => $ph, 'title' => 'خطوة ' . $k, 'sort' => $i + 1, 'items' => [], 'scripts' => []];
+        for ($n = 1; $n <= $ni; $n++) { $s['items'][] = ['key' => $k . '_' . $n, 'text' => 'بند ' . $k . ' ' . $n]; }
+        for ($n = 1; $n <= $ns; $n++) { $s['scripts'][] = ['key' => $k . '_s' . $n, 'audience' => $k === 'follow' ? 'واتساب' : 'الدكتور', 'situation' => 'موقف ' . $n, 'body' => 'أهلا {doctor_name}، معاك {rep_name}', 'wa_template_key' => $k === 'follow' && $n === 2 ? 'bot_demo' : null]; }
+        $steps[] = $s;
+    }
+    $j = ['steps' => $steps];
+    if ($mutate) { $j = $mutate($j); }
+    file_put_contents($path, json_encode($j, JSON_UNESCAPED_UNICODE));
+}
+$F9 = sys_get_temp_dir() . '/dv_checklist_seed.json';
+test('الجداول الـ 4 الجديدة + fee و path_stalled_since في dv_doctor_meta (key_insight و audit_link موجودين)', function () {
+    global $CI;
+    foreach (['dv_path_steps', 'dv_path_items', 'dv_path_checks', 'dv_path_scripts'] as $t) { ok($CI->db->table_exists('tbl' . $t), $t); }
+    foreach (['fee', 'path_stalled_since', 'key_insight', 'audit_link'] as $c) { ok($CI->db->field_exists($c, 'tbldv_doctor_meta'), $c); }
+    ok(dv_setting('path_stalled_days') === '3' && dv_setting('sprint_price') === '');
+});
+test('من غير ملف seed: مفيش زرع ومفيش خطأ', function () {
+    ok(dv_path_seed(sys_get_temp_dir() . '/مش_موجود.json') === null);
+});
+test('الزرع: 8 خطوات · 61 بند · 25 سكريبت · الشنطة rep_daily · الـ 21 بند أوتوماتيك اتربطوا', function () use ($F9) {
+    f9_fixture($F9);
+    $r = dv_path_seed($F9);
+    ok($r['counts'] === ['steps' => 8, 'items' => 61, 'scripts' => 25] && $r['added'] === ['steps' => 8, 'items' => 61, 'scripts' => 25], json_encode($r, JSON_UNESCAPED_UNICODE));
+    ok(count(q('SELECT id FROM tbldv_path_steps')) === 8 && count(q('SELECT id FROM tbldv_path_items')) === 61 && count(q('SELECT id FROM tbldv_path_scripts')) === 25);
+    ok(q("SELECT scope FROM tbldv_path_steps WHERE key = 'kit'")[0]['scope'] === 'rep_daily' && count(q("SELECT id FROM tbldv_path_steps WHERE scope = 'lead'")) === 7);
+    ok(count(q("SELECT i.id FROM tbldv_path_items i JOIN tbldv_path_steps s ON s.id = i.step_id WHERE s.scope = 'lead'")) === 53, 'بنود الدكتور 53');
+    ok(count(q('SELECT id FROM tbldv_path_items WHERE auto_rule IS NOT NULL')) === 21);
+    ok(q("SELECT auto_rule FROM tbldv_path_items WHERE key = 'follow_2'")[0]['auto_rule'] === 'wa_template:bot_demo' && q("SELECT auto_rule FROM tbldv_path_items WHERE key = 'visit_5'")[0]['auto_rule'] === 'outcome:ENV');
+    ok(implode(',', array_column(q('SELECT phase FROM tbldv_path_steps ORDER BY sort'), 'phase')) === 'before,before,before,during,during,after,after,after');
+    ok(q("SELECT wa_template_key FROM tbldv_path_scripts WHERE key = 'follow_s2'")[0]['wa_template_key'] === 'bot_demo');
+    ok(!$r['warnings'], json_encode($r['warnings'], JSON_UNESCAPED_UNICODE));
+});
+test('الزرع تاني مبيكررش · تعديلك من الإعدادات بيفضل · بند جديد في الملف بيتضاف', function () use ($F9) {
+    global $CI;
+    ok(dv_path_seed($F9) === null, 'نفس الملف ← مبيتقراش');
+    $CI->db->query("UPDATE tbldv_path_items SET text = 'متعدّل' WHERE key = 'audit_1'");
+    f9_fixture($F9, function ($j) { $j['steps'][0]['items'][] = ['key' => 'audit_9', 'text' => 'بند جديد']; return $j; });
+    $r = dv_path_seed($F9);
+    ok($r['added'] === ['steps' => 0, 'items' => 1, 'scripts' => 0], json_encode($r['added']));
+    ok(q("SELECT text FROM tbldv_path_items WHERE key = 'audit_1'")[0]['text'] === 'متعدّل');
+    ok(in_array('العدد مختلف عن الـ PRD: items = 62 (المفروض 61)', $r['warnings'], true), json_encode($r['warnings'], JSON_UNESCAPED_UNICODE));
+    $CI->db->query("DELETE FROM tbldv_path_items WHERE key = 'audit_9'");
+});
+test('شكل تاني للملف: phases بالعربي + بنود نص + سكريبتات برا + ___ و JSON بايظ', function () {
+    $f = sys_get_temp_dir() . '/dv_seed2.json';
+    file_put_contents($f, json_encode(['phases' => [['title' => 'بعد الزيارة', 'steps' => [['key' => 'x', 'title' => 'س', 'items' => ['أ', 'ب']]]]], 'scripts' => [['step' => 'x', 'audience' => 'واتساب', 'body' => 'يا د/ ___']]], JSON_UNESCAPED_UNICODE));
+    $s = dv_path_seed_read($f);
+    ok($s['steps'][0]['phase'] === 'after' && $s['steps'][0]['items'][1]['key'] === 'x_2' && $s['steps'][0]['scripts'][0]['key'] === 'x_s1');
+    ok((bool) array_filter($s['warnings'], function ($w) { return strpos($w, '___') !== false; }));
+    file_put_contents($f, '{bad');
+    try { dv_path_seed_read($f); ok(false); } catch (Exception $e) { ok(strpos($e->getMessage(), 'JSON') !== false); }
+});
+test('العلامات: بند الدكتور مرة واحدة لكل Lead · بند الشنطة مرة لكل مندوب في اليوم', function () {
+    global $CI;
+    $i = q("SELECT id FROM tbldv_path_items WHERE key = 'visit_1'")[0]['id'];
+    $k = q("SELECT id FROM tbldv_path_items WHERE key = 'kit_1'")[0]['id'];
+    $now = date('Y-m-d H:i:s');
+    $CI->db->insert('tbldv_path_checks', ['item_id' => $i, 'lead_id' => 50, 'staff_id' => 7, 'source' => 'manual', 'created_at' => $now]);
+    $dup = false; try { $CI->db->insert('tbldv_path_checks', ['item_id' => $i, 'lead_id' => 50, 'staff_id' => 8, 'source' => 'auto:visit', 'created_at' => $now]); } catch (PDOException $e) { $dup = true; }
+    ok($dup, 'نفس البند لنفس الدكتور');
+    $CI->db->insert('tbldv_path_checks', ['item_id' => $k, 'lead_id' => null, 'staff_id' => 7, 'work_date' => '2026-10-27', 'created_at' => $now]);
+    $CI->db->insert('tbldv_path_checks', ['item_id' => $k, 'lead_id' => null, 'staff_id' => 7, 'work_date' => '2026-10-28', 'created_at' => $now]);
+    $CI->db->insert('tbldv_path_checks', ['item_id' => $k, 'lead_id' => null, 'staff_id' => 8, 'work_date' => '2026-10-27', 'created_at' => $now]);
+    $dup = false; try { $CI->db->insert('tbldv_path_checks', ['item_id' => $k, 'lead_id' => null, 'staff_id' => 7, 'work_date' => '2026-10-27', 'created_at' => $now]); } catch (PDOException $e) { $dup = true; }
+    ok($dup, 'نفس بند الشنطة لنفس المندوب في نفس اليوم');
+    $CI->db->pdo->exec('DELETE FROM tbldv_path_checks');
+});
+
 echo "\nالمحرّك (المراحل 2–5):\n";
 require $mod . '/helpers/dv_helper.php';
 require $mod . '/models/Dv_model.php';
@@ -370,6 +445,13 @@ test('الإعدادات والفحص: نسخة Perfex، الـ Hooks، المر
     ok(strpos($h, 'after_lead_lead_tabs') !== false && strpos($h, 'after_lead_tabs_content') !== false && strpos($h, 'lead_modal_profile_bottom') !== false, 'الـ hooks');
     ok(strpos($h, 'DV 9 · Won') !== false && strpos($h, 'followup_48h') !== false && strpos($h, '341') !== false && strpos($h, '/doctor_visits/dv_api') !== false);
     ok(substr_count($h, 'label-danger') === 0, 'مفيش حاجة ناقصة');
+    ok(strpos($h, 'name="path_seed"') !== false && strpos($h, '8 خطوة · 62 بند · 25 سكريبت') !== false, 'كارت المسار (آخر زرع كان فيه بند زيادة)');
+    // رفع ملف المسار من الإعدادات
+    $f = sys_get_temp_dir() . '/dv_seed_up.json'; f9_fixture($f);
+    $_FILES = ['path_seed' => ['tmp_name' => $f, 'name' => 'checklist_seed.json']];
+    $r = page('settings'); $_FILES = [];
+    global $ALERTS;
+    ok($r === 'REDIRECT /admin/doctor_visits/settings#path' && end($ALERTS)[0] === 'success' && strpos(end($ALERTS)[1], 'اتضاف: 0 · 0 · 0') !== false, json_encode(end($ALERTS), JSON_UNESCAPED_UNICODE));
 });
 test('أزور مين النهارده + سجّل زيارة (اختيار + فورم) + الداشبورد + العماير + العمارة + الدكتور + الواتساب + التقارير', function () use (&$D, $B) {
     $pages = [

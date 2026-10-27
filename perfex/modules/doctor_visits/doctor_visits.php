@@ -5,7 +5,7 @@ defined('BASEPATH') or exit('No direct script access allowed');
 /*
 Module Name: Doctor Visits Tracker — زيارات الدكاترة
 Description: تسجيل زيارات العيادات من الموبايل في أقل من 30 ثانية، سلم المراحل، قيمة كل زيارة، الحافز والـ XP، الـ QR والواتساب، والتقارير.
-Version: 1.2.1
+Version: 1.3.0
 Requires at least: 3.0.*
 Author: Digital Solution
 */

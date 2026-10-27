@@ -19,7 +19,7 @@ $token = $val['api_token'] ?? '';
         <h5 class="bold"><?= _l('dv_edit_settings'); ?></h5>
         <?= form_open(admin_url('doctor_visits/settings')); ?>
           <input type="hidden" name="save_settings" value="1">
-          <?php foreach (['monthly_target', 'avg_deal_value', 'default_visits_per_close', 'default_touches_to_win', 'min_daily_for_streak', 'cold_start_min_wins', 'off_days', 'quest_hour', 'qr_whatsapp_number', 'api_rate_limit'] as $k) { ?>
+          <?php foreach (['monthly_target', 'avg_deal_value', 'default_visits_per_close', 'default_touches_to_win', 'min_daily_for_streak', 'cold_start_min_wins', 'off_days', 'quest_hour', 'qr_whatsapp_number', 'api_rate_limit', 'sprint_price', 'path_stalled_days'] as $k) { ?>
             <label class="dv-muted" style="display:block;margin:6px 0 2px" dir="ltr"><?= $k; ?></label>
             <input name="<?= $k; ?>" value="<?= html_escape($val[$k] ?? ''); ?>" class="dv-in" dir="ltr">
           <?php } ?>
@@ -60,6 +60,18 @@ Header: X-DV-Token: &lt;token&gt;   ·   n8n regex: DV-[A-Z0-9]{4}</pre>
         <table class="dv-t">
           <?php foreach ($tables as $t => $n) { ?><tr><td dir="ltr"><?= db_prefix() . $t; ?></td><td><?= $n === null ? '<span class="label label-danger">' . _l('dv_missing') . '</span>' : '<span class="label label-success">' . _l('dv_ok') . '</span> ' . (int) $n; ?></td></tr><?php } ?>
         </table>
+      </div>
+
+      <div class="dv-card" id="path">
+        <h5 class="bold">🧭 <?= _l('dv_path_title'); ?></h5>
+        <?php if ($path_seed) { ?>
+          <div><?= sprintf(_l('dv_path_seeded'), (int) $path_seed['counts']['steps'], (int) $path_seed['counts']['items'], (int) $path_seed['counts']['scripts']); ?> <span class="dv-muted"><?= html_escape($path_seed['at']); ?></span></div>
+          <?php foreach ($path_seed['warnings'] as $w) { ?><div class="text-warning small">⚠️ <?= html_escape($w); ?></div><?php } ?>
+        <?php } else { ?><div class="text-warning"><?= _l('dv_path_no_seed'); ?></div><?php } ?>
+        <?= form_open_multipart(admin_url('doctor_visits/settings')); ?>
+          <input type="file" name="path_seed" accept=".json" class="dv-in" required style="margin-block-start:6px">
+          <button class="dv-btn dv-btn-sm" style="margin-block-start:6px">⬆️ <?= _l('dv_path_upload'); ?></button>
+        <?= form_close(); ?>
       </div>
 
       <div class="dv-card">

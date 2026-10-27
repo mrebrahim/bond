@@ -8,8 +8,10 @@ defined('BASEPATH') or exit('No direct script access allowed');
  * نفس التعريف بيتطبق على MySQL (Perfex) و SQLite (الاختبارات). {pk} = primary key أوتوماتيك.
  */
 
+require_once __DIR__ . '/dv_path_setup.php';
+
 if (!defined('DV_SCHEMA_VERSION')) {
-    define('DV_SCHEMA_VERSION', '3'); // زوّدها مع أي جدول أو عمود جديد
+    define('DV_SCHEMA_VERSION', '4'); // زوّدها مع أي جدول أو عمود جديد
 }
 
 if (!function_exists('dv_schema')) {
@@ -72,6 +74,9 @@ if (!function_exists('dv_schema')) {
                     '`social_note` TEXT NULL',
                     '`verification` VARCHAR(255) NULL',  // حالة التحقق / المصدر
                     '`notes` TEXT NULL',                 // ملاحظات وزاوية البيع
+                    // F9 مسار ما بعد التحليل (key_insight و audit_link موجودين من F8)
+                    '`fee` INT NULL',                    // سعر الكشف ← {fee}
+                    '`path_stalled_since` DATETIME NULL', // "واقف": 3 أيام في نفس الخطوة من غير علامة
                     '`created_at` DATETIME NULL',
                     '`updated_at` DATETIME NULL',
                 ],
@@ -136,6 +141,63 @@ if (!function_exists('dv_schema')) {
                     '`active` TINYINT NOT NULL DEFAULT 1',
                 ],
                 'indexes' => ['uq_dv_wa_templates_key' => 'UNIQUE (`key`)'],
+            ],
+            // ---------------- F9: مسار ما بعد التحليل
+            'dv_path_steps' => [
+                'cols' => [
+                    '{pk}',
+                    '`key` VARCHAR(30) NOT NULL',         // audit, kit, time, visit, log, follow, close, grow
+                    "`phase` VARCHAR(10) NOT NULL DEFAULT 'before'", // before | during | after
+                    "`scope` VARCHAR(10) NOT NULL DEFAULT 'lead'",   // lead | rep_daily (kit)
+                    '`title` VARCHAR(100) NOT NULL',
+                    '`subtitle` VARCHAR(150) NULL',
+                    '`tip` TEXT NULL',
+                    '`sort` INT NOT NULL DEFAULT 0',
+                    '`active` TINYINT NOT NULL DEFAULT 1',
+                ],
+                'indexes' => ['uq_dv_path_steps_key' => 'UNIQUE (`key`)'],
+            ],
+            'dv_path_items' => [
+                'cols' => [
+                    '{pk}',
+                    '`step_id` INT NOT NULL',
+                    '`key` VARCHAR(30) NOT NULL',         // visit_5, follow_2 …
+                    '`text` VARCHAR(255) NOT NULL',
+                    '`auto_rule` VARCHAR(50) NULL',       // outcome:ENV, wa_template:bot_demo … (PRD F9 §5)
+                    '`sort` INT NOT NULL DEFAULT 0',
+                    '`active` TINYINT NOT NULL DEFAULT 1',
+                ],
+                'indexes' => ['uq_dv_path_items_key' => 'UNIQUE (`key`)', 'idx_dv_path_items_step' => '(`step_id`, `sort`)'],
+            ],
+            'dv_path_checks' => [
+                'cols' => [
+                    '{pk}',
+                    '`item_id` INT NOT NULL',
+                    '`lead_id` INT NULL',                 // NULL لبنود rep_daily
+                    '`staff_id` INT NOT NULL',
+                    '`work_date` DATE NULL',              // rep_daily بس
+                    "`source` VARCHAR(20) NOT NULL DEFAULT 'manual'", // manual | auto:<event>
+                    '`checked` TINYINT NOT NULL DEFAULT 1', // 0 = اتشالت (بتفضل للتاريخ)
+                    '`created_at` DATETIME NOT NULL',
+                ],
+                'indexes' => [
+                    'uq_dv_path_checks_lead'  => 'UNIQUE (`lead_id`, `item_id`)',
+                    'uq_dv_path_checks_daily' => 'UNIQUE (`staff_id`, `item_id`, `work_date`)',
+                ],
+            ],
+            'dv_path_scripts' => [
+                'cols' => [
+                    '{pk}',
+                    '`step_id` INT NOT NULL',
+                    '`key` VARCHAR(30) NOT NULL',
+                    '`audience` VARCHAR(20) NOT NULL',    // البواب | الممرضة | الدكتور | العيادة | واتساب
+                    '`situation` VARCHAR(150) NULL',
+                    '`body` TEXT NOT NULL',               // بالمتغيرات {doctor_name} …
+                    '`wa_template_key` VARCHAR(50) NULL', // لو audience = واتساب
+                    '`sort` INT NOT NULL DEFAULT 0',
+                    '`active` TINYINT NOT NULL DEFAULT 1',
+                ],
+                'indexes' => ['uq_dv_path_scripts_key' => 'UNIQUE (`key`)', 'idx_dv_path_scripts_step' => '(`step_id`, `sort`)'],
             ],
             'dv_xp_ledger' => [
                 // PRD: UNIQUE(staff_id, lead_id, action) — بس ده هيمنع متابعة واتساب تانية لنفس الدكتور.
@@ -233,6 +295,8 @@ if (!function_exists('dv_default_settings')) {
             'qr_whatsapp_number'       => '201027555789', // الرقم اللي الدكتور بيبعتله بعد الـ QR (Evolution)
             'api_rate_limit'           => '60',
             'avg_deal_value'           => '7500',
+            'sprint_price'             => '',      // F9 ← {sprint_price} في السكريبتات
+            'path_stalled_days'        => '3',     // F9: دكتور واقف في نفس الخطوة
             'default_visits_per_close' => '25',
             'default_touches_to_win'   => '7',
             'off_days'                 => '5',     // أرقام أيام الأسبوع (0 = الأحد … 5 = الجمعة)
@@ -369,6 +433,9 @@ if (!function_exists('dv_ensure_schema')) {
         } else {
             $CI->db->insert($p . 'dv_settings', ['staff_id' => 0, 'key' => 'lead_source', 'value' => (string) $src['id']]);
         }
+
+        // F9: محتوى المسار من data/checklist_seed.json (لو موجود) — بيضيف الناقص بس
+        dv_path_seed();
 
         update_option('dv_schema_version', DV_SCHEMA_VERSION);
         update_option('dv_installed_at', get_option('dv_installed_at') ?: $now);
