@@ -2,6 +2,8 @@
 
 defined('BASEPATH') or exit('No direct script access allowed');
 
+require_once __DIR__ . '/../helpers/dv_import.php';
+
 /**
  * كل قواعد الموديول: الدكاترة، العماير، الزيارات وسلم المراحل، الـ XP، الحافز، التقارير، والـ API.
  * الكنترولرز بتنادي هنا بس. الأخطاء Exception برسالة عربي جاهزة تتعرض زي ما هي.

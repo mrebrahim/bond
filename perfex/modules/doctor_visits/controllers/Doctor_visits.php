@@ -7,6 +7,10 @@ class Doctor_visits extends AdminController
     public function __construct()
     {
         parent::__construct();
+        // الـ helpers من هنا كمان: لو السيرفر شايل نسخة قديمة من doctor_visits.php في الكاش (OPcache) الدوال الجديدة تفضل موجودة
+        require_once __DIR__ . '/../helpers/dv_setup.php';
+        require_once __DIR__ . '/../helpers/dv_helper.php';
+        require_once __DIR__ . '/../helpers/dv_import.php';
         dv_ensure_schema(); // لو Perfex ماشغّلش التفعيل بعد رفع نسخة جديدة
         $this->load->model(DOCTOR_VISITS_MODULE_NAME . '/dv_model');
     }
