@@ -237,7 +237,7 @@ class Dse_studio extends AdminController
         $m = $this->dse_studio_model;
         $p = $m->package($package_id);
         $this->act('delete', function () use ($m, $package_id) { $m->cancel_package($package_id); return 'الباقة اتلغت'; },
-            admin_url('dse_studio/client/' . $p['clientid']));
+            $this->input->get('back') === 'home' ? admin_url('dse_studio') : admin_url('dse_studio/client/' . $p['clientid']));
     }
 
     public function restore_package($package_id)
@@ -263,7 +263,7 @@ class Dse_studio extends AdminController
         $m = $this->dse_studio_model;
         $p = $m->package($package_id);
         $this->act('delete', function () use ($m, $package_id) { $m->delete_package($package_id); return 'الباقة اتمسحت'; },
-            admin_url('dse_studio/client/' . $p['clientid']));
+            $this->input->get('back') === 'home' ? admin_url('dse_studio') : admin_url('dse_studio/client/' . $p['clientid']));
     }
 
     public function book($clientid)

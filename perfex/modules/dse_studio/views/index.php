@@ -47,7 +47,7 @@
         <div class="panel_s"><div class="panel-body">
           <h5 class="bold">الباقات الشغالة والمستنية الدفع</h5>
           <table class="table table-condensed">
-            <thead><tr><th>العميل</th><th>الباقة</th><th>الحالة</th><th>لحد</th><th>الرصيد الباقي</th></tr></thead>
+            <thead><tr><th>العميل</th><th>الباقة</th><th>الحالة</th><th>لحد</th><th>الرصيد الباقي</th><th></th></tr></thead>
             <tbody>
             <?php foreach ($packages as $p) { ?>
               <tr>
@@ -56,6 +56,18 @@
                 <td><span class="label label-<?= $p['status'] === 'active' ? 'success' : 'warning'; ?>"><?= dse_package_statuses()[$p['status']]; ?></span></td>
                 <td><?= dse_day($p['end_date']); ?></td>
                 <td><?= html_escape($p['balance_text']); ?></td>
+                <td class="text-nowrap">
+                  <?php if (staff_can('delete', DSE_STUDIO_MODULE_NAME)) { ?>
+                    <?php if (!$p['busy']) { ?>
+                      <?= form_open(admin_url('dse_studio/delete_package/' . $p['id'] . '?back=home'), ['style' => 'display:inline', 'onsubmit' => "return confirm('تمسح باقة " . html_escape(addslashes($p['company'])) . " نهائي؟ (الفواتير بتفضل في Perfex)')"]); ?>
+                        <button class="btn btn-danger btn-xs" title="الباقة اتعملت بالغلط ومفيش عليها شغل">🗑 امسح</button>
+                      <?= form_close(); ?>
+                    <?php } ?>
+                    <?= form_open(admin_url('dse_studio/cancel_package/' . $p['id'] . '?back=home'), ['style' => 'display:inline', 'onsubmit' => "return confirm('تلغي باقة " . html_escape(addslashes($p['company'])) . "؟ (تقدر ترجّعها من صفحة العميل)')"]); ?>
+                      <button class="btn btn-default btn-xs">الغي</button>
+                    <?= form_close(); ?>
+                  <?php } ?>
+                </td>
               </tr>
             <?php } ?>
             </tbody>

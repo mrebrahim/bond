@@ -66,7 +66,10 @@ class Dse_studio_model extends App_Model
      */
     public function name_sql($a = 'c')
     {
-        return "COALESCE(NULLIF(TRIM($a.company), ''), (SELECT NULLIF(TRIM(CONCAT(ct.firstname, ' ', ct.lastname)), '') FROM " . $this->tbl('contacts')
+        // لو الاسم متكتب كامل في الخانتين ("د/ميشيل كرم" + "د/ميشيل كرم") ميتكررش
+        $full = "CASE WHEN TRIM(COALESCE(ct.lastname, '')) = '' OR INSTR(ct.firstname, TRIM(ct.lastname)) > 0 THEN ct.firstname"
+            . " WHEN INSTR(ct.lastname, TRIM(ct.firstname)) > 0 THEN ct.lastname ELSE CONCAT(ct.firstname, ' ', ct.lastname) END";
+        return "COALESCE(NULLIF(TRIM($a.company), ''), (SELECT NULLIF(TRIM($full), '') FROM " . $this->tbl('contacts')
             . " ct WHERE ct.userid = $a.userid ORDER BY ct.is_primary DESC, ct.id LIMIT 1), NULLIF(TRIM($a.phonenumber), ''), CONCAT('عميل #', $a.userid))";
     }
 
@@ -1232,6 +1235,7 @@ class Dse_studio_model extends App_Model
         $out = [];
         foreach ($this->rows('SELECT p.*, ' . $this->name_sql('c') . ' AS company FROM ' . $this->tbl('dse_packages') . ' p JOIN ' . $this->tbl('clients') . " c ON c.userid = p.clientid WHERE p.status IN ('pending','active') ORDER BY company") as $p) {
             $p['balance_text'] = $this->balance_text($p['id'], false);
+            $p['busy']         = $this->package_has_activity($p['id']);
             $out[]             = $p;
         }
         return $out;

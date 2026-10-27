@@ -116,6 +116,16 @@ test('اسم العميل: الشركة ولو فاضية جهة الاتصال 
     ok($m->client(3)['company'] === 'سارة محمود', $m->client(3)['company']);
     ok($m->client(3)['wa_phone'] === '201210010360', $m->client(3)['wa_phone']);
     ok($m->client(4)['company'] === 'عميل #4', $m->client(4)['company']);
+    // الاسم متكتب كامل في الخانتين ← ميتكررش
+    $db = $GLOBALS['db'];
+    $db->insert('tblclients', ['company' => '', 'phonenumber' => '']);
+    $dup = $db->insert_id();
+    $db->insert('tblcontacts', ['userid' => $dup, 'firstname' => 'د/ميشيل كرم', 'lastname' => 'د/ميشيل كرم', 'is_primary' => 1]);
+    ok($m->client($dup)['company'] === 'د/ميشيل كرم', $m->client($dup)['company']);
+    $db->insert('tblclients', ['company' => '', 'phonenumber' => '']);
+    $half = $db->insert_id();
+    $db->insert('tblcontacts', ['userid' => $half, 'firstname' => 'محمد', 'lastname' => 'محمد احمد', 'is_primary' => 1]);
+    ok($m->client($half)['company'] === 'محمد احمد', $m->client($half)['company']);
     $names = array_column($m->clients_list(), 'company');
     ok(in_array('سارة محمود', $names, true) && in_array('مطعم الشيف', $names, true), json_encode($names, JSON_UNESCAPED_UNICODE));
 });
