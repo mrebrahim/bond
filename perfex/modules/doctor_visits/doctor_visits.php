@@ -5,7 +5,7 @@ defined('BASEPATH') or exit('No direct script access allowed');
 /*
 Module Name: Doctor Visits Tracker — زيارات الدكاترة
 Description: تسجيل زيارات العيادات من الموبايل في أقل من 30 ثانية، سلم المراحل، قيمة كل زيارة، الحافز والـ XP، الـ QR والواتساب، والتقارير.
-Version: 1.1.0
+Version: 1.2.0
 Requires at least: 3.0.*
 Author: Digital Solution
 */
@@ -14,6 +14,7 @@ define('DOCTOR_VISITS_MODULE_NAME', 'doctor_visits');
 
 require_once __DIR__ . '/helpers/dv_setup.php';
 require_once __DIR__ . '/helpers/dv_helper.php';
+require_once __DIR__ . '/helpers/dv_import.php';
 
 register_activation_hook(DOCTOR_VISITS_MODULE_NAME, 'doctor_visits_activation_hook');
 register_language_files(DOCTOR_VISITS_MODULE_NAME, [DOCTOR_VISITS_MODULE_NAME]);
@@ -57,6 +58,7 @@ function doctor_visits_admin_init()
             ['doctor-visits-dashboard', 'dv_menu_dashboard', 'doctor_visits/dashboard', null],
             ['doctor-visits-buildings', 'dv_menu_buildings', 'doctor_visits/buildings', null],
             ['doctor-visits-reports', 'dv_menu_reports', 'doctor_visits/reports', null],
+            ['doctor-visits-import', 'dv_menu_import', 'doctor_visits/import', 'create'],
             ['doctor-visits-settings', 'dv_menu_settings', 'doctor_visits/settings', 'manage_settings'],
         ];
         foreach ($items as $i => $it) {

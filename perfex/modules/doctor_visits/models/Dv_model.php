@@ -156,7 +156,7 @@ class Dv_model extends App_Model
         $staff = !empty($d['assigned_staff_id']) && $this->can_see_all() ? (int) $d['assigned_staff_id'] : $this->me();
         $phone = dv_phone($d['phone'] ?? '');
         $this->db->insert($this->tbl('leads'), [
-            'name' => (stripos($name, 'د') === 0 || stripos($name, 'dr') === 0) ? $name : 'د/ ' . $name,
+            'name' => !empty($d['raw_name']) || stripos($name, 'د') === 0 || stripos($name, 'dr') === 0 ? $name : 'د/ ' . $name,
             'title' => $spec, 'description' => '', 'phonenumber' => $phone ?: '',
             'status' => (int) $this->setting('stage_status_0'), 'source' => (int) $this->setting('lead_source'),
             'assigned' => $staff, 'dateadded' => $this->now(), 'addedfrom' => $this->me(), 'lastcontact' => null,
@@ -212,7 +212,8 @@ class Dv_model extends App_Model
     {
         $doc   = $this->doctor($lead_id);
         $allow = ['building_id', 'floor', 'specialty', 'clinic_hours', 'gatekeeper_name', 'best_time', 'digital_score', 'facebook_url',
-            'instagram_url', 'gmaps_url', 'clinic_whatsapp', 'audit_link', 'key_insight', 'demo_link', 'offer_link', 'meeting_at', 'deal_value'];
+            'instagram_url', 'gmaps_url', 'clinic_whatsapp', 'audit_link', 'key_insight', 'demo_link', 'offer_link', 'meeting_at', 'deal_value',
+            'priority_rank', 'clinic_days', 'other_branches', 'phones', 'social_summary', 'followers', 'social_note', 'verification', 'notes'];
         $row = [];
         foreach ($allow as $k) {
             if (array_key_exists($k, $d)) {
@@ -229,6 +230,9 @@ class Dv_model extends App_Model
             if (!$row['clinic_whatsapp']) {
                 throw new Exception('رقم واتساب العيادة لازم يبقى مصري (01xxxxxxxxx)');
             }
+        }
+        if (isset($row['priority_rank'])) {
+            $row['priority_rank'] = max(1, min(9, (int) $row['priority_rank']));
         }
         if (isset($row['meeting_at'])) {
             $row['meeting_at'] = date('Y-m-d H:i:s', strtotime($row['meeting_at']));
@@ -280,6 +284,246 @@ class Dv_model extends App_Model
         }
         $sql .= ' ORDER BY ' . ($f['order'] ?? 'b.name, m.floor, l.name');
         return array_map([$this, 'decorate'], $this->rows($sql, $b));
+    }
+
+    // ================================================================= استيراد شيت الدكاترة (Excel / CSV)
+    /** الخانات اللي بتتنقل من الشيت لصف الدكتور (لو مكتوبة في الشيت) */
+    private function import_meta_fields()
+    {
+        return ['floor', 'specialty', 'clinic_days', 'clinic_hours', 'other_branches', 'phones', 'social_summary', 'facebook_url', 'followers',
+            'social_note', 'instagram_url', 'gmaps_url', 'clinic_whatsapp', 'verification', 'priority_rank', 'notes', 'gatekeeper_name', 'best_time'];
+    }
+
+    /** حفظ المعاينة (قبل التأكيد) في dv_events علشان تفضل بين الصفحتين */
+    public function import_save_preview(array $parsed, $filename)
+    {
+        $this->db->insert($this->tbl('dv_events'), [
+            'lead_id' => null, 'type' => 'import_preview', 'created_at' => $this->now(),
+            'payload' => json_encode(['file' => $filename, 'by' => $this->me()] + $parsed, JSON_UNESCAPED_UNICODE),
+        ]);
+        return (int) $this->db->insert_id();
+    }
+
+    public function import_load($id)
+    {
+        $e = $this->row('SELECT * FROM ' . $this->tbl('dv_events') . " WHERE id = ? AND type IN ('import_preview', 'import_done')", [(int) $id]);
+        $p = $e ? json_decode($e['payload'], true) : null;
+        if (!$p || ((int) $p['by'] !== $this->me() && !$this->can_see_all())) {
+            throw new Exception('الملف ده مش موجود — ارفعه تاني');
+        }
+        return array_merge($p, ['id' => (int) $e['id'], 'done' => $e['type'] === 'import_done', 'created_at' => $e['created_at']]);
+    }
+
+    /** الدكاترة الموجودين، متفهرسين بالاسم+العمارة وبالاسم وبالموبايل */
+    private function import_index()
+    {
+        $ix = ['nb' => [], 'n' => [], 'p' => [], 'b' => []];
+        foreach ($this->rows('SELECT id, name FROM ' . $this->tbl('dv_buildings')) as $b) {
+            $ix['b'][dv_norm($b['name'])] = (int) $b['id'];
+        }
+        foreach ($this->rows('SELECT m.*, l.name, l.phonenumber, b.name AS building FROM ' . $this->tbl('dv_doctor_meta') . ' m
+                JOIN ' . $this->tbl('leads') . ' l ON l.id = m.lead_id LEFT JOIN ' . $this->tbl('dv_buildings') . ' b ON b.id = m.building_id') as $d) {
+            $n = dv_norm_name($d['name']);
+            $ix['nb'][$n . '|' . dv_norm($d['building'])] = $d;
+            $ix['n'][$n][] = $d;
+            foreach (array_merge([$d['phonenumber']], dv_import_phones($d['phones'])['mobile']) as $p) {
+                if ($p = dv_phone($p)) {
+                    $ix['p'][$p][] = $d;
+                }
+            }
+        }
+        return $ix;
+    }
+
+    /**
+     * المعاينة: كل صف هيحصل فيه إيه — new / update / same / skip — والخانات اللي هتتغير والزيارة اللي هتتسجل.
+     * مبيكتبش حاجة في الداتابيز.
+     */
+    public function import_plan(array $parsed)
+    {
+        $ix    = $this->import_index();
+        $seen  = [];
+        $plan  = [];
+        $count = ['new' => 0, 'update' => 0, 'same' => 0, 'skip' => 0, 'visits' => 0];
+        $new_b = [];
+        $mine  = $this->can_see_all() ? null : $this->me();
+        foreach ($parsed['rows'] as $i => $r) {
+            $n   = dv_norm_name($r['name']);
+            $bn  = dv_norm($r['building']);
+            $key = $n . '|' . $bn;
+            $p   = ['i' => $i, 'row' => $r, 'action' => 'new', 'lead_id' => null, 'changes' => [], 'visit' => null, 'why' => ''];
+            if (isset($seen[$key])) {
+                $p['action'] = 'skip';
+                $p['why']    = 'متكرر في الشيت (سطر ' . $seen[$key] . ')';
+            } else {
+                $seen[$key] = $r['line'];
+                $doc = $ix['nb'][$key] ?? null;
+                if (!$doc && count($ix['n'][$n] ?? []) === 1) {
+                    $doc = $ix['n'][$n][0]; // نفس الاسم في عمارة تانية ← نفس الدكتور اتنقل أو اتكتب غلط
+                }
+                if (!$doc && $r['phone'] && count($ix['p'][$r['phone']] ?? []) === 1) {
+                    $doc = $ix['p'][$r['phone']][0];
+                }
+                if ($doc && $mine && (int) $doc['assigned_staff_id'] !== $mine) {
+                    $p['action'] = 'skip';
+                    $p['why']    = 'متسجل عند مندوب تاني (' . $this->staff_name($doc['assigned_staff_id']) . ')';
+                } elseif ($doc) {
+                    $p['lead_id'] = (int) $doc['lead_id'];
+                    foreach ($this->import_meta_fields() as $f) {
+                        $v = $r[$f] ?? '';
+                        if ($f === 'phones' && (string) $doc['phones'] === '' && dv_import_phones($v)['mobile'] === array_filter([(string) $doc['phonenumber']])) {
+                            continue; // نفس الموبايل اللي متسجل — مش تغيير
+                        }
+                        if ($v !== '' && $v !== null && (string) $v !== (string) $doc[$f]) {
+                            $p['changes'][$f] = [(string) $doc[$f], (string) $v];
+                        }
+                    }
+                    if ($r['phone'] !== '' && $r['phone'] !== (string) $doc['phonenumber']) {
+                        $p['changes']['phone'] = [(string) $doc['phonenumber'], $r['phone']];
+                    }
+                    if ($bn !== '' && $bn !== dv_norm($doc['building'])) {
+                        $p['changes']['building'] = [(string) $doc['building'], $r['building']];
+                    }
+                    if (!$r['outcome_code'] && $r['next_action_at'] && $r['next_action_at'] !== (string) $doc['next_action_at']) {
+                        $p['changes']['next_action_at'] = [(string) $doc['next_action_at'], $r['next_action_at']];
+                    }
+                    $p['action'] = $p['changes'] ? 'update' : 'same';
+                    $stage = (int) $doc['stage'];
+                } else {
+                    $stage = 0;
+                }
+                if ($p['action'] !== 'skip' && $r['outcome_code']) {
+                    $target = dv_outcomes()[$r['outcome_code']];
+                    if ($target !== null && $target > $stage && ($stage < 9) && empty($doc['lost_reason'])) {
+                        $p['visit'] = $r['outcome_code'];
+                        if ($p['action'] === 'same') {
+                            $p['action'] = 'update';
+                        }
+                    }
+                }
+                if ($p['action'] !== 'skip' && $bn !== '' && !isset($ix['b'][$bn])) {
+                    $new_b[$bn] = $r['building'];
+                }
+            }
+            $count[$p['action']]++;
+            $count['visits'] += $p['visit'] ? 1 : 0;
+            $plan[] = $p;
+        }
+        if ($count['new'] && array_filter($plan, function ($p) { return $p['action'] === 'new' && $p['row']['building'] === ''; })) {
+            $new_b[dv_norm('غير محدد')] = $new_b[dv_norm('غير محدد')] ?? (isset($ix['b'][dv_norm('غير محدد')]) ? null : 'غير محدد');
+        }
+        return ['rows' => $plan, 'count' => $count, 'new_buildings' => array_values(array_filter($new_b))];
+    }
+
+    /** التنفيذ: بيعمل العماير الناقصة، والدكاترة الجداد (Lead + Meta + QR)، ويحدّث الموجودين، ويسجّل الزيارات اللي في الشيت (من غير XP) */
+    public function import_run($id, $staff_id = null)
+    {
+        $file = $this->import_load($id);
+        if ($file['done']) {
+            throw new Exception('الملف ده اتستورد قبل كده');
+        }
+        $staff  = $staff_id && $this->can_see_all() ? (int) $staff_id : $this->me();
+        $plan   = $this->import_plan($file);
+        $ix     = $this->import_index();
+        $result = ['new' => 0, 'update' => 0, 'same' => 0, 'skip' => 0, 'visits' => 0, 'buildings' => 0, 'errors' => []];
+        foreach ($plan['rows'] as $p) {
+            $r = $p['row'];
+            if ($p['action'] === 'skip' || $p['action'] === 'same') {
+                $result[$p['action']]++;
+                continue;
+            }
+            try {
+                $bname = $r['building'] !== '' ? $r['building'] : 'غير محدد';
+                $bid   = $ix['b'][dv_norm($bname)] ?? null;
+                if (!$bid) {
+                    $bid = $this->save_building(['name' => $bname]);
+                    $ix['b'][dv_norm($bname)] = $bid;
+                    $result['buildings']++;
+                }
+                $meta = [];
+                foreach ($this->import_meta_fields() as $f) {
+                    if (($r[$f] ?? '') !== '' && $r[$f] !== null) {
+                        $meta[$f] = $r[$f];
+                    }
+                }
+                if ($p['action'] === 'new') {
+                    $lead = $this->quick_add([
+                        'name' => $r['name'], 'specialty' => $r['specialty'], 'building_id' => $bid, 'phone' => $r['phone'],
+                        'assigned_staff_id' => $staff, 'raw_name' => 1,
+                    ]);
+                    $result['new']++;
+                } else {
+                    $lead = $p['lead_id'];
+                    if (isset($p['changes']['building'])) {
+                        $meta['building_id'] = $bid;
+                    }
+                    if (isset($p['changes']['phone'])) {
+                        $this->db->update($this->tbl('leads'), ['phonenumber' => $r['phone']], ['id' => $lead]);
+                    }
+                    $result['update']++;
+                }
+                if (isset($meta['priority_rank'])) {
+                    $meta['priority_rank'] = (int) $meta['priority_rank'];
+                }
+                if (!$p['visit'] && $r['next_action_at']) {
+                    $meta['next_action']    = $r['next_action'] !== '' ? $r['next_action'] : 'متابعة';
+                    $meta['next_action_at'] = $r['next_action_at'];
+                }
+                $meta['updated_at'] = $this->now();
+                $this->db->update($this->tbl('dv_doctor_meta'), $meta, ['lead_id' => $lead]);
+                $lead_row = [];
+                if ($r['facebook_url'] !== '') {
+                    $lead_row['website'] = $r['facebook_url'];
+                }
+                if ($r['notes'] !== '' && $p['action'] === 'new') {
+                    $lead_row['description'] = $r['notes'];
+                }
+                if ($lead_row && $this->db->field_exists('website', $this->tbl('leads'))) {
+                    $this->db->update($this->tbl('leads'), $lead_row, ['id' => $lead]);
+                }
+                if (!$p['visit'] && $r['next_action_at'] && strtotime($r['next_action_at']) > $this->t()) {
+                    $this->db->insert($this->tbl('reminders'), [
+                        'description' => $meta['next_action'] . ' — ' . $r['name'], 'date' => $r['next_action_at'], 'isnotified' => 0,
+                        'rel_id' => $lead, 'staff' => $staff, 'rel_type' => 'lead', 'notify_by_email' => 0, 'creator' => $this->me(),
+                    ]);
+                }
+                if ($p['visit']) {
+                    $doc = $this->doctor($lead, false);
+                    $this->log_visit($lead, [
+                        'outcome' => $p['visit'], 'channel' => 'system', 'no_xp' => 1, 'note' => 'من شيت الإكسل: ' . ($file['file'] ?? ''),
+                        'next_action' => $r['next_action'] !== '' ? $r['next_action'] : 'متابعة',
+                        'next_action_at' => $r['next_action_at'] ?: date('Y-m-d 10:00:00', $this->t() + 2 * 86400),
+                    ], (int) $doc['assigned_staff_id'] ?: $staff);
+                    $this->feedback = [];
+                    $result['visits']++;
+                }
+            } catch (Exception $e) {
+                $result['errors'][] = 'سطر ' . $r['line'] . ' (' . $r['name'] . '): ' . $e->getMessage();
+            }
+        }
+        $this->db->update($this->tbl('dv_events'), [
+            'type' => 'import_done', 'payload' => json_encode(['result' => $result, 'staff' => $staff] + $file, JSON_UNESCAPED_UNICODE),
+        ], ['id' => (int) $id]);
+        return $result;
+    }
+
+    /** نفس أعمدة الشيت — علشان تنزّل الدكاترة، تعدّل في Excel، وترفعهم تاني */
+    public function import_export_rows()
+    {
+        $out = [['#', 'البرج', 'الدكتور / المكان', 'التخصص', 'الدور', 'السوشيال / الموقع', 'رابط فيسبوك', 'متابعين', 'ملاحظة فيسبوك', 'أيام العيادة',
+            'الساعات', 'العيادات / الفروع التانية', 'التليفون', 'حالة التحقق', 'الأولوية (1=أعلى)', 'ملاحظات', 'اسم الممرضة', 'أنسب وقت', 'زرنا؟', 'النتيجة',
+            'الخطوة الجاية', 'تاريخ المتابعة']];
+        foreach ($this->doctors() as $d) {
+            $last = $this->row('SELECT outcome, visited_at FROM ' . $this->tbl('dv_visits') . " WHERE lead_id = ? AND outcome NOT IN ('WA_SENT', 'QR_SCAN') ORDER BY visited_at DESC, id DESC LIMIT 1", [$d['lead_id']]);
+            $out[] = [
+                $d['lead_id'], $d['building'], $d['name'], $d['specialty'], $d['floor'], $d['social_summary'], $d['facebook_url'], $d['followers'],
+                $d['social_note'], $d['clinic_days'], $d['clinic_hours'], $d['other_branches'], $d['phones'] ?: preg_replace('/^20/', '0', (string) $d['phonenumber']), $d['verification'],
+                $d['priority_rank'], $d['notes'], $d['gatekeeper_name'], $d['best_time'], $d['stage'] >= 1 ? 'نعم' : '',
+                $d['lost'] ? 'Lost' : ($last ? dv_outcome_label($last['outcome']) : ''), $d['next_action'],
+                $d['next_action_at'] ? date('Y-m-d H:i', strtotime($d['next_action_at'])) : '',
+            ];
+        }
+        return $out;
     }
 
     // ================================================================= الزيارات + محرك المراحل (F3)
@@ -395,8 +639,8 @@ class Dv_model extends App_Model
             ]);
         }
 
-        $xp = $this->award_visit_xp($staff, $doc, $outcome, $before, $after, $visit_id, $visited, $d);
-        if ($staff) {
+        $xp = empty($d['no_xp']) ? $this->award_visit_xp($staff, $doc, $outcome, $before, $after, $visit_id, $visited, $d) : 0;
+        if ($staff && empty($d['no_xp'])) {
             $this->check_milestones($staff, $doc['lead_id'], $outcome, $after);
             $this->check_quests_and_streak($staff);
         }
@@ -727,6 +971,10 @@ class Dv_model extends App_Model
             if ($d['grade'] === 'A' && (int) $d['stage'] === 0) {
                 $score += 500;
                 $why[] = 'grade_a';
+            }
+            if ((int) $d['stage'] === 0 && in_array((int) $d['priority_rank'], [1, 2], true)) { // أولوية الشيت
+                $score += (int) $d['priority_rank'] === 1 ? 400 : 150;
+                $why[] = 'priority_' . (int) $d['priority_rank'];
             }
             if ($d['best_time'] && preg_match('/(\d{1,2})/', $d['best_time'], $m)) {
                 $h = (int) $m[1];

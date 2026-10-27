@@ -325,7 +325,7 @@ class Redirected extends Exception {}
 function redirect($u) { throw new Redirected($u); }
 $ALERTS = [];
 function set_alert($t, $m) { global $ALERTS; $ALERTS[] = [$t, $m]; }
-function form_open($a, $attrs = []) { return '<form method="post" action="' . $a . '">'; } function form_close() { return '</form>'; }
+function form_open($a, $attrs = []) { return '<form method="post" action="' . $a . '">'; } function form_open_multipart($a, $attrs = []) { return '<form method="post" enctype="multipart/form-data" action="' . $a . '">'; } function form_close() { return '</form>'; }
 class FakeInput { public $post = []; public $get = []; public $raw_input_stream = ''; public $headers = [];
     function post($k = null, $x = true) { return $k === null ? ($this->post ?: null) : ($this->post[$k] ?? null); }
     function get($k = null) { return $k === null ? $this->get : ($this->get[$k] ?? null); }
@@ -404,6 +404,165 @@ test('تاب "زيارات" في صفحة الـ Lead', function () use (&$D) {
     ob_start(); doctor_visits_lead_tab($lead); doctor_visits_lead_tab_content($lead); $h = ob_get_clean();
     ok(strpos($h, 'tab_doctor_visits') !== false && strpos($h, 'tab-pane') !== false, substr($h, 0, 300));
     ob_start(); doctor_visits_lead_tab((object) ['id' => 99999]); ok(ob_get_clean() === '', 'Lead مش دكتور ← مفيش تاب');
+});
+
+echo "\nاستيراد شيت الدكاترة (Excel):\n";
+$CI->db->pdo->exec('ALTER TABLE tblleads ADD COLUMN website TEXT');
+/** xlsx صغير بنفس شكل شيت الدكاترة: shared strings + inline string + أرقام + خانات فاضية + شيت ملخص */
+function make_xlsx($path, array $rows, $sheet = 'الدكاترة') {
+    $ss = []; $xml = '';
+    foreach ($rows as $i => $r) {
+        $xml .= '<row r="' . ($i + 1) . '">';
+        foreach ($r as $j => $v) {
+            if ($v === null || $v === '') { continue; }
+            $ref = chr(65 + $j) . ($i + 1);
+            if (is_int($v) || is_float($v)) { $xml .= '<c r="' . $ref . '"><v>' . $v . '</v></c>'; }
+            elseif ($j === 2 && $i % 2) { $xml .= '<c r="' . $ref . '" t="inlineStr"><is><t>' . htmlspecialchars($v) . '</t></is></c>'; }
+            else { $ss[] = $v; $xml .= '<c r="' . $ref . '" t="s"><v>' . (count($ss) - 1) . '</v></c>'; }
+        }
+        $xml .= '</row>';
+    }
+    $z = new ZipArchive(); $z->open($path, ZipArchive::CREATE | ZipArchive::OVERWRITE);
+    $z->addFromString('xl/workbook.xml', '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="ملخص" sheetId="2" r:id="rId2"/><sheet name="' . $sheet . '" sheetId="1" r:id="rId1"/></sheets></workbook>');
+    $z->addFromString('xl/_rels/workbook.xml.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Target="/xl/worksheets/sheet2.xml"/></Relationships>');
+    $z->addFromString('xl/sharedStrings.xml', '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' . implode('', array_map(function ($s) { return '<si><r><t>' . htmlspecialchars(mb_substr($s, 0, 3)) . '</t></r><r><t xml:space="preserve">' . htmlspecialchars(mb_substr($s, 3)) . '</t></r></si>'; }, $ss)) . '</sst>');
+    $z->addFromString('xl/worksheets/sheet1.xml', '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' . $xml . '</sheetData></worksheet>');
+    $z->addFromString('xl/worksheets/sheet2.xml', '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>البند</t></is></c><c r="B1" t="inlineStr"><is><t>العدد</t></is></c></row></sheetData></worksheet>');
+    $z->close();
+}
+$HEAD = ['#', 'البرج', 'الدكتور / المكان', 'التخصص', 'الدور', 'السوشيال / الموقع', 'رابط فيسبوك', 'متابعين', 'ملاحظة فيسبوك', 'أيام العيادة', 'الساعات', 'العيادات / الفروع التانية', 'التليفون', 'حالة التحقق', 'الأولوية (1=أعلى)', 'ملاحظات', 'اسم الممرضة', 'أنسب وقت', 'زرنا؟', 'النتيجة', 'الخطوة الجاية', 'تاريخ المتابعة', 'عمود زيادة'];
+$SHEET = [
+    $HEAD,
+    [1, 'البرج القديم (فوق النساجون)', 'د. محمد أشرف', 'جراحة عظام', '؟', 'فيسبوك ✅ (303 متابع)', 'https://www.facebook.com/profile.php?id=100076529318569', '303', 'برج عرابي القديم', 'غير معروف — اسأل الممرضة', 'غير معروف', null, null, 'مؤكد من صفحته', '1', 'أضعف صفحة — عميل نموذجي'],
+    [2, 'البرج القديم (فوق النساجون)', 'د. سامي جرجس', 'مسالك', 5, 'صفحتين فيسبوك', 'https://www.facebook.com/a | https://www.facebook.com/b', '4.3K', 'صفحتين', 'التلات مؤكد', '7:30–11 م', 'شبرا + مدينة نصر', '0122974222 / 01122974222', 'مؤكد', 2, 'نقطة أوديت', 'منى أحمد', '8 م', 'نعم', 'إذن واتساب', 'ابعتله الأوديت', 46331],
+    [3, 'البرج الجديد (فوق بي تك)', 'عيادات الرحمة الطبية', 'مجمع عيادات', '5', 'فيسبوك + فيديوهات', 'https://www.facebook.com/61566113942565/', '—', null, null, null, null, '01144553114 / 01155739383', 'صفحتهم', '1', 'اسأل على المالك'],
+    [4, 'البرج الجديد (فوق بي تك)', 'د. أحمد مراد', '', '؟', 'لم يُعثر على حساب', 'لم يُعثر عليها في بحث فيسبوك', null, null, null, null, null, '0246048730', null, '3', null, null, null, 'نعم', 'رفض', null, '33/44/2026'],
+    [5, 'البرج القديم (فوق النساجون)', 'د/ محمد أشرف', 'جراحة عظام'], // متكرر
+    [],
+    [null, 'الخانات الصفرا تتملا في الميدان.'], // ملاحظة آخر الشيت
+];
+$XL = sys_get_temp_dir() . '/dv_doctors_test.xlsx';
+make_xlsx($XL, $SHEET);
+$P = null;
+test('قراية الـ xlsx: الشيت الصح (مش الملخص) · الأعمدة بالاسم · القيم المجهولة فاضية · الأرقام والتواريخ', function () use ($XL, &$P) {
+    $P = dv_import_parse(dv_read_sheets($XL));
+    ok($P['sheets'] === ['الدكاترة'] && count($P['rows']) === 5, json_encode([$P['sheets'], count($P['rows'])], JSON_UNESCAPED_UNICODE));
+    ok(count($P['columns']) === 22 && $P['ignored'] === ['عمود زيادة'], json_encode($P['ignored'], JSON_UNESCAPED_UNICODE));
+    [$a, $s, $r, $m] = $P['rows'];
+    ok($a['name'] === 'د. محمد أشرف' && $a['floor'] === '' && $a['clinic_days'] === '' && $a['clinic_hours'] === '' && $a['priority_rank'] === 1 && $a['followers'] === '303', json_encode($a, JSON_UNESCAPED_UNICODE));
+    ok($s['phone'] === '201122974222' && $s['phones'] === '0122974222 / 01122974222' && $s['floor'] === '5' && $s['priority_rank'] === 2, 'الموبايل الصح من رقمين');
+    ok($s['facebook_url'] === 'https://www.facebook.com/a' && strpos($s['social_note'], 'https://www.facebook.com/b') !== false, 'اللينك التاني في الملاحظة');
+    ok($s['gatekeeper_name'] === 'منى' && $s['outcome_code'] === 'WA' && $s['next_action_at'] === '2026-11-05 00:00:00' && $s['visited'] === 1, json_encode($s, JSON_UNESCAPED_UNICODE));
+    ok($r['followers'] === '' && $r['line'] === 4, 'سطر Excel الحقيقي');
+    ok($m['specialty'] === 'غير معروف' && $m['phone'] === '' && $m['phones'] === '0246048730' && $m['facebook_url'] === '' && $m['social_summary'] === 'لم يُعثر على حساب', json_encode($m, JSON_UNESCAPED_UNICODE));
+    ok($m['outcome_code'] === null && count($m['warnings']) === 5, json_encode($m['warnings'], JSON_UNESCAPED_UNICODE)); // تخصص · أرضي · Lost · تاريخ · زرناه من غير نتيجة
+    ok(dv_import_outcome('قابلنا الدكتور وسبنا الظرف') === 'DOC' && dv_import_outcome('ميعاد اتحجز') === 'MTG_BOOKED' && dv_import_outcome('اتقفل Won') === 'WON' && dv_import_outcome('كلام') === null);
+    ok(dv_import_date('3/11/2026 6 م') === '2026-11-03 18:00:00' && dv_import_date('2026-11-04') === '2026-11-04 10:00:00' && dv_import_date('31/2/2026') === null);
+    try { dv_import_parse([['name' => 'x', 'rows' => [['a', 'b'], ['c', 'd']]]]); ok(false); } catch (Exception $e) { ok(strpos($e->getMessage(), 'صف عناوين') !== false); }
+    try { dv_read_sheets($XL, 'old.xls'); ok(false); } catch (Exception $e) { ok(strpos($e->getMessage(), 'xlsx') !== false); }
+});
+test('CSV (فاصلة منقوطة + BOM) بنفس الأعمدة', function () {
+    $f = sys_get_temp_dir() . '/dv_doctors_test.csv';
+    file_put_contents($f, "\xEF\xBB\xBFالدكتور;التخصص;البرج;التليفون\nد. هبة;نفسية;برج 1;01012345678\n");
+    $p = dv_import_parse(dv_read_sheets($f));
+    ok(count($p['rows']) === 1 && $p['rows'][0]['building'] === 'برج 1' && $p['rows'][0]['phone'] === '201012345678');
+});
+test('المعاينة مبتكتبش حاجة · التأكيد: عماير + Leads + كل الخانات + زيارة من غير XP + Reminder', function () use ($M, &$P) {
+    global $CI;
+    $GLOBALS['ME'] = 1;
+    $leads = count(q('SELECT id FROM tblleads'));
+    $id    = $M->import_save_preview($P, 'doctors.xlsx');
+    $plan  = $M->import_plan($M->import_load($id));
+    ok($plan['count']['new'] === 4 && $plan['count']['skip'] === 1 && $plan['count']['visits'] === 1, json_encode($plan['count']));
+    ok($plan['rows'][4]['why'] === 'متكرر في الشيت (سطر 2)', $plan['rows'][4]['why']);
+    ok(count($plan['new_buildings']) === 2 && count(q('SELECT id FROM tblleads')) === $leads, json_encode($plan['new_buildings'], JSON_UNESCAPED_UNICODE));
+    $xp = count(q('SELECT id FROM tbldv_xp_ledger'));
+    $r  = $M->import_run($id, 8);
+    ok($r['new'] === 4 && $r['visits'] === 1 && $r['buildings'] === 2 && !$r['errors'], json_encode($r, JSON_UNESCAPED_UNICODE));
+    $a = q("SELECT m.*, l.name, l.website, l.description, l.assigned, l.title FROM tbldv_doctor_meta m JOIN tblleads l ON l.id = m.lead_id WHERE l.name = 'د. محمد أشرف'")[0];
+    ok($a['priority_rank'] == 1 && $a['notes'] === 'أضعف صفحة — عميل نموذجي' && $a['verification'] === 'مؤكد من صفحته' && $a['followers'] === '303' && $a['social_summary'] === 'فيسبوك ✅ (303 متابع)', json_encode($a, JSON_UNESCAPED_UNICODE));
+    ok($a['website'] === 'https://www.facebook.com/profile.php?id=100076529318569' && $a['description'] === 'أضعف صفحة — عميل نموذجي' && $a['assigned'] == 8 && $a['assigned_staff_id'] == 8 && $a['title'] === 'جراحة عظام', json_encode($a, JSON_UNESCAPED_UNICODE));
+    ok(preg_match('/^DV-/', $a['qr_code']) && $a['stage'] == 0 && $a['clinic_hours'] === null, json_encode($a, JSON_UNESCAPED_UNICODE));
+    $c = q("SELECT m.* FROM tbldv_doctor_meta m JOIN tblleads l ON l.id = m.lead_id WHERE l.name = 'عيادات الرحمة الطبية'")[0];
+    ok($c['priority_rank'] == 1, 'الاسم من غير "د/"');
+    $s = $M->doctor(q("SELECT id FROM tblleads WHERE name = 'د. سامي جرجس'")[0]['id'], false);
+    ok($s['stage'] == 5 && $s['wa_consent'] == 1 && $s['next_action'] === 'ابعتله الأوديت' && $s['next_action_at'] === '2026-11-05 00:00:00' && $s['gatekeeper_name'] === 'منى' && $s['clinic_days'] === 'التلات مؤكد', json_encode($s, JSON_UNESCAPED_UNICODE));
+    $v = q('SELECT * FROM tbldv_visits WHERE lead_id = ?', [$s['lead_id']]);
+    ok(count($v) === 1 && $v[0]['outcome'] === 'WA' && $v[0]['channel'] === 'system' && $v[0]['staff_id'] == 8 && strpos($v[0]['note'], 'الإكسل') !== false, json_encode($v, JSON_UNESCAPED_UNICODE));
+    ok(count(q('SELECT id FROM tbldv_xp_ledger')) === $xp, 'مفيش XP على زيارات الإكسل');
+    ok(q('SELECT status FROM tblleads WHERE id = ?', [$s['lead_id']])[0]['status'] == dv_setting('stage_status_5'), 'status');
+    try { $M->import_run($id); ok(false, 'تاني مرة'); } catch (Exception $e) { ok(strpos($e->getMessage(), 'قبل كده') !== false, $e->getMessage() . json_encode(q('SELECT id, type, length(payload) n FROM tbldv_events'))); }
+});
+test('نفس الشيت تاني ← "زي ما هو" · شيت متعدّل ← تحديث الخانات المكتوبة بس · مندوب ميحدّثش دكتور غيره', function () use ($M, $XL, $SHEET) {
+    $GLOBALS['ME'] = 1;
+    $plan = $M->import_plan(dv_import_parse(dv_read_sheets($XL)));
+    ok($plan['count']['same'] === 4 && $plan['count']['new'] === 0 && $plan['count']['visits'] === 0, json_encode($plan['count']));
+    $SHEET[1][10] = '6–9 م';      // الساعات اتعرفت
+    $SHEET[1][15] = '';           // الملاحظات فاضية ← مبتمسحش
+    $SHEET[1][2]  = 'محمد أشرف';  // من غير "د."
+    $SHEET[2][19] = 'ميعاد';      // اتقدم ← زيارة MTG_BOOKED
+    $SHEET[3][1]  = 'البرج القديم (فوق النساجون)'; // اتنقل
+    make_xlsx($XL, $SHEET);
+    $id   = $M->import_save_preview(dv_import_parse(dv_read_sheets($XL)), 'v2.xlsx');
+    $plan = $M->import_plan($M->import_load($id));
+    ok($plan['count']['update'] === 3 && $plan['count']['same'] === 1, json_encode($plan['count']));
+    ok(array_keys($plan['rows'][0]['changes']) === ['clinic_hours'], json_encode($plan['rows'][0]['changes'], JSON_UNESCAPED_UNICODE));
+    ok(isset($plan['rows'][2]['changes']['building']) && $plan['rows'][1]['visit'] === 'MTG_BOOKED');
+    $loaded = $M->import_load($id);
+    $GLOBALS['CAN_ALL'] = false; $GLOBALS['ME'] = 7;
+    try { $M->import_load($id); ok(false, 'ملف مندوب تاني'); } catch (Exception $e) { ok(strpos($e->getMessage(), 'ارفعه تاني') !== false, $e->getMessage()); }
+    $p7 = $M->import_plan($loaded);
+    ok($p7['rows'][0]['action'] === 'skip' && strpos($p7['rows'][0]['why'], 'مندوب تاني') !== false, json_encode($p7['rows'][0], JSON_UNESCAPED_UNICODE));
+    $GLOBALS['CAN_ALL'] = true; $GLOBALS['ME'] = 1;
+    $r = $M->import_run($id);
+    ok($r['update'] === 3 && $r['visits'] === 1 && !$r['errors'], json_encode($r, JSON_UNESCAPED_UNICODE));
+    $a = q("SELECT m.* FROM tbldv_doctor_meta m JOIN tblleads l ON l.id = m.lead_id WHERE l.name = 'د. محمد أشرف'")[0];
+    ok($a['clinic_hours'] === '6–9 م' && $a['notes'] === 'أضعف صفحة — عميل نموذجي', 'الملاحظة متمسحتش');
+    $c = q("SELECT b.name FROM tbldv_doctor_meta m JOIN tblleads l ON l.id = m.lead_id JOIN tbldv_buildings b ON b.id = m.building_id WHERE l.name = 'عيادات الرحمة الطبية'")[0];
+    ok($c['name'] === 'البرج القديم (فوق النساجون)');
+    ok(q("SELECT m.stage FROM tbldv_doctor_meta m JOIN tblleads l ON l.id = m.lead_id WHERE l.name = 'د. سامي جرجس'")[0]['stage'] == 6);
+});
+test('الطابور: أولوية 1 اللي متزارتش فوق · الكارت فيه P1 والمواعيد أو "اسأل الممرضة"', function () use ($M) {
+    $GLOBALS['ME'] = 8;
+    $q = $M->queue(8);
+    $names = array_column($q, 'name');
+    ok(in_array('priority_1', $q[0]['why'], true) || in_array('due_today', $q[0]['why'], true) || in_array('overdue', $q[0]['why'], true), json_encode([$q[0]['name'], $q[0]['why']], JSON_UNESCAPED_UNICODE));
+    $a = array_values(array_filter($q, function ($d) { return $d['name'] === 'د. محمد أشرف'; }))[0];
+    ok(in_array('priority_1', $a['why'], true), json_encode($a['why']));
+    $h = page('queue');
+    ok(strpos($h, '>P1<') !== false, 'P1'); ok(strpos($h, _l('dv_ask_nurse_hours')) !== false, 'nurse'); ok(strpos($h, '6–9 م') !== false, 'hours'); ok(strpos($h, _l('dv_why_priority_1')) !== false, 'why');
+    $GLOBALS['ME'] = 1;
+});
+test('صفحة الاستيراد: رفع ← معاينة ← تأكيد ← النتيجة · وتنزيل الدكاترة بنفس الأعمدة وترجع تترفع "زي ما هي"', function () use ($M, $XL) {
+    $GLOBALS['ME'] = 1;
+    ok(strpos(page('import'), 'type="file"') !== false, 'upload form');
+    $SH = [['الدكتور / المكان', 'التخصص', 'البرج', 'الأولوية (1=أعلى)'], ['د. جديد خالص', 'جلدية', 'برج الأطباء', 1]];
+    make_xlsx($XL, $SH);
+    $_FILES = ['file' => ['tmp_name' => $XL, 'name' => 'new.xlsx', 'error' => 0, 'size' => filesize($XL)]];
+    $r = page('import');
+    $_FILES = [];
+    ok(preg_match('#^REDIRECT /admin/doctor_visits/import/(\d+)$#', $r, $m), $r);
+    $h = page('import', [$m[1]]);
+    file_put_contents(sys_get_temp_dir() . '/dv_import.html', $h);
+    ok(strpos($h, 'د. جديد خالص') !== false && strpos($h, _l('dv_import_new')) !== false && strpos($h, 'name="staff_id"') !== false, substr($h, 0, 300));
+    $c = new Doctor_visits(); $c->uri->seg3 = 'import'; $c->input->post = ['confirm' => 1, 'staff_id' => 1];
+    try { $c->import($m[1]); ok(false, 'no redirect'); } catch (Redirected $e) { ok($e->getMessage() === '/admin/doctor_visits/import/' . $m[1], $e->getMessage()); }
+    global $ALERTS;
+    ok(strpos(end($ALERTS)[1], 'اتستورد: 1 دكتور جديد') !== false, json_encode(end($ALERTS), JSON_UNESCAPED_UNICODE));
+    $done = page('import', [$m[1]]);
+    ok(strpos($done, 'اتستورد: 1 دكتور جديد') !== false && strpos($done, 'name="confirm"') === false, 'done page');
+    $_FILES = ['file' => ['tmp_name' => $XL, 'name' => 'x.pdf', 'error' => 0, 'size' => 10]];
+    $r2 = page('import'); ok($r2 === 'REDIRECT /admin/doctor_visits/import' && strpos(end($ALERTS)[1], 'xlsx') !== false, $r2 . json_encode(end($ALERTS), JSON_UNESCAPED_UNICODE));
+    $_FILES = [];
+    // تنزيل ← رفع تاني = مفيش تغيير
+    $csv = sys_get_temp_dir() . '/dv_export.csv';
+    $fh  = fopen($csv, 'w'); fwrite($fh, "\xEF\xBB\xBF");
+    foreach ($M->import_export_rows() as $row) { fputcsv($fh, $row); }
+    fclose($fh);
+    $p    = dv_import_parse(dv_read_sheets($csv));
+    $plan = $M->import_plan($p);
+    $n    = count(q('SELECT lead_id FROM tbldv_doctor_meta'));
+    ok(count($p['rows']) === $n && $plan['count']['new'] === 0 && $plan['count']['update'] === 0 && $plan['count']['visits'] === 0, json_encode([$n, $plan['count'], array_values(array_filter(array_map(function ($x) { return $x['changes'] ?: null; }, $plan['rows'])))], JSON_UNESCAPED_UNICODE));
 });
 restore_error_handler();
 

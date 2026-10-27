@@ -277,6 +277,59 @@ class Doctor_visits extends AdminController
         exit;
     }
 
+    /** استيراد شيت الدكاترة: ارفع ← شوف هيحصل إيه ← أكّد */
+    public function import($id = null)
+    {
+        $this->need('create');
+        if (!empty($_FILES['file']['tmp_name'])) {
+            $id = null;
+            try {
+                $f = $_FILES['file'];
+                if ($f['error'] !== UPLOAD_ERR_OK || $f['size'] > 10 * 1024 * 1024) {
+                    throw new Exception('الملف مارفعش — لازم يبقى أقل من 10 ميجا');
+                }
+                $parsed = dv_import_parse(dv_read_sheets($f['tmp_name'], $f['name']));
+                $id     = $this->dv_model->import_save_preview($parsed, basename($f['name']));
+            } catch (Exception $e) {
+                set_alert('danger', $e->getMessage());
+            }
+            redirect(admin_url('doctor_visits/import' . ($id ? '/' . $id : '')));
+        }
+        if ($id && $this->input->post('confirm')) {
+            $this->act(function () use ($id) {
+                $r = $this->dv_model->import_run($id, $this->input->post('staff_id'));
+                return 'اتستورد: ' . $r['new'] . ' دكتور جديد · ' . $r['update'] . ' اتحدّث · ' . $r['visits'] . ' زيارة · ' . $r['buildings'] . ' عمارة جديدة'
+                    . ($r['errors'] ? ' — ' . count($r['errors']) . ' سطر فيه مشكلة (تحت)' : '');
+            }, admin_url('doctor_visits/import/' . (int) $id));
+        }
+        $data = ['title' => _l('dv_menu_import'), 'file' => null, 'plan' => null, 'staff' => $this->can('view') ? $this->staff_list() : []];
+        if ($id) {
+            try {
+                $data['file'] = $this->dv_model->import_load($id);
+                $data['plan'] = $data['file']['done'] ? null : $this->dv_model->import_plan($data['file']);
+            } catch (Exception $e) {
+                set_alert('danger', $e->getMessage());
+                redirect(admin_url('doctor_visits/import'));
+            }
+        }
+        $this->view('import', $data);
+    }
+
+    /** الدكاترة بنفس أعمدة الشيت (CSV يفتح في Excel) — عدّل وارفعه تاني */
+    public function export_doctors()
+    {
+        $this->need_view();
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="doctors_' . date('Y-m-d') . '.csv"');
+        $out = fopen('php://output', 'w');
+        fwrite($out, "\xEF\xBB\xBF");
+        foreach ($this->dv_model->import_export_rows() as $r) {
+            fputcsv($out, $r);
+        }
+        fclose($out);
+        exit;
+    }
+
     // ================================================================= الإعدادات
     public function settings()
     {

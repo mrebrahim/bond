@@ -4,12 +4,16 @@
   <div class="dv-row">
     <div style="min-width:0">
       <a href="<?= admin_url('doctor_visits/doctor/' . $d['lead_id']); ?>"><b><?= html_escape($d['name']); ?></b></a>
-      <span class="dv-tag"><?= html_escape($d['specialty']); ?></span><?php if ($d['grade']) { ?><span class="dv-tag"><?= $d['grade']; ?></span><?php } ?>
+      <span class="dv-tag"><?= html_escape($d['specialty']); ?></span><?php if ($d['grade']) { ?><span class="dv-tag"><?= $d['grade']; ?></span><?php } ?><?php if (!empty($d['priority_rank'])) { ?><span class="dv-tag" style="<?= (int) $d['priority_rank'] === 1 ? 'background:#fef3c7;color:#92400e' : ''; ?>">P<?= (int) $d['priority_rank']; ?></span><?php } ?>
       <div class="dv-muted">
         🏢 <?= html_escape($d['building']); ?><?= $d['floor'] ? ' · ' . _l('dv_floor') . ' ' . html_escape($d['floor']) : ''; ?>
         <?= $d['gatekeeper_name'] ? ' · 👩‍⚕️ ' . html_escape($d['gatekeeper_name']) : ''; ?>
         <?= $d['best_time'] ? ' · ⏰ ' . html_escape($d['best_time']) : ''; ?>
       </div>
+      <?php if ((int) $d['stage'] < 9 && !$d['lost']) { ?>
+        <div class="dv-muted"><?= ($d['clinic_days'] ?? '') !== '' || ($d['clinic_hours'] ?? '') !== '' ? '📅 ' . html_escape(trim($d['clinic_days'] . ' · ' . $d['clinic_hours'], ' ·')) : '📅 ' . _l('dv_ask_nurse_hours'); ?></div>
+        <?php if (($d['notes'] ?? '') !== '') { ?><div class="dv-muted">💡 <?= html_escape(mb_substr($d['notes'], 0, 120)); ?></div><?php } ?>
+      <?php } ?>
     </div>
     <span class="dv-chip" style="background:<?= $d['color']; ?>"><?= $d['lost'] ? _l('dv_outcome_lost') : dv_stage_label($d['stage']); ?></span>
   </div>

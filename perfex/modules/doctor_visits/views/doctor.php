@@ -59,11 +59,18 @@
           $f('floor', _l('dv_floor'), $doc['floor']);
           $f('phone', _l('dv_phone'), $doc['phonenumber'], 'tel', true);
           $f('clinic_whatsapp', _l('dv_clinic_whatsapp'), $doc['clinic_whatsapp'], 'tel', true);
+          $f('priority_rank', _l('dv_priority_rank'), $doc['priority_rank'], 'number');
+          $f('phones', _l('dv_phones'), $doc['phones'], 'text', true);
+          $f('clinic_days', _l('dv_clinic_days'), $doc['clinic_days']);
           $f('clinic_hours', _l('dv_clinic_hours'), $doc['clinic_hours']);
+          $f('other_branches', _l('dv_other_branches'), $doc['other_branches']);
           $f('gatekeeper_name', _l('dv_gatekeeper'), $doc['gatekeeper_name']);
           $f('best_time', _l('dv_best_time'), $doc['best_time']);
           $f('digital_score', _l('dv_digital_score') . ' — ' . _l('dv_grade') . ' ' . $doc['grade'], $doc['digital_score'], 'number');
           $f('facebook_url', _l('dv_facebook'), $doc['facebook_url'], 'url', true);
+          $f('followers', _l('dv_followers'), $doc['followers']);
+          $f('social_summary', _l('dv_social_summary'), $doc['social_summary']);
+          $f('social_note', _l('dv_social_note'), $doc['social_note']);
           $f('instagram_url', _l('dv_instagram'), $doc['instagram_url'], 'url', true);
           $f('gmaps_url', _l('dv_gmaps'), $doc['gmaps_url'], 'url', true);
           $f('audit_link', _l('dv_audit_link'), $doc['audit_link'], 'url', true);
@@ -72,7 +79,10 @@
           $f('offer_link', _l('dv_offer_link'), $doc['offer_link'], 'url', true);
           $f('meeting_at', _l('dv_meeting_at'), $doc['meeting_at'] ? date('Y-m-d\TH:i', strtotime($doc['meeting_at'])) : '', 'datetime-local');
           $f('deal_value', _l('dv_deal_value'), $doc['deal_value'], 'number');
+          $f('verification', _l('dv_verification'), $doc['verification']);
           ?>
+          <label class="dv-muted" style="margin:6px 0 2px;display:block"><?= _l('dv_sheet_notes'); ?></label>
+          <textarea name="notes" class="dv-in" rows="3" <?= $dv_can['edit'] ? '' : 'disabled'; ?>><?= html_escape((string) $doc['notes']); ?></textarea>
           <?php if ($dv_can['all']) { ?>
             <label class="dv-muted" style="margin:6px 0 2px;display:block"><?= _l('dv_assigned'); ?></label>
             <select name="assigned_staff_id" class="dv-in"><?php foreach ($staff as $s) { ?><option value="<?= (int) $s['staffid']; ?>" <?= (int) $s['staffid'] === (int) $doc['assigned_staff_id'] ? 'selected' : ''; ?>><?= html_escape($s['firstname'] . ' ' . $s['lastname']); ?></option><?php } ?></select>

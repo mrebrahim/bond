@@ -269,3 +269,38 @@ $lang['dv_add_template']   = 'قالب جديد';
 $lang['dv_active']         = 'شغال';
 $lang['dv_variables']      = 'المتغيرات';
 $lang['dv_set_my_target']  = 'هدفي الشهري (لو مختلف عن العام)';
+
+// استيراد شيت الدكاترة
+$lang['dv_menu_import']          = 'استيراد من Excel';
+$lang['dv_import_upload']        = 'ارفع الشيت وشوف هيحصل إيه';
+$lang['dv_import_help']          = 'ارفع ملف ‎.xlsx أو CSV. الأعمدة بتتعرف بالعنوان (مش بالترتيب)، والصفوف اللي من غير اسم بتتخطى. الدكتور الموجود (نفس الاسم في نفس العمارة، أو نفس الموبايل) بيتحدث بس الخانات المكتوبة — الفاضي في الشيت مبيمسحش حاجة. "غير معروف" و"؟" بتفضل فاضية علشان المندوب يملاها في الميدان. مفيش حاجة بتتحفظ قبل ما تأكد.';
+$lang['dv_import_export']        = 'نزّل الدكاترة بنفس الأعمدة (تعدّل وترفع تاني)';
+$lang['dv_import_other']         = 'ارفع ملف تاني';
+$lang['dv_import_new']           = 'دكتور جديد';
+$lang['dv_import_update']        = 'هيتحدث';
+$lang['dv_import_same']          = 'زي ما هو';
+$lang['dv_import_skip']          = 'هيتخطى';
+$lang['dv_import_visits']        = '%s زيارة هتتسجل من عمود النتيجة (من غير XP)';
+$lang['dv_import_visit']         = 'زيارة';
+$lang['dv_import_new_buildings'] = 'عماير جديدة هتتعمل';
+$lang['dv_import_columns']       = 'الأعمدة اللي اتعرفت';
+$lang['dv_import_ignored']       = 'أعمدة مش هتتنقل';
+$lang['dv_import_assign']        = 'الدكاترة الجداد يتسجلوا باسم';
+$lang['dv_import_confirm']       = 'استورد: %s جديد · %s تحديث';
+$lang['dv_import_nothing']       = 'كل اللي في الشيت متسجل زي ما هو — مفيش حاجة تتغير';
+$lang['dv_import_priority']      = 'الأولوية';
+$lang['dv_import_details']       = 'هيحصل إيه';
+$lang['dv_import_done']          = 'اتستورد: %s دكتور جديد · %s اتحدّث · %s زيارة · %s عمارة جديدة · %s زي ما هو/اتخطى';
+$lang['dv_why_priority_1']       = 'أولوية 1 ولسه متزارش';
+$lang['dv_why_priority_2']       = 'أولوية 2 ولسه متزارش';
+$lang['dv_clinic_days']          = 'أيام العيادة';
+$lang['dv_priority_rank']        = 'الأولوية (1 = أعلى)';
+$lang['dv_other_branches']       = 'العيادات / الفروع التانية';
+$lang['dv_phones']               = 'كل الأرقام';
+$lang['dv_social_summary']       = 'السوشيال / الموقع';
+$lang['dv_followers']            = 'المتابعين';
+$lang['dv_social_note']          = 'ملاحظة السوشيال';
+$lang['dv_verification']         = 'حالة التحقق';
+$lang['dv_sheet_notes']          = 'ملاحظات / زاوية البيع';
+$lang['dv_ask_nurse_hours']      = 'المواعيد مش معروفة — اسأل الممرضة';
+

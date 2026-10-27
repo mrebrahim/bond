@@ -9,7 +9,7 @@ defined('BASEPATH') or exit('No direct script access allowed');
  */
 
 if (!defined('DV_SCHEMA_VERSION')) {
-    define('DV_SCHEMA_VERSION', '2'); // زوّدها مع أي جدول أو عمود جديد
+    define('DV_SCHEMA_VERSION', '3'); // زوّدها مع أي جدول أو عمود جديد
 }
 
 if (!function_exists('dv_schema')) {
@@ -62,6 +62,16 @@ if (!function_exists('dv_schema')) {
                     '`offer_link` VARCHAR(500) NULL',
                     '`meeting_at` DATETIME NULL',
                     '`deal_value` DECIMAL(12,2) NULL',   // قيمة الصفقة لما تتقفل
+                    // من شيت الدكاترة (استيراد الإكسل)
+                    '`priority_rank` TINYINT NULL',      // الأولوية 1 = أعلى
+                    '`clinic_days` VARCHAR(191) NULL',
+                    '`other_branches` TEXT NULL',
+                    '`phones` VARCHAR(191) NULL',        // كل الأرقام زي ما هي (أرضي + موبايلات)
+                    '`social_summary` VARCHAR(255) NULL',
+                    '`followers` VARCHAR(30) NULL',
+                    '`social_note` TEXT NULL',
+                    '`verification` VARCHAR(255) NULL',  // حالة التحقق / المصدر
+                    '`notes` TEXT NULL',                 // ملاحظات وزاوية البيع
                     '`created_at` DATETIME NULL',
                     '`updated_at` DATETIME NULL',
                 ],
