@@ -201,7 +201,7 @@ class Doctor_visits extends AdminController
             redirect(admin_url('doctor_visits/queue'));
         }
         $this->view('doctor', [
-            'title' => $doc['name'], 'doc' => $doc, 'timeline' => $this->dv_model->timeline($lead_id),
+            'title' => $doc['name'], 'doc' => $doc, 'timeline' => $this->dv_model->timeline($lead_id), 'path' => $this->dv_model->path_card($lead_id),
             'buildings' => $this->dv_model->buildings(), 'staff' => $this->staff_list(), 'qr_link' => $this->dv_model->qr_link($doc),
         ]);
     }
@@ -332,6 +332,60 @@ class Doctor_visits extends AdminController
         }
         fclose($out);
         exit;
+    }
+
+    /** دليل السيلز (F9): الشنطة اليومية + كل خطوات المسار مرجع */
+    public function manual()
+    {
+        $this->need_view();
+        $this->view('manual', [
+            'title' => _l('dv_menu_manual'), 'daily' => $this->dv_model->path_daily(get_staff_user_id()), 'steps' => $this->dv_model->path_steps('lead'),
+        ]);
+    }
+
+    /**
+     * F9 routes: path/toggle (POST lead_id, item_key, checked) · path/daily_toggle (POST item_key, checked) · path/lead/{id} (الكارت لوحده)
+     * بيرجع JSON لو الطلب AJAX، وإلا بيرجع للصفحة
+     */
+    public function path($action = null, $id = null)
+    {
+        $this->need_view();
+        $ajax = $this->input->post('ajax') || strtolower((string) $this->input->get_request_header('X-Requested-With')) === 'xmlhttprequest';
+        if ($action === 'lead') {
+            $this->view('_path_card', ['path' => $this->dv_model->path_card((int) $id), 'lead_id' => (int) $id]);
+            return;
+        }
+        if (!in_array($action, ['toggle', 'daily_toggle'], true) || $this->input->post('item_key') === null) {
+            show_404();
+        }
+        $lead = (int) $this->input->post('lead_id');
+        $back = $action === 'toggle' ? admin_url('doctor_visits/doctor/' . $lead . '#dv-path') : admin_url('doctor_visits/manual');
+        try {
+            $on = (bool) $this->input->post('checked');
+            if ($action === 'toggle') {
+                $this->dv_model->path_toggle($lead, $this->input->post('item_key'), $on);
+                $card = $this->dv_model->path_card($lead);
+            } else {
+                $this->dv_model->path_daily_toggle($this->input->post('item_key'), $on);
+                $card = $this->dv_model->path_daily(get_staff_user_id());
+            }
+            $out = ['ok' => true, 'done' => $card['done'], 'total' => $card['total'], 'next' => $card['next']['text'] ?? null, 'open' => $card['open'],
+                'steps' => array_map(function ($s) { return ['key' => $s['key'], 'done' => $s['done'], 'count' => count($s['items']), 'full' => $s['full']]; }, $card['steps']),
+                'by' => $on ? sprintf(_l('dv_path_checked_by'), $this->dv_model->staff_name(get_staff_user_id()), date('d/m g:i')) : ''];
+        } catch (Exception $e) {
+            $out = ['ok' => false, 'error' => $e->getMessage()];
+        }
+        if ($ajax) {
+            if (!headers_sent()) {
+                header('Content-Type: application/json; charset=utf-8');
+            }
+            echo json_encode($out, JSON_UNESCAPED_UNICODE);
+            return;
+        }
+        if (!$out['ok']) {
+            set_alert('danger', $out['error']);
+        }
+        redirect($back);
     }
 
     // ================================================================= الإعدادات

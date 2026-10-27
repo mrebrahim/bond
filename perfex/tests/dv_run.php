@@ -175,6 +175,9 @@ test('من غير ملف seed: مفيش زرع ومفيش خطأ', function () {
     ok(dv_path_seed(sys_get_temp_dir() . '/مش_موجود.json') === null);
 });
 test('الزرع: 8 خطوات · 61 بند · 25 سكريبت · الشنطة rep_daily · الـ 21 بند أوتوماتيك اتربطوا', function () use ($F9) {
+    global $CI;
+    ok(count(q('SELECT id FROM tbldv_path_items')) === 61, 'التفعيل زرع data/checklist_seed.json');
+    foreach (['dv_path_steps', 'dv_path_items', 'dv_path_scripts'] as $t) { $CI->db->pdo->exec("DELETE FROM tbl$t"); }
     f9_fixture($F9);
     $r = dv_path_seed($F9);
     ok($r['counts'] === ['steps' => 8, 'items' => 61, 'scripts' => 25] && $r['added'] === ['steps' => 8, 'items' => 61, 'scripts' => 25], json_encode($r, JSON_UNESCAPED_UNICODE));
@@ -645,6 +648,88 @@ test('صفحة الاستيراد: رفع ← معاينة ← تأكيد ← ا
     $plan = $M->import_plan($p);
     $n    = count(q('SELECT lead_id FROM tbldv_doctor_meta'));
     ok(count($p['rows']) === $n && $plan['count']['new'] === 0 && $plan['count']['update'] === 0 && $plan['count']['visits'] === 0, json_encode([$n, $plan['count'], array_values(array_filter(array_map(function ($x) { return $x['changes'] ?: null; }, $plan['rows'])))], JSON_UNESCAPED_UNICODE));
+});
+
+echo "\nدليل السيلز / مسار ما بعد التحليل (F9):\n";
+function show_404() { throw new Exception('404'); }
+test('المحتوى الحقيقي من صفحة المسار: 8 خطوات · 61 بند (53 للدكتور + 8 للشنطة) · النصوص بالظبط', function () use ($mod) {
+    global $CI;
+    foreach (['dv_path_steps', 'dv_path_items', 'dv_path_checks', 'dv_path_scripts'] as $t) { $CI->db->pdo->exec("DELETE FROM tbl$t"); }
+    $r = dv_path_seed($mod . '/data/checklist_seed.json', true);
+    ok($r['counts'] === ['steps' => 8, 'items' => 61, 'scripts' => 0] && !$r['warnings'], json_encode($r, JSON_UNESCAPED_UNICODE));
+    ok(q("SELECT text FROM tbldv_path_items WHERE key = 'visit_5'")[0]['text'] === 'سلّم الظرف');
+    ok(q("SELECT text FROM tbldv_path_items WHERE key = 'follow_2'")[0]['text'] === 'يوم 2: فيديو ديمو البوت باسم عيادته');
+    ok(q("SELECT tip FROM tbldv_path_steps WHERE key = 'audit'")[0]['tip'] === 'الإجابة على «إزاي» هي سبب الميعاد. متكتبهاش في الورقة.');
+    ok(count(q('SELECT id FROM tbldv_path_items WHERE auto_rule IS NOT NULL')) === 21);
+});
+$PL = null;
+test('أوتو: QR · الزيارة (سجّلت + النتيجة + الخطوة الجاية + الظرف) · الممرضة وأنسب وقت · ديمو البوت · الإلغاء — والـ Stage مبيتحركش من العلامات', function () use ($M, &$PL) {
+    global $B;
+    $GLOBALS['ME'] = 7; $GLOBALS['CAN_ALL'] = false;
+    $bid = q("SELECT id FROM tbldv_buildings LIMIT 1")[0]['id'];
+    $PL = $M->quick_add(['name' => 'مسار', 'specialty' => 'أسنان', 'building_id' => $bid, 'phone' => '01066666666']);
+    $auto = function () use ($PL) { return array_column(q("SELECT i.key FROM tbldv_path_checks c JOIN tbldv_path_items i ON i.id = c.item_id WHERE c.lead_id = ? AND c.checked = 1 AND c.source LIKE 'auto%' ORDER BY i.key", [$PL]), 'key'); };
+    ok($auto() === ['audit_7'], json_encode($auto()));
+    $M->log_visit($PL, ['outcome' => 'ENV', 'next_action' => 'ارجع', 'next_action_at' => date('Y-m-d H:i', time() + 86400)]);
+    ok($auto() === ['audit_7', 'log_1', 'log_2', 'log_3', 'visit_5'], json_encode($auto()));
+    $M->update_doctor($PL, ['gatekeeper_name' => 'سارة محمد', 'best_time' => '7 م']);
+    ok(array_values(array_intersect(['log_4', 'visit_3', 'visit_4'], $auto())) === ['log_4', 'visit_3', 'visit_4'], json_encode($auto()));
+    $M->set_consent($PL, true);
+    $M->wa_sent($PL, 'bot_demo');
+    ok(in_array('follow_2', $auto(), true) && in_array('visit_7', $auto(), true) && in_array('log_5', $auto(), true), json_encode($auto()));
+    ok(in_array('follow_8', array_merge($auto(), [$M->opt_out('01066666666') ? '' : 'x']), true) || in_array('follow_8', $auto(), true), json_encode($auto()));
+    ok((int) $M->doctor($PL)['stage'] === 3, 'الـ Stage من الزيارات بس');
+    $card = $M->path_card($PL);
+    ok($card['total'] === 53 && $card['done'] === count($auto()) && $card['open'] === 'audit' && $card['next']['key'] === 'audit_1', json_encode([$card['total'], $card['done'], $card['open']]));
+    ok($card['steps'][0]['items'][6]['auto'] === true && $card['steps'][0]['items'][6]['check']['firstname'] === 'Andrew');
+});
+test('بالإيد: علامة / شيلها (بتتسجل) · الأوتو مبيرجعش اللي اتشال · +25 XP مرة واحدة لما الخطوة تخلص · المندوب على دكاترته بس', function () use ($M, &$PL) {
+    ok($M->path_toggle($PL, 'visit_5', false) === true);
+    $M->log_visit($PL, ['outcome' => 'ENV', 'next_action' => 'ارجع', 'next_action_at' => date('Y-m-d H:i', time() + 86400)]);
+    ok(q("SELECT c.checked FROM tbldv_path_checks c JOIN tbldv_path_items i ON i.id = c.item_id WHERE c.lead_id = ? AND i.key = 'visit_5'", [$PL])[0]['checked'] == 0, 'متعلّمش تاني');
+    ok(count(q("SELECT id FROM tbldv_events WHERE type = 'path_check' AND lead_id = ?", [$PL])) > 5);
+    $xp = $M->xp(7);
+    foreach (['audit_1', 'audit_2', 'audit_3', 'audit_4', 'audit_5', 'audit_6', 'audit_8'] as $k) { $M->path_toggle($PL, $k, true); }
+    ok($M->xp(7) === $xp + 25, ($M->xp(7) - $xp) . ' XP');
+    $M->path_toggle($PL, 'audit_1', false); $M->path_toggle($PL, 'audit_1', true);
+    ok($M->xp(7) === $xp + 25, 'مرة واحدة بس');
+    ok($M->path_card($PL)['open'] === 'time', 'الخطوة اللي بعدها اتفتحت');
+    try { $M->path_toggle($PL, 'kit_1', true); ok(false); } catch (Exception $e) { ok(strpos($e->getMessage(), 'الشنطة') !== false); }
+    $GLOBALS['ME'] = 8;
+    try { $M->path_toggle($PL, 'time_1', true); ok(false, 'مندوب تاني علّم'); } catch (Exception $e) { ok(strpos($e->getMessage(), 'مش من دكاترتك') !== false, $e->getMessage()); }
+    $GLOBALS['ME'] = 7;
+});
+test('الشنطة: كل مندوب كل يوم لوحده', function () use ($M) {
+    $M->path_daily_toggle('kit_1', true, 7, '2026-10-27');
+    $M->path_daily_toggle('kit_2', true, 7, '2026-10-27');
+    $M->path_daily_toggle('kit_2', false, 7, '2026-10-27');
+    ok($M->path_daily(7, '2026-10-27')['done'] === 1 && $M->path_daily(7, '2026-10-28')['done'] === 0 && $M->path_daily(8, '2026-10-27')['done'] === 0);
+    ok($M->path_daily(7)['total'] === 8);
+    try { $M->path_daily_toggle('visit_1', true); ok(false); } catch (Exception $e) { ok(strpos($e->getMessage(), 'صفحة الدكتور') !== false); }
+});
+test('الشاشات: كارت المسار في صفحة الدكتور · دليل السيلز · العلامة بالـ AJAX بترجع التقدم والخطوة الجاية', function () use ($M, &$PL) {
+    $GLOBALS['ME'] = 7; $GLOBALS['CAN_ALL'] = false;
+    $h = page('doctor', [$PL]);
+    file_put_contents(sys_get_temp_dir() . '/dv_doctor_path.html', $h);
+    ok(strpos($h, 'id="dv-path"') !== false && strpos($h, 'سلّم الظرف') !== false && strpos($h, _l('dv_path_next')) !== false && substr_count($h, 'name="item_key"') === 53, substr_count($h, 'name="item_key"'));
+    ok(strpos($h, 'علّمه Andrew') !== false && strpos($h, '(أوتو)') !== false);
+    ok(strpos($h, 'id="dv-path"') < strpos($h, _l('dv_timeline')), 'فوق الزيارات');
+    $m = page('manual');
+    file_put_contents(sys_get_temp_dir() . '/dv_manual.html', $m);
+    ok(substr_count($m, 'name="item_key"') === 8 && strpos($m, 'بوت ديمو شغال على رقم منفصل') !== false && strpos($m, 'متدعيش إنك مريض') !== false, 'الدليل');
+    $c = new Doctor_visits(); $c->input->post = ['lead_id' => $PL, 'item_key' => 'time_1', 'checked' => 1, 'ajax' => 1];
+    ob_start(); $c->path('toggle'); $j = json_decode(ob_get_clean(), true);
+    ok($j['ok'] && $j['total'] === 53 && $j['next'] && strpos($j['by'], 'علّمه Andrew') === 0 && count($j['steps']) === 7, json_encode($j, JSON_UNESCAPED_UNICODE));
+    $c = new Doctor_visits(); $c->input->post = ['item_key' => 'kit_3', 'checked' => 1, 'ajax' => 1];
+    ob_start(); $c->path('daily_toggle'); $j = json_decode(ob_get_clean(), true);
+    ok($j['ok'] && $j['total'] === 8, json_encode($j, JSON_UNESCAPED_UNICODE));
+    $c = new Doctor_visits(); $c->input->post = ['lead_id' => $PL, 'item_key' => 'time_2', 'checked' => 1];
+    try { $c->path('toggle'); ok(false); } catch (Redirected $r) { ok($r->getMessage() === '/admin/doctor_visits/doctor/' . $PL . '#dv-path'); }
+    $GLOBALS['ME'] = 8;
+    $c = new Doctor_visits(); $c->input->post = ['lead_id' => $PL, 'item_key' => 'time_3', 'checked' => 1, 'ajax' => 1];
+    ob_start(); $c->path('toggle'); $j = json_decode(ob_get_clean(), true);
+    ok($j['ok'] === false && strpos($j['error'], 'مش من دكاترتك') !== false);
+    $GLOBALS['ME'] = 1; $GLOBALS['CAN_ALL'] = true;
 });
 restore_error_handler();
 

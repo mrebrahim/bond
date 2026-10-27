@@ -309,3 +309,17 @@ $lang['dv_path_title']   = 'مسار ما بعد التحليل';
 $lang['dv_path_seeded']  = '%s خطوة · %s بند · %s سكريبت';
 $lang['dv_path_no_seed'] = 'المحتوى لسه متزرعش — ارفع checklist_seed.json';
 $lang['dv_path_upload']  = 'ارفع checklist_seed.json (بيضيف الناقص بس)';
+$lang['dv_menu_manual']       = 'دليل السيلز';
+$lang['dv_manual_sub']        = '8 خطوات من ورقة الأوديت لحد أول عميل. الشنطة بتتعلّم كل يوم هنا، وباقي الخطوات بتتعلّم لكل دكتور من صفحته.';
+$lang['dv_manual_today']      = 'جهّز الشنطة — النهارده';
+$lang['dv_manual_per_doctor'] = 'افتح صفحة أي دكتور وعلّم على اللي خلصته معاه. البنود اللي عليها (أوتو) بتتعلّم لوحدها لما تسجّل الزيارة أو تبعت الواتساب.';
+$lang['dv_path_before']       = 'قبل الزيارة';
+$lang['dv_path_during']       = 'في الزيارة';
+$lang['dv_path_after']        = 'بعد الزيارة';
+$lang['dv_path_done']         = 'اللي خلص';
+$lang['dv_path_next']         = 'الخطوة الجاية';
+$lang['dv_path_all_done']     = 'المسار كله خلص مع الدكتور ده';
+$lang['dv_path_auto']         = '(أوتو)';
+$lang['dv_path_auto_from']    = 'أوتوماتيك من:';
+$lang['dv_path_checked_by']   = 'علّمه %s · %s';
+

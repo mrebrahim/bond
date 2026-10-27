@@ -48,4 +48,31 @@
 .dv table.dv-t{width:100%;border-collapse:collapse;font-size:13px}
 .dv table.dv-t th,.dv table.dv-t td{padding:6px 8px;border-block-end:1px solid #f1f5f9;text-align:start}
 .dv .dv-scroll{overflow-x:auto}
+/* F9 مسار ما بعد التحليل — نفس ألوان صفحة المسار */
+.dv .dv-lanes{display:grid;grid-template-columns:1fr;gap:12px;align-items:start}
+@media(min-width:900px){.dv .dv-lanes{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.dv .dv-lane{display:flex;flex-direction:column;gap:8px;min-width:0}
+.dv .ph-before{--c:#4b4fa6;--cbg:#ecedfb}.dv .ph-during{--c:#0f7a62;--cbg:#e2f4ee}.dv .ph-after{--c:#b0532a;--cbg:#fbede6}
+.dv .dv-lane h5{margin:0;display:flex;align-items:center;gap:8px;font-weight:600}
+.dv .dv-sw{width:10px;height:10px;border-radius:3px;background:var(--c)}
+.dv details.dv-step{background:#fff;border:1px solid #d5dfdc;border-radius:10px;overflow:hidden}
+.dv details.dv-step[open]{border-color:var(--c)}
+.dv details.dv-step summary{list-style:none;cursor:pointer;padding:10px 12px;display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;min-height:48px}
+.dv details.dv-step summary::-webkit-details-marker{display:none}
+.dv details.dv-step summary small{display:block;color:#5d716c;font-size:12px}
+.dv .dv-num{width:28px;height:28px;border-radius:7px;background:var(--cbg);color:var(--c);display:grid;place-items:center;font-weight:600}
+.dv .dv-cnt{font-size:12px;color:#5d716c;padding:2px 8px;border-radius:999px;border:1px solid #d5dfdc;white-space:nowrap}
+.dv details.dv-step.full .dv-cnt{color:#0f7a62;border-color:#0f7a62}
+.dv details.dv-step.full .dv-num{background:#0f7a62;color:#fff}
+.dv .dv-mini{height:3px;background:#d5dfdc}.dv .dv-mini i{display:block;height:100%;background:var(--c);transition:width .3s}
+.dv ul.dv-cl{list-style:none;margin:0;padding:6px 10px 10px}
+.dv ul.dv-cl form{margin:0}
+.dv ul.dv-cl label{display:flex;gap:10px;align-items:flex-start;padding:10px 4px;min-height:44px;border-radius:6px;cursor:pointer;font-weight:400;margin:0}
+.dv ul.dv-cl label:hover{background:var(--cbg)}
+.dv ul.dv-cl input[type=checkbox]{margin-top:3px;width:20px;height:20px;accent-color:var(--c);flex:none}
+.dv ul.dv-cl input:checked+span{color:#5d716c;text-decoration:line-through}
+.dv .dv-ref{display:block;padding:5px 4px}
+.dv .dv-auto{font-size:10px;color:#0f7a62;background:#e2f4ee;border-radius:4px;padding:0 4px;text-decoration:none;display:inline-block}
+.dv .dv-tip{margin:0 10px 10px;padding:8px 10px;border-radius:8px;background:var(--cbg);color:var(--c);font-size:13px}
+.dv .dv-one .dv-lanes{grid-template-columns:1fr}.dv .dv-one .dv-lane h5{display:none}
 </style>

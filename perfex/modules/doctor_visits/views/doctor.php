@@ -5,6 +5,8 @@
   <?php $this->load->view('doctor_visits/_card', ['d' => $doc, 'back' => 'doctor_visits/doctor/' . $doc['lead_id']]); ?>
   <?php if ($doc['stage'] == 9) { ?><div class="dv-card" style="background:#f0fdf4;border-color:#86efac">🎉 <?= _l('dv_convert_hint'); ?> — <a href="<?= admin_url('leads/index/' . $doc['lead_id']); ?>"><?= _l('dv_open_lead'); ?></a></div><?php } ?>
 
+  <?php $this->load->view('doctor_visits/_path_card', ['path' => $path, 'lead_id' => $doc['lead_id']]); ?>
+
   <div class="row">
     <div class="col-md-7">
       <div class="dv-card">
@@ -96,6 +98,7 @@
   <?php $this->load->view('doctor_visits/_feedback'); ?>
 </div></div></div>
 <?php init_tail(); ?>
+<?php $this->load->view('doctor_visits/_path_js'); ?>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>
 new QRCode(document.getElementById('dv-qr'), {text: <?= json_encode($qr_link); ?>, width: 180, height: 180, correctLevel: QRCode.CorrectLevel.M});

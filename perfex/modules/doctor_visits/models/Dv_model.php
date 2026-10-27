@@ -172,6 +172,7 @@ class Dv_model extends App_Model
             'qr_code' => $this->new_qr_code(), 'stage' => 0, 'assigned_staff_id' => $staff, 'grade' => dv_grade(0),
             'created_at' => $this->now(), 'updated_at' => $this->now(),
         ]);
+        $this->autocheck($lead, 'audit_7', 'qr', $staff);
         return $lead;
     }
 
@@ -252,6 +253,7 @@ class Dv_model extends App_Model
         if (array_key_exists('phone', $d)) {
             $this->db->update($this->tbl('leads'), ['phonenumber' => dv_phone($d['phone']) ?: ''], ['id' => $doc['lead_id']]);
         }
+        $this->path_auto_from_meta($doc['lead_id']);
         if (!empty($d['assigned_staff_id']) && $this->can_see_all()) {
             $this->db->update($this->tbl('dv_doctor_meta'), ['assigned_staff_id' => (int) $d['assigned_staff_id']], ['lead_id' => $doc['lead_id']]);
             $this->db->update($this->tbl('leads'), ['assigned' => (int) $d['assigned_staff_id']], ['id' => $doc['lead_id']]);
@@ -263,6 +265,9 @@ class Dv_model extends App_Model
         $this->db->update($this->tbl('dv_doctor_meta'), [
             'wa_consent' => $on ? 1 : 0, 'wa_consent_at' => $on ? $this->now() : null, 'wa_consent_source' => $on ? $source : null,
         ], ['lead_id' => (int) $lead_id]);
+        if ($on) {
+            $this->path_auto_from_meta($lead_id);
+        }
     }
 
     /** الدكاترة (للقوايم): فلتر بالعمارة / المرحلة / البحث */
@@ -286,6 +291,221 @@ class Dv_model extends App_Model
         }
         $sql .= ' ORDER BY ' . ($f['order'] ?? 'b.name, m.floor, l.name');
         return array_map([$this, 'decorate'], $this->rows($sql, $b));
+    }
+
+    // ================================================================= F9 مسار ما بعد التحليل (دليل السيلز)
+    /** الخطوات وبنودها (active) — $scope: lead | rep_daily | null = الكل */
+    public function path_steps($scope = null)
+    {
+        $steps = [];
+        foreach ($this->rows('SELECT * FROM ' . $this->tbl('dv_path_steps') . ' WHERE active = 1' . ($scope ? ' AND scope = ?' : '') . ' ORDER BY sort, id', $scope ? [$scope] : []) as $s) {
+            $s['items'] = [];
+            $steps[(int) $s['id']] = $s;
+        }
+        foreach ($this->rows('SELECT * FROM ' . $this->tbl('dv_path_items') . ' WHERE active = 1 ORDER BY sort, id') as $it) {
+            if (isset($steps[(int) $it['step_id']])) {
+                $steps[(int) $it['step_id']]['items'][] = $it;
+            }
+        }
+        return array_values(array_filter($steps, function ($s) { return $s['items']; }));
+    }
+
+    private function path_item($key)
+    {
+        $it = $this->row('SELECT i.*, s.scope, s.`key` AS step_key FROM ' . $this->tbl('dv_path_items') . ' i JOIN ' . $this->tbl('dv_path_steps') . ' s ON s.id = i.step_id WHERE i.`key` = ?', [(string) $key]);
+        if (!$it) {
+            throw new Exception('البند ده مش موجود');
+        }
+        return $it;
+    }
+
+    /** يضيف علامات الصفحة (مين علّم وإمتى) + العدد + الخطوة الجاية والخطوة المفتوحة */
+    private function path_fill(array $steps, array $checks)
+    {
+        $total = $done = 0;
+        $next  = null;
+        $open  = null;
+        foreach ($steps as &$s) {
+            $s['done'] = 0;
+            foreach ($s['items'] as &$it) {
+                $c          = $checks[(int) $it['id']] ?? null;
+                $it['check'] = $c && (int) $c['checked'] ? $c : null;
+                $it['auto']  = $it['check'] && strpos((string) $c['source'], 'auto') === 0;
+                $s['done']  += $it['check'] ? 1 : 0;
+                if (!$it['check'] && !$next) {
+                    $next = $it;
+                }
+            }
+            unset($it);
+            $s['full'] = $s['done'] === count($s['items']);
+            if (!$s['full'] && !$open) {
+                $open = $s['key'];
+            }
+            $total += count($s['items']);
+            $done  += $s['done'];
+        }
+        unset($s);
+        return ['steps' => $steps, 'total' => $total, 'done' => $done, 'next' => $next, 'open' => $open];
+    }
+
+    /** كارت المسار في بروفايل الدكتور (الخطوات بتاعة الدكتور بس — من غير الشنطة) */
+    public function path_card($lead_id)
+    {
+        $checks = [];
+        foreach ($this->rows('SELECT c.*, s.firstname FROM ' . $this->tbl('dv_path_checks') . ' c LEFT JOIN ' . $this->tbl('staff') . ' s ON s.staffid = c.staff_id WHERE c.lead_id = ?', [(int) $lead_id]) as $c) {
+            $checks[(int) $c['item_id']] = $c;
+        }
+        return $this->path_fill($this->path_steps('lead'), $checks);
+    }
+
+    /** "جهّز الشنطة": بتتعلّم مرة لكل مندوب في اليوم */
+    public function path_daily($staff, $day = null)
+    {
+        $checks = [];
+        foreach ($this->rows('SELECT c.*, s.firstname FROM ' . $this->tbl('dv_path_checks') . ' c LEFT JOIN ' . $this->tbl('staff') . ' s ON s.staffid = c.staff_id WHERE c.staff_id = ? AND c.work_date = ? AND c.lead_id IS NULL', [(int) $staff, $day ?: $this->today()]) as $c) {
+            $checks[(int) $c['item_id']] = $c;
+        }
+        return $this->path_fill($this->path_steps('rep_daily'), $checks);
+    }
+
+    /** علّم / شيل العلامة — المندوب على دكاترته بس (doctor() بيشيك view_own) · كل تغيير بيتسجل في dv_events */
+    public function path_toggle($lead_id, $item_key, $checked, $source = 'manual', $staff = null)
+    {
+        $staff = $staff ?: $this->me();
+        $it    = $this->path_item($item_key);
+        if ($it['scope'] !== 'lead') {
+            throw new Exception('البند ده بتاع الشنطة اليومية مش الدكتور');
+        }
+        $doc = $this->doctor($lead_id, $source === 'manual');
+        $old = $this->row('SELECT * FROM ' . $this->tbl('dv_path_checks') . ' WHERE lead_id = ? AND item_id = ?', [(int) $doc['lead_id'], (int) $it['id']]);
+        if ($source !== 'manual' && $old) {
+            return false; // الأوتوماتيك بيعلّم بس، ومبيرجعش بند المندوب شاله بإيده
+        }
+        $row = ['staff_id' => (int) $staff, 'source' => mb_substr($source, 0, 20), 'checked' => $checked ? 1 : 0, 'created_at' => $this->now()];
+        if ($old) {
+            if ((int) $old['checked'] === ($checked ? 1 : 0)) {
+                return false;
+            }
+            $this->db->update($this->tbl('dv_path_checks'), $row, ['id' => (int) $old['id']]);
+        } else {
+            if (!$checked) {
+                return false;
+            }
+            $this->db->insert($this->tbl('dv_path_checks'), $row + ['item_id' => (int) $it['id'], 'lead_id' => (int) $doc['lead_id'], 'work_date' => null]);
+        }
+        $this->db->insert($this->tbl('dv_events'), [
+            'lead_id' => (int) $doc['lead_id'], 'type' => 'path_check', 'created_at' => $this->now(),
+            'payload' => json_encode(['item' => $item_key, 'checked' => $checked ? 1 : 0, 'source' => $source, 'staff' => (int) $staff]),
+        ]);
+        $this->db->update($this->tbl('dv_doctor_meta'), ['path_stalled_since' => null], ['lead_id' => (int) $doc['lead_id']]);
+        // +25 XP مرة واحدة لما خطوة كاملة تخلص مع الدكتور
+        if ($checked) {
+            $card = $this->path_card($doc['lead_id']);
+            foreach ($card['steps'] as $s) {
+                if ($s['key'] === $it['step_key'] && $s['full']) {
+                    $this->add_xp((int) $doc['assigned_staff_id'] ?: $staff, (int) $doc['lead_id'], mb_substr('step_done_' . $s['key'], 0, 30), 25, null, 'step_done_' . $s['key'] . ':' . (int) $doc['lead_id']);
+                }
+            }
+        }
+        return true;
+    }
+
+    public function path_daily_toggle($item_key, $checked, $staff = null, $day = null)
+    {
+        $staff = $staff ?: $this->me();
+        $day   = $day ?: $this->today();
+        $it    = $this->path_item($item_key);
+        if ($it['scope'] !== 'rep_daily') {
+            throw new Exception('البند ده بتاع دكتور — علّمه من صفحة الدكتور');
+        }
+        $old = $this->row('SELECT id FROM ' . $this->tbl('dv_path_checks') . ' WHERE staff_id = ? AND item_id = ? AND work_date = ? AND lead_id IS NULL', [(int) $staff, (int) $it['id'], $day]);
+        $row = ['checked' => $checked ? 1 : 0, 'source' => 'manual', 'created_at' => $this->now()];
+        if ($old) {
+            $this->db->update($this->tbl('dv_path_checks'), $row, ['id' => (int) $old['id']]);
+        } elseif ($checked) {
+            $this->db->insert($this->tbl('dv_path_checks'), $row + ['item_id' => (int) $it['id'], 'lead_id' => null, 'staff_id' => (int) $staff, 'work_date' => $day]);
+        }
+        return true;
+    }
+
+    /** dv_autocheck (PRD F9 §5): بيعلّم البند لوحده — من غير XP البند، ومبيشيلش علامة */
+    public function autocheck($lead_id, $item_key, $source, $staff = null)
+    {
+        try {
+            if (!$this->row('SELECT id FROM ' . $this->tbl('dv_path_items') . ' WHERE `key` = ? AND active = 1', [$item_key])) {
+                return false; // المحتوى لسه متزرعش أو البند اتقفل
+            }
+            return $this->path_toggle($lead_id, $item_key, true, 'auto:' . $source, $staff ?: ($this->me() ?: 0));
+        } catch (Exception $e) {
+            return false; // التعليم الأوتوماتيك عمره ما يوقّف تسجيل الزيارة
+        }
+    }
+
+    /** البنود اللي بتتعلّم من بيانات الدكتور (الممرضة / أنسب وقت / الإذن) */
+    private function path_auto_from_meta($lead_id, $staff = null)
+    {
+        $m = $this->row('SELECT gatekeeper_name, best_time, wa_consent FROM ' . $this->tbl('dv_doctor_meta') . ' WHERE lead_id = ?', [(int) $lead_id]);
+        if (!$m) {
+            return;
+        }
+        if ((string) $m['gatekeeper_name'] !== '') {
+            $this->autocheck($lead_id, 'visit_3', 'gatekeeper', $staff);
+        }
+        if ((string) $m['best_time'] !== '') {
+            $this->autocheck($lead_id, 'visit_4', 'best_time', $staff);
+        }
+        if ((string) $m['gatekeeper_name'] !== '' && (string) $m['best_time'] !== '') {
+            $this->autocheck($lead_id, 'log_4', 'gatekeeper_best_time', $staff);
+        }
+        if ((int) $m['wa_consent']) {
+            $this->autocheck($lead_id, 'visit_7', 'consent', $staff);
+            $this->autocheck($lead_id, 'log_5', 'consent', $staff);
+        }
+    }
+
+    /** بعد حفظ أي زيارة */
+    private function path_auto_from_visit(array $doc, $outcome, $staff, $next_at, $visited, $template = null)
+    {
+        $id = (int) $doc['lead_id'];
+        if (!in_array($outcome, ['QR_SCAN'], true)) {
+            $this->autocheck($id, 'log_1', 'visit', $staff);
+            $this->autocheck($id, 'log_2', 'visit', $staff);
+        }
+        if ($next_at) {
+            $this->autocheck($id, 'log_3', 'next_action', $staff);
+        }
+        $map = ['ENV' => ['visit_5'], 'DOC' => ['visit_6'], 'WA' => ['visit_7', 'log_5'], 'MTG_BOOKED' => ['visit_8'], 'LOST' => ['log_6'],
+            'MTG_HELD' => ['close_1'], 'OFFER' => ['close_4'], 'QR_SCAN' => ['visit_7', 'log_5']];
+        foreach ($map[$outcome] ?? [] as $k) {
+            $this->autocheck($id, $k, 'outcome_' . strtolower($outcome), $staff);
+        }
+        if ($outcome === 'WA_SENT' && $template) {
+            $t = ['after_visit' => 'follow_1', 'bot_demo' => 'follow_2', 'breakup' => 'follow_6'];
+            if (isset($t[$template])) {
+                $this->autocheck($id, $t[$template], 'wa_' . $template, $staff);
+            }
+        }
+        // زيارة ميدانية بعد أول زيارة بـ 5 أيام أو أكتر = زيارة يوم 7
+        $first = $doc['first_visit_at'];
+        $field = !in_array($outcome, ['WA_SENT', 'QR_SCAN'], true);
+        if ($field && $first && (strtotime($visited) - strtotime($first)) >= 5 * 86400) {
+            $this->autocheck($id, 'follow_4', 'second_visit', $staff);
+        }
+        $this->path_auto_from_meta($id, $staff);
+    }
+
+    /** Proposal اتعمل للـ Lead في Perfex ← close_9 + close_4 (بيتنادى من الـ cron) */
+    public function path_auto_proposals()
+    {
+        if (!$this->db->table_exists($this->tbl('proposals'))) {
+            return 0;
+        }
+        $n = 0;
+        foreach ($this->rows('SELECT DISTINCT m.lead_id, m.assigned_staff_id FROM ' . $this->tbl('dv_doctor_meta') . ' m JOIN ' . $this->tbl('proposals') . " p ON p.rel_type = 'lead' AND p.rel_id = m.lead_id") as $r) {
+            $n += (int) $this->autocheck($r['lead_id'], 'close_9', 'proposal', $r['assigned_staff_id']);
+            $this->autocheck($r['lead_id'], 'close_4', 'proposal', $r['assigned_staff_id']);
+        }
+        return $n;
     }
 
     // ================================================================= استيراد شيت الدكاترة (Excel / CSV)
@@ -641,6 +861,8 @@ class Dv_model extends App_Model
             ]);
         }
 
+        $this->path_auto_from_visit($doc, $outcome, $staff, $needs_next ? $next_at : null, $visited, $d['_template'] ?? null);
+
         $xp = empty($d['no_xp']) ? $this->award_visit_xp($staff, $doc, $outcome, $before, $after, $visit_id, $visited, $d) : 0;
         if ($staff && empty($d['no_xp'])) {
             $this->check_milestones($staff, $doc['lead_id'], $outcome, $after);
@@ -670,7 +892,7 @@ class Dv_model extends App_Model
         return $this->log_visit($lead_id, [
             'outcome' => 'WA_SENT', 'channel' => 'whatsapp', 'note' => $template_key ? 'قالب: ' . $template_key : null,
             'next_action' => 'متابعة الرد على الواتساب', 'next_action_at' => date('Y-m-d 10:00:00', $this->t() + 86400 * max(1, (int) $next_days)),
-            '_on_time' => $on_time,
+            '_on_time' => $on_time, '_template' => $template_key,
         ]);
     }
 
@@ -1266,6 +1488,7 @@ class Dv_model extends App_Model
         foreach ($this->rows('SELECT m.lead_id FROM ' . $this->tbl('dv_doctor_meta') . ' m JOIN ' . $this->tbl('leads') . ' l ON l.id = m.lead_id WHERE m.clinic_whatsapp = ? OR l.phonenumber = ?', [$p, $p]) as $r) {
             $this->set_consent($r['lead_id'], false);
             $this->db->insert($this->tbl('dv_events'), ['lead_id' => $r['lead_id'], 'type' => 'opt_out', 'payload' => json_encode(['phone' => $p]), 'created_at' => $this->now()]);
+            $this->autocheck($r['lead_id'], 'follow_8', 'opt_out');
             $n++;
         }
         return $n;

@@ -167,7 +167,7 @@ if (!function_exists('dv_path_seed_read')) {
         }
         $counts = ['steps' => count($out), 'items' => count($keys['items']), 'scripts' => count($keys['scripts'])];
         foreach (unserialize(DV_PATH_EXPECTED) as $k => $want) {
-            if ($counts[$k] !== $want) {
+            if ($counts[$k] !== $want && !($k === 'scripts' && $counts[$k] === 0)) { // السكريبتات اختيارية (مش في صفحة الـ HTML)
                 $warn[] = 'العدد مختلف عن الـ PRD: ' . $k . ' = ' . $counts[$k] . ' (المفروض ' . $want . ')';
             }
         }

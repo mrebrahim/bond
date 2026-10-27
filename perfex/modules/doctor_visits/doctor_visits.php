@@ -5,7 +5,7 @@ defined('BASEPATH') or exit('No direct script access allowed');
 /*
 Module Name: Doctor Visits Tracker — زيارات الدكاترة
 Description: تسجيل زيارات العيادات من الموبايل في أقل من 30 ثانية، سلم المراحل، قيمة كل زيارة، الحافز والـ XP، الـ QR والواتساب، والتقارير.
-Version: 1.3.0
+Version: 1.4.0
 Requires at least: 3.0.*
 Author: Digital Solution
 */
@@ -54,6 +54,7 @@ function doctor_visits_admin_init()
         ]);
         $items = [
             ['doctor-visits-queue', 'dv_menu_queue', 'doctor_visits/queue', null],
+            ['doctor-visits-manual', 'dv_menu_manual', 'doctor_visits/manual', null],
             ['doctor-visits-log', 'dv_menu_log', 'doctor_visits/log', 'create'],
             ['doctor-visits-dashboard', 'dv_menu_dashboard', 'doctor_visits/dashboard', null],
             ['doctor-visits-buildings', 'dv_menu_buildings', 'doctor_visits/buildings', null],
@@ -115,6 +116,7 @@ function doctor_visits_cron()
     $CI = &get_instance();
     $CI->load->model(DOCTOR_VISITS_MODULE_NAME . '/dv_model');
     try {
+        $CI->dv_model->path_auto_proposals(); // F9: Proposal اتعمل للدكتور ← بند "ابعت العرض كـ Proposal"
         $count = [];
         foreach ($CI->dv_model->followups_due() as $d) {
             $count[(int) $d['assigned_staff_id']] = ($count[(int) $d['assigned_staff_id']] ?? 0) + 1;
