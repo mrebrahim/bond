@@ -26,6 +26,8 @@ class DB
     function count_all($t) { return (int) $this->pdo->query("SELECT COUNT(*) FROM \"$t\"")->fetchColumn(); }
     function insert($t, $d) { $this->query("INSERT INTO $t (" . implode(',', array_map(function ($k) { return '"' . $k . '"'; }, array_keys($d))) . ') VALUES (' . implode(',', array_fill(0, count($d), '?')) . ')', array_values($d)); }
     function insert_id() { return (int) $this->pdo->lastInsertId(); }
+    function update($t, $d, $w) { $this->query("UPDATE $t SET " . implode(',', array_map(function ($k) { return '"' . $k . '" = ?'; }, array_keys($d))) . ' WHERE ' . implode(' AND ', array_map(function ($k) { return '"' . $k . '" = ?'; }, array_keys($w))), array_merge(array_values($d), array_values($w))); }
+    function field_exists($f, $t) { foreach ($this->pdo->query("PRAGMA table_info(\"$t\")")->fetchAll() as $c) { if ($c['name'] === $f) return true; } return false; }
     function platform() { return 'sqlite'; } function version() { return '3'; }
 }
 $CI = new class { public $db; };
@@ -35,6 +37,20 @@ function &get_instance() { global $CI; return $CI; }
 // جداول Perfex اللي بنلمسها: leads_status فيها حالات موجودة قبل كده
 $CI->db->pdo->exec('CREATE TABLE tblleads_status (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, statusorder INT, color TEXT, isdefault INT)');
 $CI->db->pdo->exec("INSERT INTO tblleads_status (name, statusorder, color, isdefault) VALUES ('Customer', 1000, '#7cb342', 1), ('New', 1, '#28B8DA', 0)");
+$CI->db->pdo->exec('CREATE TABLE tblleads_sources (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)');
+$CI->db->pdo->exec('CREATE TABLE tblleads (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, title TEXT, description TEXT, phonenumber TEXT, status INT, source INT, assigned INT, dateadded TEXT, addedfrom INT, lastcontact TEXT, hash TEXT, last_status_change TEXT, lost INT DEFAULT 0)');
+$CI->db->pdo->exec('CREATE TABLE tblreminders (id INTEGER PRIMARY KEY AUTOINCREMENT, description TEXT, date TEXT, isnotified INT, rel_id INT, staff INT, rel_type TEXT, notify_by_email INT, creator INT)');
+$CI->db->pdo->exec('CREATE TABLE tblstaff (staffid INTEGER PRIMARY KEY, firstname TEXT, lastname TEXT, email TEXT, active INT, admin INT)');
+$CI->db->pdo->exec("INSERT INTO tblstaff VALUES (1, 'Ibrahim', 'Khalil', 'i@x.com', 1, 1), (7, 'Andrew', 'Isaac', 'a@x.com', 1, 0), (8, 'Mina', 'Magdy', 'm@x.com', 1, 0)");
+$NOTIF = [];
+function add_notification($d) { global $NOTIF; $NOTIF[] = $d; return true; }
+$ME = 7;
+function get_staff_user_id() { global $ME; return $ME; }
+$CAN_ALL = false;
+function staff_can($c, $f) { global $CAN_ALL; return $c === 'view' ? $CAN_ALL : true; }
+function is_admin() { global $CAN_ALL; return $CAN_ALL; }
+function _l($k, $a = null) { static $lang; if (!$lang) { $lang = []; include __DIR__ . '/../modules/doctor_visits/language/arabic/doctor_visits_lang.php'; } return $lang[$k] ?? $k; }
+class App_Model { public $db; function __construct() { global $CI; $this->db = $CI->db; } }
 
 $passed = 0; $failed = 0;
 function test($n, $f) { global $passed, $failed; try { $f(); $passed++; echo "  ✔ $n\n"; } catch (Throwable $e) { $failed++; echo "  ✘ $n\n      " . $e->getMessage() . "\n"; } }
@@ -132,6 +148,157 @@ test('qr_code فريد', function () {
     $CI->db->insert('tbldv_doctor_meta', ['lead_id' => 4]);
 });
 
+echo "\nالمحرّك (المراحل 2–5):\n";
+require $mod . '/helpers/dv_helper.php';
+require $mod . '/models/Dv_model.php';
+$CI->db->pdo->exec('DELETE FROM tbldv_doctor_meta');
+$CI->db->pdo->exec('DELETE FROM tbldv_xp_ledger');
+$CI->db->pdo->exec("DELETE FROM tbldv_settings WHERE staff_id = 7");
+$M = new Dv_model();
+$M->fixed_time = strtotime('2026-11-02 11:00:00'); // الاتنين
+$B = null; $D = null;
+test('عمارة + Quick Add دكتور: Lead في Perfex بحالة "DV 0" ومصدر "زيارة ميدانية" + كود QR', function () use ($M, &$B, &$D) {
+    $B = $M->save_building(['name' => 'برج الأطباء', 'cluster' => 'شبرا', 'clinics_estimate' => 4, 'notes' => 'البواب عم سيد']);
+    try { $M->quick_add(['name' => 'أحمد']); throw new Exception('x'); } catch (Exception $e) { ok(strpos($e->getMessage(), 'إجباري') !== false, $e->getMessage()); }
+    $D = $M->quick_add(['name' => 'أحمد سمير', 'specialty' => 'أسنان', 'building_id' => $B, 'floor' => '3', 'phone' => '01012345678']);
+    $l = q('SELECT * FROM tblleads WHERE id = ?', [$D])[0];
+    ok($l['name'] === 'د/ أحمد سمير' && $l['phonenumber'] === '201012345678' && $l['assigned'] == 7, json_encode($l, JSON_UNESCAPED_UNICODE));
+    ok($l['status'] == dv_setting('stage_status_0') && $l['source'] == dv_setting('lead_source'));
+    $d = $M->doctor($D);
+    ok(preg_match('/^DV-[A-Z2-9]{4}$/', $d['qr_code']) && $d['stage'] == 0 && $d['progress'] === 0 && $d['touches_left'] === 7, json_encode($d, JSON_UNESCAPED_UNICODE));
+    ok(strpos($M->qr_link($d), 'https://wa.me/201027555789?text=') === 0 && strpos(urldecode($M->qr_link($d)), $d['qr_code']) !== false);
+});
+test('Quick Log: الخطوة الجاية إجباري · الـ Stage لقدام بس · Lead Status بيتحدث · Reminder بيتعمل', function () use ($M, &$D) {
+    try { $M->log_visit($D, ['outcome' => 'GK']); throw new Exception('x'); } catch (Exception $e) { ok(strpos($e->getMessage(), 'الخطوة الجاية') !== false, $e->getMessage()); }
+    $M->log_visit($D, ['outcome' => 'GK', 'note' => 'الممرضة منى', 'next_action' => 'أسلّم الظرف', 'next_action_at' => '2026-11-03 18:00']);
+    ok($M->doctor($D)['stage'] == 2 && q('SELECT status FROM tblleads WHERE id = ?', [$D])[0]['status'] == dv_setting('stage_status_2'));
+    ok(count(q("SELECT id FROM tblreminders WHERE rel_type = 'lead' AND rel_id = ? AND date = '2026-11-03 18:00:00'", [$D])) === 1, 'reminder');
+    ok($M->feedback['toast']['number'] === 1 && $M->feedback['toast']['of'] === 25 && $M->feedback['toast']['value'] === 300, json_encode($M->feedback));
+    $M->log_visit($D, ['outcome' => 'CLOSED', 'next_action' => 'أرجع', 'next_action_at' => '2026-11-04 18:00']); // أقل ← مبينزلش
+    ok($M->doctor($D)['stage'] == 2, 'لقدام بس');
+    ok(q('SELECT stage_before, stage_after FROM tbldv_visits ORDER BY id DESC LIMIT 1')[0]['stage_after'] == 2);
+});
+test('XP: زيارة 5 مرة واحدة في اليوم لكل دكتور · Stage XP مرة واحدة بس لو اتحرّك', function () use ($M, &$D) {
+    ok($M->xp(7) === 15, 'GK 10 + زيارة 5 = ' . $M->xp(7)); // CLOSED نفس اليوم: مفيش زيارة تانية ولا stage
+    $M->fixed_time = strtotime('2026-11-03 18:30:00');
+    $M->log_visit($D, ['outcome' => 'ENV', 'next_action' => 'أكلم الدكتور', 'next_action_at' => '2026-11-05 19:00']);
+    ok($M->xp(7) === 15 + 5 + 20, (string) $M->xp(7));
+});
+test('قاعدة الـ 3 زيارات: مينفعش Lost قبل 3 زيارات و14 يوم — إلا "Wrong lead" · والسبب إجباري', function () use ($M, $B, &$D) {
+    try { $M->log_visit($D, ['outcome' => 'LOST']); throw new Exception('x'); } catch (Exception $e) { ok(strpos($e->getMessage(), 'سبب') !== false, $e->getMessage()); }
+    try { $M->log_visit($D, ['outcome' => 'LOST', 'lost_reason' => 'no_budget']); throw new Exception('x'); } catch (Exception $e) { ok(strpos($e->getMessage(), 'قاعدة الـ 3 زيارات') !== false, $e->getMessage()); }
+    $W = $M->quick_add(['name' => 'غلط', 'specialty' => 'جلدية', 'building_id' => $B]);
+    $M->log_visit($W, ['outcome' => 'LOST', 'lost_reason' => 'wrong_lead']);
+    $w = $M->doctor($W);
+    ok($w['lost'] && $w['lost_reason'] === 'wrong_lead' && q('SELECT status FROM tblleads WHERE id = ?', [$W])[0]['status'] == dv_setting('lost_status'));
+});
+test('WA إذن واتساب: Consent بيتسجل in_person · QR_SCAN من الـ API: Stage 5 + Consent qr_scan + إشعار للمندوب', function () use ($M, $B) {
+    global $NOTIF;
+    $Q = $M->quick_add(['name' => 'هالة', 'specialty' => 'نسا', 'building_id' => $B]);
+    $code = $M->doctor($Q)['qr_code'];
+    $NOTIF = [];
+    $r = $M->qr_event($code, '+20 111 222 3333', 'أنا د. هالة — شفت التحليل (' . $code . ')', '2026-11-03 20:00:00');
+    $d = $M->doctor($Q);
+    ok($r['stage'] === 5 && $d['wa_consent'] == 1 && $d['wa_consent_source'] === 'qr_scan' && $d['phonenumber'] === '201112223333', json_encode($d, JSON_UNESCAPED_UNICODE));
+    ok(count(array_filter($NOTIF, function ($n) { return $n['description'] === 'dv_notify_qr' && $n['touserid'] == 7; })) === 1, json_encode($NOTIF));
+    try { $M->qr_event('DV-ZZZZ'); throw new Exception('x'); } catch (Exception $e) { ok($e->getMessage() === 'unknown code'); }
+    // Opt-out
+    ok($M->opt_out('01112223333') === 1 && $M->doctor($Q)['wa_consent'] == 0);
+});
+test('القالب المقترح حسب المرحلة والأيام + المتغيرات الناقصة بتتعلم', function () use ($M, &$D) {
+    $M->fixed_time = strtotime('2026-11-05 19:30:00'); // يومين من آخر Touch، Stage 3
+    $ctx = $M->wa_context($D);
+    ok($ctx['suggested']['key'] === 'followup_48h', $ctx['suggested']['key']);
+    ok($ctx['vars']['doctor_name'] === 'أحمد سمير' && $ctx['vars']['rep_name'] === 'Andrew Isaac' && $ctx['vars']['day_a'] === _l('dv_day_6') && $ctx['vars']['day_b'] === _l('dv_day_0'), json_encode($ctx['vars'], JSON_UNESCAPED_UNICODE));
+    ok($ctx['phone'] === '201012345678' && !$ctx['consent']);
+    [$text, $missing] = dv_fill_template(q("SELECT body FROM tbldv_wa_templates WHERE key = 'after_visit'")[0]['body'], $ctx['vars']);
+    ok($missing === ['audit_link', 'key_insight'] && strpos($text, 'أحمد سمير') !== false, json_encode($missing));
+});
+test('"اتبعتت؟ أيوه": WA_SENT في ميعاده +15 XP والخطوة الجاية بعد يومين · متأخرة +5', function () use ($M, &$D) {
+    $before = $M->xp(7);
+    $M->wa_sent($D, 'followup_48h'); // الخطوة الجاية كانت النهارده 19:00 ← في ميعادها
+    ok($M->xp(7) - $before === 15 + 5, (string) ($M->xp(7) - $before));
+    ok(substr($M->doctor($D)['next_action_at'], 0, 10) === '2026-11-07');
+    $M->fixed_time = strtotime('2026-11-09 12:00:00'); // فات ميعادها
+    $before = $M->xp(7);
+    $M->wa_sent($D);
+    ok($M->xp(7) - $before === 5 + 5, (string) ($M->xp(7) - $before));
+});
+test('قيمة الزيارة / فاضل كام / هدف النهارده (مثال الـ PRD) / Pipeline', function () use ($M) {
+    ok(round($M->value_per_visit()) == 300); // 7500 ÷ 25
+    // مثال §5.3: الهدف 60,000 · اتقفل 15,000 · 7,500 · 25 · فاضل 12 يوم شغل ← 13
+    $M->fixed_time = strtotime('2026-11-17 10:00:00');
+    ok($M->field_days_left(7) === 12, (string) $M->field_days_left(7));
+    $X = $M->quick_add(['name' => 'رابح', 'specialty' => 'أطفال', 'building_id' => 1]);
+    $GLOBALS['CI']->db->query("UPDATE tbldv_doctor_meta SET stage = 9, won_at = '2026-11-10 12:00:00', deal_value = 15000 WHERE lead_id = ?", [$X]);
+    ok($M->daily_target(7) === 13, (string) $M->daily_target(7));
+    ok($M->pipeline_value() > 0);
+});
+test('الـ Streak: أيام ورا بعض فيها 5 زيارات (الجمعة مبتتحسبش) + مكافأة 3 أيام', function () use ($M, $B) {
+    $docs = [];
+    for ($i = 0; $i < 5; $i++) { $docs[] = $M->quick_add(['name' => 'س' . $i, 'specialty' => 'باطنة', 'building_id' => $B]); }
+    foreach (['2026-11-19 12:00:00', '2026-11-21 12:00:00', '2026-11-22 12:00:00'] as $day) { // خميس، (جمعة إجازة)، سبت، حد
+        $M->fixed_time = strtotime($day);
+        foreach ($docs as $d) { $M->log_visit($d, ['outcome' => 'CLOSED', 'next_action' => 'أرجع', 'next_action_at' => date('Y-m-d', strtotime($day . ' +1 day'))]); }
+    }
+    ok($M->streak(7) === 3, (string) $M->streak(7));
+    ok(count(q("SELECT id FROM tbldv_xp_ledger WHERE action = 'streak' AND staff_id = 7")) === 1, 'مكافأة 3 أيام');
+});
+test('Combo: 3 دكاترة اتحركوا Stage في نفس اليوم ← ×1.5', function () use ($M, $B) {
+    $M->fixed_time = strtotime('2026-11-23 12:00:00');
+    $ids = [];
+    for ($i = 0; $i < 4; $i++) { $ids[] = $M->quick_add(['name' => 'ك' . $i, 'specialty' => 'عيون', 'building_id' => $B]); }
+    foreach (array_slice($ids, 0, 3) as $d) { $M->log_visit($d, ['outcome' => 'GK', 'next_action' => 'ظرف', 'next_action_at' => '2026-11-24']); }
+    ok(count(q("SELECT id FROM tbldv_xp_ledger WHERE action = 'combo'")) === 1 && q("SELECT xp FROM tbldv_xp_ledger WHERE action = 'combo'")[0]['xp'] == 15, json_encode(q("SELECT * FROM tbldv_xp_ledger WHERE action = 'combo'")));
+    $M->log_visit($ids[3], ['outcome' => 'GK', 'next_action' => 'ظرف', 'next_action_at' => '2026-11-24']);
+    ok((int) q("SELECT xp FROM tbldv_xp_ledger WHERE action = 'stage_GK' AND lead_id = ?", [$ids[3]])[0]['xp'] === 15, 'بعد الـ Combo: 10 × 1.5');
+});
+test('الـ Level والـ Level Up بيعمل إشعار للمدير · الـ XP الشهري بيتصفّر', function () use ($M, $B) {
+    global $NOTIF;
+    $NOTIF = [];
+    $L = $M->quick_add(['name' => 'كبير', 'specialty' => 'قلب', 'building_id' => $B]);
+    $M->log_visit($L, ['outcome' => 'WON', 'deal_value' => 7500]); // 500 + 150 + 5
+    $lv = $M->level(7);
+    ok($lv['level'] >= 2 && $lv['name'] === 'فاتح أبواب', json_encode($lv, JSON_UNESCAPED_UNICODE));
+    ok(count(array_filter($NOTIF, function ($n) { return $n['description'] === 'dv_notify_level_up' && $n['touserid'] == 1; })) === 1, json_encode($NOTIF));
+    $M->fixed_time = strtotime('2026-12-02 10:00:00');
+    ok($M->level(7, true)['xp'] === 0 && $M->level(7)['xp'] > 0);
+});
+test('Queue: المتابعات المتأخرة الأول · "أنا في عمارة X" · منطقة التقفيل والتبريد', function () use ($M, $B, &$D) {
+    $M->fixed_time = strtotime('2026-11-24 12:00:00');
+    $q = $M->queue(7);
+    ok(in_array('overdue', $q[0]['why'], true) || in_array('due_today', $q[0]['why'], true), json_encode(array_slice($q, 0, 2), JSON_UNESCAPED_UNICODE));
+    $B2 = $M->save_building(['name' => 'عمارة 2']);
+    $Z = $M->quick_add(['name' => 'زين', 'specialty' => 'عظام', 'building_id' => $B2]);
+    ok(count($M->queue(7, $B2)) === 1);
+    $GLOBALS['CI']->db->query("UPDATE tbldv_doctor_meta SET stage = 6 WHERE lead_id = ?", [$Z]);
+    $GLOBALS['CI']->db->query("INSERT INTO tbldv_visits (lead_id, staff_id, outcome, channel, visited_at, logged_at) VALUES (?, 7, 'MTG_BOOKED', 'field', '2026-11-20 10:00:00', '2026-11-20 10:00:00')", [$Z]);
+    $zone = $M->closing_zone(7);
+    ok(count($zone['hot']) === 1 && $zone['hot'][0]['cooling'] === 'orange', json_encode($zone['hot'][0]['cooling'] ?? null));
+});
+test('التقارير: Funnel بالعمارة والمعدلات · أسباب الخسارة · الـ Gatekeepers', function () use ($M, &$D) {
+    $GLOBALS['CAN_ALL'] = true;
+    $f = $M->funnel('building', '2026-11-01', '2026-11-30');
+    $b = array_values(array_filter($f, function ($x) { return $x['group'] === 'برج الأطباء'; }))[0];
+    ok($b['visited'] > 0 && $b['access_rate'] >= 0 && $b['won'] === 1, json_encode($b));
+    ok($M->lost_reasons_report()[0]['lost_reason'] === 'wrong_lead');
+    $M->update_doctor($D, ['gatekeeper_name' => 'منى أحمد 0100000', 'digital_score' => 3]);
+    $d = $M->doctor($D);
+    ok($d['gatekeeper_name'] === 'منى' && $d['grade'] === 'A', 'الاسم الأول بس + Grade');
+    ok($M->gatekeepers_report()[0]['name'] === 'منى');
+    ok(count($M->visits_export('2026-11-01', '2026-11-30')) > 10);
+    $GLOBALS['CAN_ALL'] = false;
+});
+test('صلاحية view_own: المندوب ميشوفش دكاترة غيره', function () use ($M, $B) {
+    global $ME;
+    $ME = 8;
+    $mine = $M->quick_add(['name' => 'بتاعي', 'specialty' => 'أنف', 'building_id' => $B]);
+    $all  = array_column($M->doctors(), 'lead_id');
+    ok($all == [$mine], json_encode($all));
+    try { $M->doctor(1); throw new Exception('x'); } catch (Exception $e) { ok(strpos($e->getMessage(), 'مش من دكاترتك') !== false || strpos($e->getMessage(), 'مش موجود') !== false, $e->getMessage()); }
+    $ME = 7;
+});
+
 echo "\nMySQL:\n";
 test('أوامر MySQL: utf8mb4 + الـ PRIMARY KEY المركّب في الإعدادات + الـ indexes', function () {
     $s   = dv_schema();
@@ -152,10 +319,9 @@ test('صفحة الإعدادات/الفحص بتترسم وبتلاقي الـ 
     file_put_contents($app . 'views/admin/leads/lead.php', "<?php hooks()->do_action('after_lead_lead_tabs', \$lead); ?>\n<?php hooks()->do_action('after_lead_tabs_content', \$lead); ?>\n<?php echo hooks()->apply_filters('lead_modal_profile_bottom', ''); ?>");
     define('APPPATH', $app);
     // stubs لـ Perfex
-    if (!function_exists('_l')) { function _l($k) { static $lang; if (!$lang) { $lang = []; include __DIR__ . '/../modules/doctor_visits/language/arabic/doctor_visits_lang.php'; } return $lang[$k] ?? $k; } }
     function init_head() {} function init_tail() {}
     function html_escape($s) { return htmlspecialchars((string) $s, ENT_QUOTES); }
-    function staff_can($c, $f) { return true; } function is_admin() { return true; }
+    $GLOBALS['CAN_ALL'] = true;
     function access_denied($x) { throw new Exception('denied'); }
     function admin_url($p = '') { return '/admin/' . $p; } function redirect($u) {}
     class AdminController { public $db; public $load; public $app = null; function __construct() { global $CI; $this->db = $CI->db; $this->load = new class { public $out = ''; function view($v, $data) { extract($data); ob_start(); include __DIR__ . '/../modules/doctor_visits/views/' . $v . '.php'; $this->out = ob_get_clean(); } }; } }

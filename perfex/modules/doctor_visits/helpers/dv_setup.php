@@ -9,7 +9,7 @@ defined('BASEPATH') or exit('No direct script access allowed');
  */
 
 if (!defined('DV_SCHEMA_VERSION')) {
-    define('DV_SCHEMA_VERSION', '1'); // زوّدها مع أي جدول أو عمود جديد
+    define('DV_SCHEMA_VERSION', '2'); // زوّدها مع أي جدول أو عمود جديد
 }
 
 if (!function_exists('dv_schema')) {
@@ -56,6 +56,12 @@ if (!function_exists('dv_schema')) {
                     '`next_action` VARCHAR(255) NULL',
                     '`next_action_at` DATETIME NULL',
                     '`assigned_staff_id` INT NULL',
+                    '`audit_link` VARCHAR(500) NULL',   // متغيرات قوالب الواتساب
+                    '`key_insight` VARCHAR(255) NULL',
+                    '`demo_link` VARCHAR(500) NULL',
+                    '`offer_link` VARCHAR(500) NULL',
+                    '`meeting_at` DATETIME NULL',
+                    '`deal_value` DECIMAL(12,2) NULL',   // قيمة الصفقة لما تتقفل
                     '`created_at` DATETIME NULL',
                     '`updated_at` DATETIME NULL',
                 ],
@@ -214,6 +220,8 @@ if (!function_exists('dv_default_settings')) {
     {
         return [
             'monthly_target'           => '60000',
+            'qr_whatsapp_number'       => '201027555789', // الرقم اللي الدكتور بيبعتله بعد الـ QR (Evolution)
+            'api_rate_limit'           => '60',
             'avg_deal_value'           => '7500',
             'default_visits_per_close' => '25',
             'default_touches_to_win'   => '7',
@@ -288,6 +296,18 @@ if (!function_exists('dv_ensure_schema')) {
             }
         }
 
+        // أعمدة اتضافت بعد أول نسخة (جدول موجود قبل كده) ← ALTER
+        foreach (dv_schema() as $table => $def) {
+            foreach ($def['cols'] as $col) {
+                if ($col === '{pk}' || !preg_match('/^`([a-z_]+)`\s+(.+)$/i', $col, $m) || stripos($col, 'PRIMARY KEY') !== false) {
+                    continue;
+                }
+                if (!$CI->db->field_exists($m[1], $p . $table)) {
+                    $CI->db->query('ALTER TABLE `' . $p . $table . '` ADD COLUMN ' . $col);
+                }
+            }
+        }
+
         // الإعدادات العامة (staff_id = 0) — مبيغيّرش اللي متسجل
         foreach (dv_default_settings() as $k => $v) {
             if (!$CI->db->query('SELECT 1 FROM `' . $p . 'dv_settings` WHERE staff_id = 0 AND `key` = ?', [$k])->row_array()) {
@@ -328,6 +348,18 @@ if (!function_exists('dv_ensure_schema')) {
             }
         }
 
+        // مصدر الـ Leads: "زيارة ميدانية"
+        $src = $CI->db->query('SELECT id FROM `' . $p . 'leads_sources` WHERE name = ?', ['زيارة ميدانية'])->row_array();
+        if (!$src) {
+            $CI->db->insert($p . 'leads_sources', ['name' => 'زيارة ميدانية']);
+            $src = ['id' => $CI->db->insert_id()];
+        }
+        if ($CI->db->query('SELECT 1 FROM `' . $p . 'dv_settings` WHERE staff_id = 0 AND `key` = ?', ['lead_source'])->row_array()) {
+            $CI->db->query('UPDATE `' . $p . 'dv_settings` SET value = ? WHERE staff_id = 0 AND `key` = ?', [(string) $src['id'], 'lead_source']);
+        } else {
+            $CI->db->insert($p . 'dv_settings', ['staff_id' => 0, 'key' => 'lead_source', 'value' => (string) $src['id']]);
+        }
+
         update_option('dv_schema_version', DV_SCHEMA_VERSION);
         update_option('dv_installed_at', get_option('dv_installed_at') ?: $now);
         return true;
@@ -341,5 +373,18 @@ if (!function_exists('dv_setting')) {
         $CI  = &get_instance();
         $row = $CI->db->query('SELECT value FROM `' . db_prefix() . 'dv_settings` WHERE `key` = ? AND staff_id IN (0, ?) ORDER BY staff_id DESC LIMIT 1', [$key, (int) $staff_id])->row_array();
         return $row ? $row['value'] : $default;
+    }
+}
+
+if (!function_exists('dv_set_setting')) {
+    function dv_set_setting($key, $value, $staff_id = 0)
+    {
+        $CI = &get_instance();
+        $p  = db_prefix();
+        if ($CI->db->query('SELECT 1 FROM `' . $p . 'dv_settings` WHERE staff_id = ? AND `key` = ?', [(int) $staff_id, $key])->row_array()) {
+            $CI->db->query('UPDATE `' . $p . 'dv_settings` SET value = ? WHERE staff_id = ? AND `key` = ?', [(string) $value, (int) $staff_id, $key]);
+        } else {
+            $CI->db->insert($p . 'dv_settings', ['staff_id' => (int) $staff_id, 'key' => $key, 'value' => (string) $value]);
+        }
     }
 }
