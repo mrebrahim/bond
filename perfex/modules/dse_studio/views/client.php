@@ -63,7 +63,7 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                 <?php if ($p['status'] === 'active' && $p['end_date'] < date('Y-m-d')) { ?><span class="label label-warning">⏳ فترة سماح لحد <?= dse_day($gend); ?> علشان الرصيد اللي فاضل<?= isset($p['grace_days']) && $p['grace_days'] !== null && $p['grace_days'] !== '' ? ' (اتمدّت)' : ''; ?></span><?php } ?>
               </div>
               <div class="small mtop5">
-                <?php if (!empty($p['historic'])) { ?>
+                <?php if (!empty($p['historic']) && array_sum(array_map(function ($b) { return $b['total'] - $b['used']; }, $balances[$p['id']])) <= 0.001) { ?>
                   <span class="dse-chip">الرصيد الباقي: 0 — اتصرفت كلها<?= $balances[$p['id']] ? ' (' . implode(' · ', array_map(function ($t, $b) { return dse_num($b['total']) . ' ' . dse_unit($t); }, array_keys($balances[$p['id']]), $balances[$p['id']])) . ')' : ''; ?></span>
                 <?php } else { foreach ($balances[$p['id']] as $t => $b) { ?>
                   <span class="dse-chip"><?= dse_type_name($t); ?>: <?= dse_num($b['used']); ?>/<?= dse_num($b['total']); ?></span>
@@ -174,16 +174,23 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
               <?php } ?>
 
               <?php $gleft = array_sum(array_map(function ($b) { return $b['total'] - $b['used']; }, $balances[$p['id']]));
-              if ($can_pkg && in_array($p['status'], ['active', 'expired'], true) && empty($p['historic']) && $gleft > 0.001) { ?>
+              if ($can_pkg && in_array($p['status'], ['active', 'expired'], true) && (!empty($p['historic']) || $gleft > 0.001)) { ?>
                 <details class="dse-box">
-                  <summary>⏳ مدّ فترة السماح — دلوقتي لحد <?= dse_day($gend); ?> (<?= $gdays; ?> يوم بعد نهاية الباقة)</summary>
-                  <?= form_open(admin_url('dse_studio/extend_grace/' . $p['id']), ['class' => 'form-inline']); ?>
-                    <p class="small text-muted">للعميل اللي محتاج وقت أكتر يخلص الريلز والتصميمات اللي فاضلة — الباقة بتفضل (أو بترجع) شغالة وتقدر تحجز له لحد آخر يوم.</p>
-                    <label class="small">زوّد</label>
-                    <input type="number" name="days" min="1" max="180" value="15" class="form-control input-sm" style="width:80px" required>
-                    <label class="small">يوم</label>
-                    <input name="note" class="form-control input-sm" placeholder="السبب (العميل مسافر…)" style="min-width:180px">
-                    <button class="btn btn-warning btn-xs">مدّ</button>
+                  <summary>⏳ مدّ فترة السماح — <?= $gend >= date('Y-m-d') && $gleft > 0.001 ? 'دلوقتي لحد ' . dse_day($gend) : 'خلصت'; ?></summary>
+                  <?= form_open(admin_url('dse_studio/extend_grace/' . $p['id'])); ?>
+                    <p class="small text-muted">للعميل اللي محتاج وقت أكتر يخلص الريلز والتصميمات اللي فاضلة — الباقة بتفضل (أو بترجع) شغالة وتقدر تحجز له لحد آخر يوم. <b>مفيش رسالة بتتبعت للعميل.</b></p>
+                    <div class="row">
+                      <div class="col-xs-6 col-sm-3 form-group"><label>المدة</label>
+                        <select name="weeks" class="form-control"><option value="1">أسبوع</option><option value="2">أسبوعين</option><option value="3">3 أسابيع</option><option value="4">4 أسابيع</option></select></div>
+                      <?php if (!empty($p['historic'])) { ?>
+                        <?php foreach (dse_types() as $t => $info) { ?>
+                          <div class="col-xs-6 col-sm-2 form-group"><label>فاضله <?= $info['name']; ?></label><input type="number" name="left[<?= $t; ?>]" min="0" step="0.5" value="<?= dse_num(max(0, ($balances[$p['id']][$t]['total'] ?? 0) - ($balances[$p['id']][$t]['used'] ?? 0))); ?>" class="form-control"></div>
+                        <?php } ?>
+                      <?php } ?>
+                      <div class="col-xs-12 col-sm-<?= !empty($p['historic']) ? '3' : '9'; ?> form-group"><label>السبب (اختياري)</label><input name="note" class="form-control" placeholder="العميل كان مسافر…"></div>
+                    </div>
+                    <?php if (!empty($p['historic'])) { ?><p class="small text-muted">باقة قديمة: اكتب العميل لسه فاضله كام ريل / تصميم من الباقة دي — هو ده الرصيد اللي هيتحجز عليه.</p><?php } ?>
+                    <button class="btn btn-warning btn-sm">مدّ</button>
                   <?= form_close(); ?>
                 </details>
               <?php } ?>

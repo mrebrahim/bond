@@ -264,7 +264,7 @@ class Dse_studio extends AdminController
         $m = $this->dse_studio_model;
         $p = $m->package($package_id);
         $this->act('edit', function () use ($m, $package_id) {
-            $end = $m->extend_grace($package_id, $this->post('days'), $this->post('note'));
+            $end = $m->extend_grace($package_id, 7 * (int) $this->post('weeks'), $this->post('note'), (array) $this->input->post('left'));
             return 'فترة السماح اتمدّت لحد ' . dse_day($end) . ' — تقدر تحجز للعميل لحد اليوم ده';
         }, admin_url('dse_studio/client/' . $p['clientid']));
     }

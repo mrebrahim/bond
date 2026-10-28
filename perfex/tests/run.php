@@ -492,15 +492,17 @@ test('حالة الصورة: باقة خلصت (Customize 15,000) ومدفوع �
     ok($r['left'] == 4500 && count($m->package_payments($pkg)) === 3, json_encode($r));
     $m->record_payment($pkg, 4500);
     ok(count($m->package_payments($pkg)) === 4 && $m->package_paid_amount($m->package($pkg)) == 15000);
-    // مدّ فترة السماح للعميل ده بس: خلصت 30/10 ← +10 أيام ← شغالة تاني لحد 09/11 والحجز ماشي، وبعدها لأ
-    throws(function () use ($m, $pkg) { $m->extend_grace($pkg, 0); }, 'من 1 لـ 180');
-    throws(function () use ($m, $pkg) { $m->extend_grace($pkg, 1); }, 'زوّد الأيام');
-    $end = $m->extend_grace($pkg, 10, 'العميل كان مسافر');
-    ok($end === '2026-11-09' && $m->package($pkg)['status'] === 'active' && (int) $m->package($pkg)['grace_days'] === 25, json_encode($m->package($pkg)));
+    // مدّ فترة السماح للعميل ده بس (أسبوع): خلصت 30/10 والنهارده 01/11 ← من النهارده لحد 08/11 · شغالة تاني والحجز ماشي · مفيش واتساب
+    throws(function () use ($m, $pkg) { $m->extend_grace($pkg, 0); }, 'اختار المدة');
+    $wa = count(q('SELECT id FROM tbldse_wa_outbox'));
+    $end = $m->extend_grace($pkg, 7, 'العميل كان مسافر');
+    ok($end === '2026-11-08' && $m->package($pkg)['status'] === 'active' && (int) $m->package($pkg)['grace_days'] === 24, json_encode($m->package($pkg)));
+    ok(count(q('SELECT id FROM tbldse_wa_outbox')) === $wa, 'مفيش رسالة للعميل');
     $ev = q("SELECT * FROM tbldse_package_events WHERE package_id = ? AND event = 'grace'", [$pkg]);
-    ok(count($ev) === 1 && $ev[0]['old_end_date'] === '2026-10-30' && $ev[0]['new_end_date'] === '2026-11-09' && $ev[0]['note'] === 'العميل كان مسافر');
+    ok(count($ev) === 1 && $ev[0]['old_end_date'] === '2026-10-30' && $ev[0]['new_end_date'] === '2026-11-08' && $ev[0]['note'] === 'العميل كان مسافر');
     $m->book_session($c, $st, '2026-11-05 12:00:00', 'reel', 1);
-    throws(function () use ($m, $c, $st) { $m->book_session($c, $st, '2026-11-10 12:00:00', 'reel', 1); }, '09/11 (بفترة السماح)');
+    throws(function () use ($m, $c, $st) { $m->book_session($c, $st, '2026-11-10 12:00:00', 'reel', 1); }, '08/11 (بفترة السماح)');
+    ok($m->extend_grace($pkg, 14) === '2026-11-22', 'أسبوعين كمان من آخر يوم سماح');
     ok($m->grace_days() === 15, 'الباقي على الإعداد العام');
     $db->query("UPDATE tbldse_sessions SET status = 'cancelled' WHERE package_id = ?", [$pkg]);
     // باقة خلصت ومفيهاش رصيد ← بتقفل في ميعادها من غير سماح
@@ -562,8 +564,19 @@ test('العملاء القدام: باقة قديمة (خلصت) ← "مستن�
     ok(count(q('SELECT id FROM tbldse_alerts')) === $alerts, 'مفيش تنبيه دفع على القديمة');
     $m->unlink_invoice($old, $oi);
     ok($m->package_paid_amount($m->package($old)) == 2000);
+    // مدّ السماح على الباقة القديمة: لازم يكتب فاضله كام · بترجع شغالة برصيد 2 ريل لحد أسبوعين من النهارده
+    throws(function () use ($m, $old) { $m->extend_grace($old, 14); }, 'فاضله كام');
+    $wa = count(q('SELECT id FROM tbldse_wa_outbox'));
+    $e = $m->extend_grace($old, 14, '', ['reel' => 2, 'design' => '']);
+    $b = $m->balance($old);
+    ok($e === '2026-11-16' && $m->package($old)['status'] === 'active' && $b['reel']['remaining'] == 2 && $b['design']['remaining'] == 0 && count(q('SELECT id FROM tbldse_wa_outbox')) === $wa, json_encode([$e, $b, $m->package($old)['status']]));
+    ok(strpos(q("SELECT note FROM tbldse_package_events WHERE package_id = ? AND event = 'grace'", [$old])[0]['note'], '2 ريل') !== false);
+    $db->query("UPDATE tbldse_packages SET status = 'expired', grace_days = NULL WHERE id = ?", [$old]); // نرجّعها زي ما كانت لباقي الاختبار
+    $db->query("UPDATE tbldse_usage SET qty = 6 WHERE package_id = ? AND type = 'reel'", [$old]);
     $noitems = $m->create_package($c, 'من غير عدد', 3000, '2026-07-01', 30, [], null, null, true);
-    ok($m->package($noitems)['status'] === 'expired' && $m->balance($noitems) === [], 'القديمة من غير عدد ريلز');
+    $e2 = $m->extend_grace($noitems, 7, '', ['reel' => 3]);
+    ok($m->balance($noitems)['reel']['remaining'] == 3 && $m->package($noitems)['status'] === 'active', 'القديمة من غير عدد ← الرصيد اتضاف');
+
     $db->query('DELETE FROM tbldse_packages WHERE id = ?', [$noitems]);
     $m->sync_client_packages($c);
     ok($m->package($old)['status'] === 'expired' && !$m->active_package($c), 'مبترجعش بفترة السماح');
@@ -698,7 +711,7 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
         'pkg_busy' => $one(function ($p) use ($m) { return $m->package_has_activity($p['id']); }), 'pkg_payments' => $one(function ($p) use ($m) { return $m->package_payments($p['id']); }),
         'free_invoices' => [['id' => 99, 'prefix' => 'INV-', 'number' => 9, 'total' => 1000, 'status' => 2]], 'pay_modes' => $m->payment_modes()]);
     file_put_contents(sys_get_temp_dir() . '/dse_client_historic.html', $hh);
-    ok(strpos($hh, 'مدفوع <b>2,500') !== false && strpos($hh, 'سجّل دفعة على الباقة دي (حتى لو خلصت)') !== false && strpos($hh, 'اربط فاتورة عملتها في Perfex') !== false && strpos($hh, 'قسط قديم') !== false, 'القديمة: دفعات وفواتير');
+    ok(strpos($hh, 'مدفوع <b>2,500') !== false && strpos($hh, 'سجّل دفعة على الباقة دي (حتى لو خلصت)') !== false && strpos($hh, 'اربط فاتورة عملتها في Perfex') !== false && strpos($hh, 'قسط قديم') !== false && strpos($hh, 'name="left[reel]"') !== false && strpos($hh, '<option value="4">4 أسابيع') !== false, 'القديمة: دفعات وفواتير ومدّ السماح');
     $rn = render('renewals', ['rows' => $m->renewals(''), 'status' => '']);
     ok(strpos($rn, 'عيادة د. سامي') !== false && strpos($rn, 'ابعت طلب التجديد') !== false && strpos($rn, 'آخر طلب') !== false && strpos($rn, 'قديمة') !== false, 'صف التجديد');
     file_put_contents(sys_get_temp_dir() . '/dse_renewals.html', $rn);

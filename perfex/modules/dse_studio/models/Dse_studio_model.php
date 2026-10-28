@@ -223,38 +223,61 @@ class Dse_studio_model extends App_Model
         return $left > 0.001 && $this->grace_days($p) ? $this->grace_end($p) : $p['end_date'];
     }
 
-    /** مدّ فترة السماح لباقة واحدة (عميل محتاج وقت أكتر يخلص رصيده) — بيرجّعها شغالة لو كانت اتقفلت */
-    public function extend_grace($package_id, $days, $note = null)
+    /**
+     * مدّ فترة السماح لباقة واحدة (عميل محتاج وقت أكتر يخلص رصيده) — بيرجّعها شغالة لو كانت اتقفلت.
+     * المدّ بيبدأ من آخر يوم سماح لو لسه مجاش، أو من النهارده لو عدّى. مفيش رسايل واتساب للعميل.
+     * الباقة القديمة (قبل السيستم) رصيدها صفر ← $left = [type => فاضل كام] بيرجّع الرصيد ده الأول.
+     */
+    public function extend_grace($package_id, $days, $note = null, array $left = [])
     {
         $this->ensure_renewal_columns();
         $p    = $this->package($package_id);
         $days = (int) $days;
         if ($days < 1 || $days > 180) {
-            throw new Exception('اكتب عدد أيام من 1 لـ 180');
+            throw new Exception('اختار المدة (أسبوع لـ 4 أسابيع)');
         }
-        if ($p['status'] === 'cancelled' || $p['status'] === 'pending' || !empty($p['historic'])) {
-            throw new Exception('فترة السماح بتتمد على باقة اتفعلت وفيها رصيد بس');
+        if ($p['status'] === 'cancelled' || $p['status'] === 'pending') {
+            throw new Exception('فترة السماح بتتمد على باقة اتفعلت بس');
         }
-        $left = array_sum(array_map(function ($b) { return $b['total'] - $b['used']; }, $this->balance($p['id'])));
-        if ($left <= 0.001) {
-            throw new Exception('الباقة مفيهاش رصيد — مفيش حاجة تتمد ليها');
+        $restored = [];
+        if (!empty($p['historic'])) {
+            $left = array_intersect_key(array_filter(array_map('floatval', $left), function ($q) { return $q > 0; }), dse_types());
+            foreach ($left as $type => $q) {
+                $item = $this->row('SELECT id, qty FROM ' . $this->tbl('dse_package_items') . ' WHERE package_id = ? AND type = ?', [$p['id'], $type]);
+                if (!$item) {
+                    $this->db->insert($this->tbl('dse_package_items'), ['package_id' => $p['id'], 'type' => $type, 'qty' => $q]);
+                    $restored[] = dse_num($q) . ' ' . dse_unit($type);
+                    continue;
+                }
+                if ($q > (float) $item['qty']) {
+                    $this->db->update($this->tbl('dse_package_items'), ['qty' => $q], ['id' => (int) $item['id']]);
+                    $item['qty'] = $q;
+                }
+                // الاستهلاك الوهمي بتاع "باقة قديمة" بيقل بالرصيد اللي لسه فاضل
+                $this->db->query('DELETE FROM ' . $this->tbl('dse_usage') . " WHERE package_id = ? AND type = ? AND reason = 'manual' AND note = ?", [$p['id'], $type, 'باقة قديمة قبل السيستم']);
+                $used = (float) ($this->row('SELECT SUM(qty) s FROM ' . $this->tbl('dse_usage') . ' WHERE package_id = ? AND type = ?', [$p['id'], $type])['s'] ?? 0);
+                $fake = (float) $item['qty'] - $q - $used;
+                if ($fake > 0.001) {
+                    $this->db->insert($this->tbl('dse_usage'), ['package_id' => $p['id'], 'type' => $type, 'qty' => $fake, 'reason' => 'manual',
+                        'note' => 'باقة قديمة قبل السيستم', 'staff_id' => $this->staff_id(), 'created_at' => $this->now()]);
+                }
+                $restored[] = dse_num($q) . ' ' . dse_unit($type);
+            }
+        }
+        $rem = array_sum(array_map(function ($b) { return $b['total'] - $b['used']; }, $this->balance($p['id'])));
+        if ($rem <= 0.001) {
+            throw new Exception(!empty($p['historic']) ? 'اكتب العميل فاضله كام ريل أو تصميم علشان المدّ يبقى ليه لازمة' : 'الباقة مفيهاش رصيد — مفيش حاجة تتمد ليها');
         }
         $before = $this->grace_end($p);
-        $new    = $this->grace_days($p) + $days;
-        $this->db->update($this->tbl('dse_packages'), ['grace_days' => $new], ['id' => $p['id']]);
-        $after = $this->grace_end($this->package($p['id']));
-        if ($after < $this->today()) {
-            $this->db->update($this->tbl('dse_packages'), ['grace_days' => $p['grace_days']], ['id' => $p['id']]);
-            throw new Exception('حتى بعد المدّ فترة السماح بتخلص ' . dse_day($after) . ' (عدّت) — زوّد الأيام');
-        }
+        $after  = date('Y-m-d', strtotime(max($before, $this->today()) . ' +' . $days . ' days'));
+        $grace  = (int) round((strtotime($after) - strtotime($p['end_date'])) / 86400);
+        $this->db->update($this->tbl('dse_packages'), ['grace_days' => $grace] + (empty($p['activated_at']) ? ['activated_at' => $p['start_date'] . ' 00:00:00'] : []), ['id' => $p['id']]);
         $this->db->insert($this->tbl('dse_package_events'), [
             'package_id' => $p['id'], 'event' => 'grace', 'old_price' => $p['price'], 'new_price' => $p['price'],
-            'old_end_date' => $before, 'new_end_date' => $after, 'note' => trim((string) $note) ?: ('مدّ فترة السماح ' . $days . ' يوم'),
+            'old_end_date' => $before, 'new_end_date' => $after,
+            'note' => trim((string) $note . ($restored ? ' · الرصيد الباقي: ' . implode(' · ', $restored) : ''), ' ·') ?: ('مدّ فترة السماح ' . $days . ' يوم'),
             'staff_id' => $this->staff_id(), 'created_at' => $this->now(),
         ]);
-        if ($p['status'] === 'expired' && empty($p['activated_at'])) {
-            $this->db->update($this->tbl('dse_packages'), ['activated_at' => $p['start_date'] . ' 00:00:00'], ['id' => $p['id']]);
-        }
         $this->sync_package_status($p['id']);
         return $after;
     }
