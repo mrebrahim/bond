@@ -735,6 +735,7 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
     $m->send_manual($rc, 'renewal_request');
     $hp = q('SELECT id FROM tbldse_packages WHERE clientid = ?', [$rc])[0]['id'];
     $m->record_payment($hp, 2500, '2026-08-02', null, 'قسط قديم');
+    $m->extend_grace($hp, 28, '', ['reel' => 1]); // حدث "مدّ السماح" من غير old_items (كان بيطلع json_decode deprecated في PHP 8.1+)
     $hs = $m->client_summary($rc);
     $one = function ($f) use ($hs) { $o = []; foreach ($hs['packages'] as $p) { $o[$p['id']] = $f($p); } return $o; };
     $hh = render('client', $hs + ['studios' => $m->studios(), 'staff' => [], 'sessions' => [], 'scripts' => [], 'posts' => [], 'outbox' => [], 'invoices' => [['id' => 99, 'prefix' => 'INV-', 'number' => 9, 'total' => 1000, 'status' => 2, 'date' => '2026-08-20']],
@@ -743,7 +744,7 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
         'pkg_busy' => $one(function ($p) use ($m) { return $m->package_has_activity($p['id']); }), 'pkg_payments' => $one(function ($p) use ($m) { return $m->package_payments($p['id']); }),
         'free_invoices' => [['id' => 99, 'prefix' => 'INV-', 'number' => 9, 'total' => 1000, 'status' => 2]], 'pay_modes' => $m->payment_modes(), 'data_counts' => $m->client_data_counts($rc)]);
     file_put_contents(sys_get_temp_dir() . '/dse_client_historic.html', $hh);
-    ok(strpos($hh, 'مدفوع <b>2,500') !== false && strpos($hh, 'سجّل دفعة على الباقة دي (حتى لو خلصت)') !== false && strpos($hh, 'اربط فاتورة عملتها في Perfex') !== false && strpos($hh, 'قسط قديم') !== false && strpos($hh, 'name="left[reel]"') !== false && strpos($hh, '<option value="4">4 أسابيع') !== false && strpos($hh, 'امسح العميل من الاستوديو') !== false, 'القديمة: دفعات وفواتير ومدّ السماح');
+    ok(strpos($hh, 'مدفوع <b>2,500') !== false && strpos($hh, 'سجّل دفعة') !== false && strpos($hh, 'اربط فاتورة عملتها في Perfex') !== false && strpos($hh, 'قسط قديم') !== false && strpos($hh, 'name="left[reel]"') !== false && strpos($hh, '<option value="4">4 أسابيع') !== false && strpos($hh, 'امسح العميل من الاستوديو') !== false && strpos($hh, '⏳ مدّ السماح') !== false && strpos($hh, ': · ') === false, 'القديمة: دفعات وفواتير ومدّ السماح');
     $rn = render('renewals', ['rows' => $m->renewals(''), 'status' => '']);
     ok(strpos($rn, 'عيادة د. سامي') !== false && strpos($rn, 'ابعت طلب التجديد') !== false && strpos($rn, 'آخر طلب') !== false && strpos($rn, 'قديمة') !== false, 'صف التجديد');
     file_put_contents(sys_get_temp_dir() . '/dse_renewals.html', $rn);

@@ -99,13 +99,14 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
               <?php if ($pkg_events[$p['id']]) { ?>
                 <div class="small mtop5">
                   <?php foreach ($pkg_events[$p['id']] as $e) {
-                      $oi = json_decode($e['old_items'], true) ?: [];
-                      $ni = json_decode($e['new_items'], true) ?: [];
+                      $oi = json_decode((string) $e['old_items'], true) ?: [];
+                      $ni = json_decode((string) $e['new_items'], true) ?: [];
                       $ch = [];
-                      foreach ($ni as $t => $q) { if (($oi[$t] ?? 0) != $q) { $ch[] = dse_type_name($t) . ' ' . dse_num($oi[$t] ?? 0) . '←' . dse_num($q); } } ?>
+                      foreach ($ni as $t => $q) { if (($oi[$t] ?? 0) != $q) { $ch[] = dse_type_name($t) . ' ' . dse_num($oi[$t] ?? 0) . '←' . dse_num($q); } }
+                      if ($e['old_price'] != $e['new_price']) { $ch[] = 'السعر ' . dse_money($e['old_price']) . ' ← ' . dse_money($e['new_price']); }
+                      if ($e['old_end_date'] != $e['new_end_date']) { $ch[] = ($e['event'] === 'grace' ? 'من ' . dse_day($e['old_end_date']) . ' ' : '') . 'لحد ' . dse_day($e['new_end_date']); } ?>
                     <div><?= in_array($e['event'], ['renew', 'grace'], true) ? '' : '⬆️ '; ?><?= ['upgrade' => 'ترقية', 'downgrade' => 'تخفيض', 'edit' => 'تعديل', 'renew' => '🔄 تجديد', 'grace' => '⏳ مدّ السماح'][$e['event']] ?? $e['event']; ?> <?= dse_day($e['created_at']); ?>:
-                      <?= implode(' · ', $ch); ?><?= $e['old_price'] != $e['new_price'] ? ' · السعر ' . dse_money($e['old_price']) . ' ← ' . dse_money($e['new_price']) : ''; ?>
-                      <?= $e['old_end_date'] != $e['new_end_date'] ? ' · لحد ' . dse_day($e['new_end_date']) : ''; ?><?= $e['note'] ? ' — ' . html_escape($e['note']) : ''; ?></div>
+                      <?= implode(' · ', $ch); ?><?= $e['note'] ? ' — ' . html_escape($e['note']) : ''; ?></div>
                   <?php } ?>
                 </div>
               <?php } ?>
