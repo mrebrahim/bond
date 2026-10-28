@@ -72,7 +72,7 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
               <!-- الفلوس: كل الفواتير (أقساط / فرق ترقية) -->
               <div class="dse-money mtop5">
                 <div class="dse-bar"><div style="width:<?= $p['price'] > 0 ? min(100, round($paidv / $p['price'] * 100)) : 100; ?>%"></div></div>
-                <?php if (!empty($p['historic'])) { ?><div class="small text-muted">اتدفعت برا السيستم</div><?php } else { ?>
+                <?php if (!empty($p['historic']) && !$pinv) { ?><div class="small text-muted">اتدفعت برا السيستم — لو عايز تعرف دفع كام سجّل دفعاته أو اربط فواتيره تحت</div><?php } else { ?>
                 <div class="small">مدفوع <b><?= dse_money($paidv); ?></b> من <?= dse_money($p['price']); ?>
                   <?= $p['price'] - $paidv > 0.5 ? ' · <span class="text-danger">الباقي ' . dse_money($p['price'] - $paidv) . '</span>' : ' · ✅ خالص'; ?></div><?php } ?>
                 <?php foreach ($pinv as $i) { ?>
@@ -80,7 +80,7 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                     🧾 <a href="<?= admin_url('invoices/list_invoices/' . $i['invoice_id']); ?>" target="_blank"><?= html_escape($inv_name(['id' => $i['invoice_id'], 'prefix' => $i['prefix'], 'number' => $i['number']])); ?></a>
                     <?= $i['note'] ? '(' . html_escape($i['note']) . ')' : ''; ?> — <?= dse_money($i['paid']); ?> من <?= dse_money($i['total']); ?>
                     · <?= $inv_status[(int) $i['status']] ?? ''; ?>
-                    <?php if ($can_pkg && $open) { ?>
+                    <?php if ($can_pkg && $p['status'] !== 'cancelled') { ?>
                       <?= form_open(admin_url('dse_studio/unlink_invoice/' . $p['id'] . '/' . $i['invoice_id']), ['class' => 'inline-block', 'onsubmit' => "return confirm('تشيل الفاتورة دي من الباقة؟')"]); ?><button class="btn btn-link btn-xs">شيلها</button><?= form_close(); ?>
                     <?php } ?>
                   </div>
@@ -109,13 +109,13 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                 </div>
               <?php } ?>
 
-                  <?php $left = round((float) $p['price'] - $paidv, 2); if ($left > 0.5 && $can_pkg && $p['status'] !== 'cancelled' && empty($p['historic'])) { ?>
-                  <details class="dse-box" open>
-                    <summary>💵 سجّل دفعة (قسط) — الباقي <?= dse_money($left); ?></summary>
+                  <?php $left = round((float) $p['price'] - $paidv, 2); if ($left > 0.5 && $can_pkg && $p['status'] !== 'cancelled') { ?>
+                  <details class="dse-box" <?= $open ? 'open' : ''; ?>>
+                    <summary>💵 <?= $open ? 'سجّل دفعة (قسط)' : 'سجّل دفعة على الباقة دي (حتى لو خلصت)'; ?> — الباقي <?= dse_money($left); ?></summary>
                     <?= form_open(admin_url('dse_studio/record_payment/' . $p['id'])); ?>
                       <div class="row">
                         <div class="col-xs-6 col-sm-3 form-group"><label>المبلغ</label><input type="number" name="amount" min="1" max="<?= $left; ?>" step="0.01" value="<?= $left; ?>" class="form-control" required></div>
-                        <div class="col-xs-6 col-sm-3 form-group"><label>التاريخ</label><input type="date" name="date" value="<?= date('Y-m-d'); ?>" max="<?= date('Y-m-d'); ?>" class="form-control"></div>
+                        <div class="col-xs-6 col-sm-3 form-group"><label>التاريخ</label><input type="date" name="date" value="<?= $open ? date('Y-m-d') : min(date('Y-m-d'), $p['end_date']); ?>" max="<?= date('Y-m-d'); ?>" class="form-control"></div>
                         <div class="col-xs-6 col-sm-3 form-group"><label>طريقة الدفع</label><select name="paymentmode" class="form-control"><?php foreach ($pay_modes as $pm) { ?><option value="<?= (int) $pm['id']; ?>"><?= html_escape($pm['name']); ?></option><?php } ?></select></div>
                         <div class="col-xs-6 col-sm-3 form-group"><label>ملاحظة</label><input name="note" class="form-control" placeholder="القسط التاني…"></div>
                       </div>
@@ -124,10 +124,9 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                     <?= form_close(); ?>
                   </details>
                   <?php } ?>
-              <?php if ($open && $can_pkg) { ?>
-                <div class="dse-pkg-actions">
+              <?php if ($can_pkg && $p['status'] !== 'cancelled') { ?>
                   <details class="dse-box">
-                    <summary>🧾 اربط فاتورة عملتها في Perfex (اختياري)</summary>
+                    <summary>🧾 اربط فاتورة عملتها في Perfex (اختياري — لأي باقة حتى القديمة)</summary>
                     <p class="small text-muted">لو عامل فاتورة بنفسك في Perfex (قسط أو فرق ترقية) اربطها هنا — السيستم بيجمع المدفوع من كل الفواتير.</p>
                   <?= form_open(admin_url('dse_studio/link_invoice/' . $p['id']), ['class' => 'form-inline']); ?>
                     <select name="invoice_id" class="form-control input-sm" required>
@@ -138,6 +137,9 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                     <button class="btn btn-default btn-xs">اربط</button>
                   <?= form_close(); ?>
                   </details>
+              <?php } ?>
+              <?php if ($open && $can_pkg) { ?>
+                <div class="dse-pkg-actions">
                   <details class="dse-box">
                     <summary>⬆️ ترقية / تعديل الباقة</summary>
                   <?= form_open(admin_url('dse_studio/upgrade_package/' . $p['id'])); ?>

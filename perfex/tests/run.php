@@ -540,6 +540,16 @@ test('العملاء القدام: باقة قديمة (خلصت) ← "مستن�
     $old = $m->create_package($c, 'Growth', 6000, '2026-08-01', 30, ['reel' => 6, 'design' => 4], null, null, true);
     $p = $m->package($old);
     ok($p['status'] === 'expired' && (int) $p['historic'] === 1 && $m->balance($old)['reel']['remaining'] == 0 && $m->balance($old)['design']['remaining'] == 0, json_encode($p));
+    // فواتير ودفعات على الباقة القديمة: بتتسجل وبتتجمع، والباقة بتفضل خلصت ومن غير تنبيه دفع
+    $alerts = count(q('SELECT id FROM tbldse_alerts'));
+    $r = $m->record_payment($old, 2000, '2026-08-01', null, 'دفعة قديمة');
+    $db->insert('tblinvoices', ['clientid' => $c, 'total' => 1500, 'status' => 2, 'date' => '2026-08-15']); $oi = $db->insert_id();
+    $m->link_invoice($old, $oi, 'فاتورة قديمة');
+    $p = $m->package($old);
+    ok($m->package_paid_amount($p) == 3500 && $r['left'] == 4000 && $p['status'] === 'expired' && count($m->package_payments($old)) === 1, json_encode([$m->package_paid_amount($p), $r, $p['status']]));
+    ok(count(q('SELECT id FROM tbldse_alerts')) === $alerts, 'مفيش تنبيه دفع على القديمة');
+    $m->unlink_invoice($old, $oi);
+    ok($m->package_paid_amount($m->package($old)) == 2000);
     $noitems = $m->create_package($c, 'من غير عدد', 3000, '2026-07-01', 30, [], null, null, true);
     ok($m->package($noitems)['status'] === 'expired' && $m->balance($noitems) === [], 'القديمة من غير عدد ريلز');
     $db->query('DELETE FROM tbldse_packages WHERE id = ?', [$noitems]);
@@ -666,6 +676,17 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
     $m->create_package($rc, 'Growth', 6000, '2026-08-01', 30, ['reel' => 6], null, null, true);
     $m->save_client_wa($rc, ['wa_group_jid' => '120363000000000077@g.us']);
     $m->send_manual($rc, 'renewal_request');
+    $hp = q('SELECT id FROM tbldse_packages WHERE clientid = ?', [$rc])[0]['id'];
+    $m->record_payment($hp, 2500, '2026-08-02', null, 'قسط قديم');
+    $hs = $m->client_summary($rc);
+    $one = function ($f) use ($hs) { $o = []; foreach ($hs['packages'] as $p) { $o[$p['id']] = $f($p); } return $o; };
+    $hh = render('client', $hs + ['studios' => $m->studios(), 'staff' => [], 'sessions' => [], 'scripts' => [], 'posts' => [], 'outbox' => [], 'invoices' => [['id' => 99, 'prefix' => 'INV-', 'number' => 9, 'total' => 1000, 'status' => 2, 'date' => '2026-08-20']],
+        'balances' => $one(function ($p) use ($m) { return $m->balance($p['id']); }), 'pkg_invoices' => $one(function ($p) use ($m) { return $m->package_invoices($p['id']); }),
+        'pkg_events' => $one(function ($p) use ($m) { return $m->package_events($p['id']); }), 'pkg_paid' => $one(function ($p) use ($m) { return $m->package_paid_amount($p); }),
+        'pkg_busy' => $one(function ($p) use ($m) { return $m->package_has_activity($p['id']); }), 'pkg_payments' => $one(function ($p) use ($m) { return $m->package_payments($p['id']); }),
+        'free_invoices' => [['id' => 99, 'prefix' => 'INV-', 'number' => 9, 'total' => 1000, 'status' => 2]], 'pay_modes' => $m->payment_modes()]);
+    file_put_contents(sys_get_temp_dir() . '/dse_client_historic.html', $hh);
+    ok(strpos($hh, 'مدفوع <b>2,500') !== false && strpos($hh, 'سجّل دفعة على الباقة دي (حتى لو خلصت)') !== false && strpos($hh, 'اربط فاتورة عملتها في Perfex') !== false && strpos($hh, 'قسط قديم') !== false, 'القديمة: دفعات وفواتير');
     $rn = render('renewals', ['rows' => $m->renewals(''), 'status' => '']);
     ok(strpos($rn, 'عيادة د. سامي') !== false && strpos($rn, 'ابعت طلب التجديد') !== false && strpos($rn, 'آخر طلب') !== false && strpos($rn, 'قديمة') !== false, 'صف التجديد');
     file_put_contents(sys_get_temp_dir() . '/dse_renewals.html', $rn);
