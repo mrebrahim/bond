@@ -58,6 +58,7 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
               <div>
                 <b><?= html_escape($p['name']); ?></b> · <?= dse_money($p['price']); ?> · <?= dse_day($p['start_date']); ?> ← <?= dse_day($p['end_date']); ?>
                 <span class="label label-<?= ['pending' => 'warning', 'active' => 'success', 'expired' => 'default', 'cancelled' => 'default'][$p['status']]; ?>"><?= dse_package_statuses()[$p['status']]; ?></span>
+                <?php if ($p['status'] === 'active' && $p['end_date'] < date('Y-m-d')) { ?><span class="label label-warning">⏳ فترة سماح لحد <?= dse_day(date('Y-m-d', strtotime($p['end_date'] . ' +' . (int) (get_option('dse_grace_days') !== '' ? get_option('dse_grace_days') : 15) . ' days'))); ?> علشان الرصيد اللي فاضل</span><?php } ?>
               </div>
               <div class="small mtop5">
                 <?php foreach ($balances[$p['id']] as $t => $b) { ?>
@@ -104,9 +105,7 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                 </div>
               <?php } ?>
 
-              <?php if ($open && $can_pkg) { ?>
-                <div class="dse-pkg-actions">
-                  <?php $left = round((float) $p['price'] - $paidv, 2); if ($left > 0.5) { ?>
+                  <?php $left = round((float) $p['price'] - $paidv, 2); if ($left > 0.5 && $can_pkg && $p['status'] !== 'cancelled') { ?>
                   <details class="dse-box" open>
                     <summary>💵 سجّل دفعة (قسط) — الباقي <?= dse_money($left); ?></summary>
                     <?= form_open(admin_url('dse_studio/record_payment/' . $p['id'])); ?>
@@ -121,6 +120,8 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                     <?= form_close(); ?>
                   </details>
                   <?php } ?>
+              <?php if ($open && $can_pkg) { ?>
+                <div class="dse-pkg-actions">
                   <details class="dse-box">
                     <summary>🧾 اربط فاتورة عملتها في Perfex (اختياري)</summary>
                     <p class="small text-muted">لو عامل فاتورة بنفسك في Perfex (قسط أو فرق ترقية) اربطها هنا — السيستم بيجمع المدفوع من كل الفواتير.</p>

@@ -35,6 +35,7 @@
 
             <h5 class="bold mtop20">الدفع</h5>
             <div class="row">
+              <div class="col-xs-6 form-group"><label>فترة السماح بعد نهاية الباقة لو فيها رصيد (أيام)</label><input type="number" min="0" max="90" name="dse_grace_days" value="<?= $o('dse_grace_days') !== '' ? $o('dse_grace_days') : 15; ?>" class="form-control"></div>
               <div class="col-xs-6 form-group"><label>الباقة بتتفعل لما يدفع (%)</label><input type="number" min="1" max="100" name="dse_activation_paid_pct" value="<?= $o('dse_activation_paid_pct') ?: 50; ?>" class="form-control"></div>
               <div class="col-xs-6 form-group"><label>مين يوصله تنبيه "لازم يدفع الباقي"</label><input name="dse_payment_notify_staff_ids" value="<?= $o('dse_payment_notify_staff_ids'); ?>" class="form-control" dir="ltr"></div>
             </div>

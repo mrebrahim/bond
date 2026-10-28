@@ -177,10 +177,24 @@ class Dse_studio_model extends App_Model
     public function active_package($clientid)
     {
         $this->sync_client_packages($clientid);
+        // شغالة = active ولسه جوه مدتها أو فترة السماح (sync بيقفل اللي خلصت) — القديمة الأول علشان رصيدها يخلص الأول
         return $this->row(
-            'SELECT * FROM ' . $this->tbl('dse_packages') . " WHERE clientid = ? AND status = 'active' AND start_date <= ? AND end_date >= ? ORDER BY end_date, id LIMIT 1",
-            [(int) $clientid, $this->today(), $this->today()]
+            'SELECT * FROM ' . $this->tbl('dse_packages') . " WHERE clientid = ? AND status = 'active' AND start_date <= ? ORDER BY end_date, id LIMIT 1",
+            [(int) $clientid, $this->today()]
         );
+    }
+
+    /** أيام السماح بعد نهاية الباقة لو فيها رصيد (ريلز / تصميمات لسه ماتعملتش) */
+    public function grace_days()
+    {
+        return max(0, (int) $this->opt('dse_grace_days', 15));
+    }
+
+    /** آخر يوم الباقة تفضل شغالة فيه: تاريخ النهاية، أو + فترة السماح لو لسه فيها رصيد */
+    public function effective_end(array $p)
+    {
+        $left = array_sum(array_map(function ($b) { return $b['total'] - $b['used']; }, $this->balance($p['id'])));
+        return $left > 0.001 && $this->grace_days() ? date('Y-m-d', strtotime($p['end_date'] . ' +' . $this->grace_days() . ' days')) : $p['end_date'];
     }
 
     /**
@@ -284,16 +298,21 @@ class Dse_studio_model extends App_Model
             $this->db->update($this->tbl('dse_packages'), ['status' => 'active', 'activated_at' => $this->now()], ['id' => $p['id']]);
             $p['status'] = 'active';
         }
-        if ($p['status'] === 'active' && $p['end_date'] < $this->today()) {
+        if ($p['status'] === 'active' && $p['end_date'] < $this->today() && $this->effective_end($p) < $this->today()) {
             $this->db->update($this->tbl('dse_packages'), ['status' => 'expired'], ['id' => $p['id']]);
             $p['status'] = 'expired';
+        }
+        // اتقفلت قبل فترة السماح (نسخة قديمة) ولسه فيها رصيد ← ترجع شغالة لحد آخر يوم سماح
+        if ($p['status'] === 'expired' && !empty($p['activated_at']) && $this->effective_end($p) >= $this->today()) {
+            $this->db->update($this->tbl('dse_packages'), ['status' => 'active'], ['id' => $p['id']]);
+            $p['status'] = 'active';
         }
         return $p['status'];
     }
 
     public function sync_client_packages($clientid)
     {
-        foreach ($this->rows('SELECT id FROM ' . $this->tbl('dse_packages') . " WHERE clientid = ? AND status IN ('pending','active')", [(int) $clientid]) as $p) {
+        foreach ($this->rows('SELECT id FROM ' . $this->tbl('dse_packages') . " WHERE clientid = ? AND (status IN ('pending','active') OR (status = 'expired' AND end_date >= ?))", [(int) $clientid, date('Y-m-d', strtotime($this->today() . ' -' . $this->grace_days() . ' days'))]) as $p) {
             $this->sync_package_status($p['id']);
         }
     }
@@ -586,8 +605,8 @@ class Dse_studio_model extends App_Model
         if (!$pkg) {
             throw new Exception('العميل مفيش عنده باقة شغالة — الباقة بتتفعل بعد ما الفاتورة تتدفع');
         }
-        if (date('Y-m-d', $ts) > $pkg['end_date']) {
-            throw new Exception('الباقة بتخلص ' . dse_day($pkg['end_date']) . ' — الميعاد بعدها');
+        if (date('Y-m-d', $ts) > $this->effective_end($pkg)) {
+            throw new Exception('الباقة بتخلص ' . dse_day($this->effective_end($pkg)) . ($this->effective_end($pkg) > $pkg['end_date'] ? ' (بفترة السماح)' : '') . ' — الميعاد بعدها');
         }
         $bal = $this->balance($pkg['id']);
         if (!isset($bal[$type])) {
@@ -654,8 +673,8 @@ class Dse_studio_model extends App_Model
             throw new Exception('اختار ميعاد جديد صح');
         }
         $pkg = $this->package($s['package_id']);
-        if (date('Y-m-d', $ts) > $pkg['end_date']) {
-            throw new Exception('الباقة بتخلص ' . dse_day($pkg['end_date']) . ' — الميعاد بعدها');
+        if (date('Y-m-d', $ts) > $this->effective_end($pkg)) {
+            throw new Exception('الباقة بتخلص ' . dse_day($this->effective_end($pkg)) . ($this->effective_end($pkg) > $pkg['end_date'] ? ' (بفترة السماح)' : '') . ' — الميعاد بعدها');
         }
         $studio_id       = $studio_id ?: $s['studio_id'];
         $photographer_id = $photographer_id === null ? $s['photographer_id'] : ($photographer_id ?: null);
@@ -1348,8 +1367,8 @@ class Dse_studio_model extends App_Model
     {
         $p      = $this->package($package_id);
         $amount = round((float) $amount, 2);
-        if (!in_array($p['status'], ['pending', 'active'], true)) {
-            throw new Exception('الباقة دي ' . dse_package_statuses()[$p['status']] . ' — الدفعة بتتسجل على باقة شغالة أو مستنية الدفع');
+        if ($p['status'] === 'cancelled') {
+            throw new Exception('الباقة دي اتلغت — رجّعها الأول لو الدفعة عليها');
         }
         if ($amount <= 0) {
             throw new Exception('اكتب المبلغ');
@@ -1450,7 +1469,7 @@ class Dse_studio_model extends App_Model
 
     public function sync_all_packages()
     {
-        foreach ($this->rows('SELECT id FROM ' . $this->tbl('dse_packages') . " WHERE status IN ('pending','active')") as $p) {
+        foreach ($this->rows('SELECT id FROM ' . $this->tbl('dse_packages') . " WHERE status IN ('pending','active') OR (status = 'expired' AND end_date >= ?)", [date('Y-m-d', strtotime($this->today() . ' -' . $this->grace_days() . ' days'))]) as $p) {
             $this->sync_package_status($p['id']);
         }
     }

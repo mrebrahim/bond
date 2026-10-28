@@ -199,9 +199,9 @@ test('تعارض نفس المصور في استوديو تاني بيترفض',
 test('الحجز أكتر من الرصيد (بعد الحجوزات التانية) بيترفض', function () use ($m, $client, $studio2) {
     throws(function () use ($m, $client, $studio2) { $m->book_session($client, $studio2, '2026-11-05 12:00', 'reel', 7); }, 'فاضل 6');
 });
-test('عميل من غير باقة شغالة مينفعش يحجز / بعد نهاية الباقة مينفعش', function () use ($m, $client, $client2, $studio2) {
+test('عميل من غير باقة شغالة مينفعش يحجز / بعد نهاية الباقة + فترة السماح (15 يوم) مينفعش', function () use ($m, $client, $client2, $studio2) {
     throws(function () use ($m, $client2, $studio2) { $m->book_session($client2, $studio2, '2026-11-05 12:00', 'reel', 1); }, 'مفيش عنده باقة شغالة');
-    throws(function () use ($m, $client, $studio2) { $m->book_session($client, $studio2, '2026-12-05 12:00', 'reel', 1); }, 'الباقة بتخلص');
+    throws(function () use ($m, $client, $studio2) { $m->book_session($client, $studio2, '2026-12-16 12:00', 'reel', 1); }, '15/12 (بفترة السماح)');
     throws(function () use ($m, $client, $studio2) { $m->book_session($client, $studio2, '2026-11-05 12:00', 'design', 1); }, 'نوع الجلسة غلط');
 });
 test('تغيير الميعاد: رسالة "اتغيّر" مرة واحدة والتعارض بيتشيّك', function () use ($m, $client, $studio, $studio2, &$s1) {
@@ -467,6 +467,48 @@ test('باقة عليها فاتورة أقل من سعرها (بعد ترقية
     $m->record_payment($pkg, 2000);
     ok((int) q('SELECT status FROM tblinvoices WHERE clientid = ? ORDER BY id DESC', [$c])[0]['status'] === 2 && count($m->package_payments($pkg)) === 3);
 });
+test('حالة الصورة: باقة خلصت (Customize 15,000) ومدفوع منها دفعتين ← الدفعة التالتة بتتسجل · فترة سماح 15 يوم لو فيها رصيد', function () use ($m, $db) {
+    $save = $m->fixed_time;
+    $db->insert('tblclients', ['company' => 'Customize']); $c = $db->insert_id();
+    $m->fixed_time = strtotime('2026-09-16 10:00:00');
+    $pkg = $m->create_package($c, 'Customize', 15000, '2026-09-16', 30, ['reel' => 3, 'design' => 2]);
+    $m->record_payment($pkg, 2000, '2026-09-16');
+    $m->fixed_time = strtotime('2026-09-29 10:00:00');
+    $m->record_payment($pkg, 5500, '2026-09-29');
+    ok($m->package($pkg)['status'] === 'active');
+    // بعد نهايتها (15/10) بأسبوع: لسه فيها 3 ريلز ← شغالة (فترة سماح)
+    $m->fixed_time = strtotime('2026-10-22 10:00:00');
+    ok($m->sync_package_status($pkg) === 'active' && (int) $m->active_package($c)['id'] === $pkg, 'فترة السماح');
+    ok($m->effective_end($m->package($pkg)) === '2026-10-30');
+    $st = q('SELECT id FROM tbldse_studios LIMIT 1')[0]['id'];
+    $m->book_session($c, $st, '2026-10-25 12:00:00', 'reel', 1);
+    throws(function () use ($m, $c, $st) { $m->book_session($c, $st, '2026-11-02 12:00:00', 'reel', 1); }, 'بفترة السماح');
+    // بعد فترة السماح ← خلصت، والدفعة التالتة لسه بتتسجل
+    $m->fixed_time = strtotime('2026-11-01 10:00:00');
+    $db->query("UPDATE tbldse_sessions SET status = 'cancelled' WHERE package_id = ?", [$pkg]);
+    ok($m->sync_package_status($pkg) === 'expired', 'بعد السماح');
+    $r = $m->record_payment($pkg, 3000, '2026-11-01', null, 'القسط التالت');
+    ok($r['left'] == 4500 && count($m->package_payments($pkg)) === 3, json_encode($r));
+    $m->record_payment($pkg, 4500);
+    ok(count($m->package_payments($pkg)) === 4 && $m->package_paid_amount($m->package($pkg)) == 15000);
+    // باقة خلصت ومفيهاش رصيد ← بتقفل في ميعادها من غير سماح
+    $m->fixed_time = strtotime('2026-09-01 10:00:00');
+    $p2 = $m->create_package($c, 'Done', 1000, '2026-09-01', 10, ['design' => 1]);
+    $m->record_payment($p2, 1000);
+    $db->insert('tbldse_usage', ['package_id' => $p2, 'type' => 'design', 'qty' => 1, 'reason' => 'post', 'created_at' => '2026-09-05 10:00:00']);
+    $m->fixed_time = strtotime('2026-09-12 10:00:00');
+    ok($m->sync_package_status($p2) === 'expired', 'من غير رصيد');
+    // باقة قديمة اتقفلت قبل التحديث ولسه في السماح وفيها رصيد ← بترجع شغالة
+    $m->fixed_time = strtotime('2026-09-01 10:00:00');
+    $p3 = $m->create_package($c, 'Old', 1000, '2026-09-01', 10, ['reel' => 2]);
+    $m->record_payment($p3, 1000);
+    $db->query("UPDATE tbldse_packages SET status = 'expired' WHERE id = ?", [$p3]);
+    $m->fixed_time = strtotime('2026-09-15 10:00:00');
+    $m->sync_client_packages($c);
+    ok($m->package($p3)['status'] === 'active', 'رجعت شغالة');
+    $db->query("UPDATE tbldse_packages SET status = 'cancelled' WHERE clientid = ?", [$c]); // ميأثرش على اختبارات التنبيهات
+    $m->fixed_time = $save;
+});
 test('جدّد الاشتراك: نفس الخدمات والسعر والمدة · بيبدأ بعد القديمة · مستني الدفع · القديمة تكمل لآخر يوم · تقدر تغيّر السعر والعدد', function () use ($m, $db) {
     $db->insert('tblclients', ['company' => 'تجديد']); $c = $db->insert_id();
     $old = $m->create_package($c, 'Growth', 8000, '2026-11-01', 30, ['reel' => 8, 'design' => 4]);
@@ -479,7 +521,9 @@ test('جدّد الاشتراك: نفس الخدمات والسعر والمدة
     $m->record_payment($new, 4000);
     ok($m->package($new)['status'] === 'active', 'الجديدة اتفعلت'); ok((int) $m->active_package($c)['id'] === $old, 'القديمة لسه هي الشغالة');
     $save = $m->fixed_time; $m->fixed_time = strtotime('2026-12-02 10:00:00');
-    ok((int) $m->active_package($c)['id'] === $new && $m->package($old)['status'] === 'expired', 'الجديدة اشتغلت');
+    ok((int) $m->active_package($c)['id'] === $old, 'القديمة فيها 8 ريلز ← فترة سماح، ورصيدها بيتسحب الأول');
+    $m->fixed_time = strtotime('2026-12-16 10:00:00');
+    ok((int) $m->active_package($c)['id'] === $new && $m->package($old)['status'] === 'expired', 'بعد السماح الجديدة لوحدها');
     $m->fixed_time = $save;
     $x = $m->package($m->renew_package($new, ['price' => 9000, 'items' => ['reel' => 12, 'design' => ''], 'start_date' => '2026-12-31', 'validity_days' => 31]));
     ok((float) $x['price'] === 9000.0 && $x['end_date'] === '2027-01-30' && $m->balance($x['id'])['reel']['total'] === 12.0 && $m->balance($x['id'])['design']['total'] === 4.0, json_encode($x, JSON_UNESCAPED_UNICODE));
@@ -501,8 +545,11 @@ test('العميل بقاله فترة مابيصوّرش → تنبيه مرة 
     $m->resolve_alert($a['id'], 'كلمته وحجز');
     ok(count(array_filter($m->alerts(true), function ($x) { return $x['alert_key'] === 'client_inactive' && $x['clientid'] == $GLOBALS['client']; })) === 0, 'اتقفل');
 });
-test('الباقة بتخلص لوحدها بعد مدتها', function () use ($m, $pkg) {
+test('الباقة بتخلص لوحدها بعد مدتها — ولو فيها رصيد بعد 15 يوم سماح', function () use ($m, $pkg) {
     $m->fixed_time = strtotime('2026-12-01 10:00:00');
+    $m->sync_all_packages();
+    ok($m->package($pkg)['status'] === 'active', 'فيها رصيد ← سماح');
+    $m->fixed_time = strtotime('2026-12-16 10:00:00');
     $m->sync_all_packages();
     ok($m->package($pkg)['status'] === 'expired');
     $m->fixed_time = strtotime('2026-11-02 10:00:00');
