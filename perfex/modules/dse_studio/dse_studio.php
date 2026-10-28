@@ -5,7 +5,7 @@ defined('BASEPATH') or exit('No direct script access allowed');
 /*
 Module Name: Digital Solution — الاستوديو والباقات
 Description: رصيد الباقات، حجز الاستوديو، السكربتات والنشر، جروبات واتساب العملاء (Evolution API)، وتنبيه العميل اللي مابيصوّرش.
-Version: 1.0.4
+Version: 1.0.5
 Requires at least: 3.0.*
 Author: Digital Solution
 */
@@ -61,6 +61,7 @@ function dse_studio_admin_init()
             ['dse-studio-calendar', 'dse_menu_calendar', 'dse_studio/calendar', 2],
             ['dse-studio-publish', 'dse_menu_publish', 'dse_studio/publishing', 2],
             ['dse-studio-alerts', 'dse_menu_alerts', 'dse_studio/alerts', 3],
+            ['dse-studio-renewals', 'dse_menu_renewals', 'dse_studio/renewals', 3],
             ['dse-studio-outbox', 'dse_menu_outbox', 'dse_studio/outbox', 4],
         ];
         if (is_admin()) {
@@ -106,7 +107,7 @@ function dse_studio_cron()
     update_option('dse_last_daily_run', date('Y-m-d'));
     try {
         $CI->dse_studio_model->sync_all_packages();
-        $new = array_merge($CI->dse_studio_model->check_inactive_clients(), $CI->dse_studio_model->check_all_payments());
+        $new = array_merge($CI->dse_studio_model->check_inactive_clients(), $CI->dse_studio_model->check_all_payments(), $CI->dse_studio_model->check_renewals());
         if ($new) {
             dse_studio_notify_staff($new);
         }

@@ -16,3 +16,4 @@ $lang['dse_cap_publish']          = 'المودريشن: يسجّل البوست
 $lang['dse_menu_publish']         = 'نزل على السوشيال';
 $lang['dse_notification_alert']   = 'تنبيه الاستوديو: %s';
 $lang['dse_menu_messages'] = 'رسايل الواتساب';
+$lang['dse_menu_renewals'] = 'مستنيين تجديد';

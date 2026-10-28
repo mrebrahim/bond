@@ -19,6 +19,10 @@ function dse_studio_schema()
                 '`wa_phone` VARCHAR(20) NULL',
                 '`wa_group_jid` VARCHAR(80) NULL',
                 '`wa_group_link` VARCHAR(255) NULL',
+                // متابعة التجديد: '' لسه · contacted اتكلمنا · later بعدين · lost مش هيجدد
+                '`renewal_status` VARCHAR(20) NULL',
+                '`renewal_note` VARCHAR(255) NULL',
+                '`renewal_updated_at` DATETIME NULL',
                 '`updated_at` DATETIME NULL',
             ],
             'indexes' => [],
@@ -45,6 +49,7 @@ function dse_studio_schema()
                 '`created_by` INT NULL',
                 '`created_at` DATETIME NOT NULL',
                 '`activated_at` DATETIME NULL',
+                '`historic` TINYINT NOT NULL DEFAULT 0', // باقة قديمة قبل السيستم (اتدفعت واتصرفت برا)
             ],
             'indexes' => ['idx_dse_packages_client' => '(`clientid`, `status`)'],
         ],
@@ -229,7 +234,8 @@ function dse_studio_default_options()
         'dse_notify_staff_ids'     => '5,6',   // إنجي عماد ومريم ناجي (أرقام الموظفين في Perfex)
         'dse_payment_notify_staff_ids' => '5,6',
         'dse_activation_paid_pct'  => '50',
-        'dse_grace_days'           => '15',    // الباقة اللي فيها رصيد بتفضل شغالة 15 يوم بعد تاريخ نهايتها علشان نخلص الريلز
+        'dse_grace_days'           => '15',
+        'dse_renewal_days_before'  => '7',     // العميل بيظهر في "مستنيين تجديد" قبل نهاية باقته بالأيام دي    // الباقة اللي فيها رصيد بتفضل شغالة 15 يوم بعد تاريخ نهايتها علشان نخلص الريلز
         'dse_feedback_url'         => 'https://docs.google.com/forms/d/e/1FAIpQLSdqw--gHY0XPOeyGOqTq4QvXeJBBO8arwWN669wtC3KnZmZtA/viewform?usp=pp_url&entry.878760930={client_code}&entry.220082110={post_id}',
         'dse_rules_text'           => "📌 *قواعد التعامل* — من فضلك اقراها كويس\n\n1) مواعيد التصوير بتتحجز مسبقًا.\n2) الإلغاء أو التأجيل قبل الميعاد بأقل من 24 ساعة بيتخصم من رصيد الباقة.\n3) عدم الحضور من غير إبلاغ بيتخصم من الرصيد.\n4) لو هتصور أكتر من ريل هات أكتر من لبس (لبس لكل 3 ريلز تقريبًا).\n5) السكربتات بتتبعت هنا للموافقة قبل التصوير.\n6) كل ريل ليه تعديلين بعد التسليم.\n7) الرصيد اللي ماتستخدمش في مدة الباقة مش بيترحّل للباقة الجاية.\n8) الباقة بتتفعل بعد الدفع.\n9) متبعتش باسوردات في الجروب — الأكسس بيكون بإضافتنا Partner.",
         'dse_last_daily_run'       => '',
@@ -239,7 +245,7 @@ function dse_studio_default_options()
 
 if (!defined('DSE_STUDIO_SCHEMA_VERSION')) {
 /** نسخة الجداول — زوّدها مع أي جدول جديد */
-    define('DSE_STUDIO_SCHEMA_VERSION', '3');
+    define('DSE_STUDIO_SCHEMA_VERSION', '4');
 }
 
 if (!function_exists('dse_studio_ensure_schema')) {
@@ -259,6 +265,17 @@ function dse_studio_ensure_schema()
         if (!$CI->db->table_exists(db_prefix() . $table)) {
             foreach (dse_studio_create_sql($table, $def, db_prefix(), $driver, 'utf8mb4') as $sql) {
                 $CI->db->query($sql);
+            }
+        }
+    }
+    // أعمدة اتضافت بعد ما الجدول اتعمل (1.0.5: متابعة التجديد + الباقات القديمة) ← ALTER
+    foreach (dse_studio_schema() as $table => $def) {
+        foreach ($def['cols'] as $col) {
+            if ($col === '{pk}' || stripos($col, 'PRIMARY KEY') !== false || !preg_match('/^`([a-z_]+)`\s+/i', $col, $m)) {
+                continue;
+            }
+            if (!$CI->db->field_exists($m[1], db_prefix() . $table)) {
+                $CI->db->query('ALTER TABLE `' . db_prefix() . $table . '` ADD COLUMN ' . $col);
             }
         }
     }

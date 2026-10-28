@@ -20,6 +20,7 @@
           <a class="btn btn-default btn-block" href="<?= admin_url('dse_studio/calendar'); ?>">📅 كالندر الاستوديو</a>
           <a class="btn btn-<?= $alerts ? 'danger' : 'default'; ?> btn-block" href="<?= admin_url('dse_studio/alerts'); ?>">🔔 التنبيهات (<?= (int) $alerts; ?>)</a>
           <a class="btn btn-default btn-block" href="<?= admin_url('dse_studio/outbox'); ?>">💬 رسايل الواتساب</a>
+          <a class="btn btn-<?= !empty($renewals) ? 'warning' : 'default'; ?> btn-block" href="<?= admin_url('dse_studio/renewals'); ?>">🔄 مستنيين تجديد (<?= (int) ($renewals ?? 0); ?>)</a>
         </div></div>
       </div>
 

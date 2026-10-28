@@ -55,6 +55,7 @@ class FakeDb
     public function insert_id() { return (int) $this->pdo->lastInsertId(); }
     public function table_exists($t) { return (bool) $this->pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name=" . $this->pdo->quote($t))->fetch(); }
     public function affected_rows() { return $this->affected; }
+    public function field_exists($f, $t) { foreach ($this->pdo->query('PRAGMA table_info("' . $t . '")')->fetchAll() as $c) { if ($c['name'] === $f) { return true; } } return false; }
 }
 
 class App_Model { public $db; }
@@ -531,6 +532,52 @@ test('جدّد الاشتراك: نفس الخدمات والسعر والمدة
     throws(function () use ($m, $x) { $m->renew_package($x['id']); }, 'ملغية');
     throws(function () use ($m, $x) { $m->record_payment($x['id'], 10); }, 'اتلغت');
 });
+
+test('العملاء القدام: باقة قديمة (خلصت) ← "مستنيين تجديد" · طلب التجديد على الجروب · المتابعة · لما يجدد بيختفي · تنبيه للسيلز', function () use ($m, $db) {
+    $save = $m->fixed_time;
+    $db->insert('tblclients', ['company' => 'عميل قديم']); $c = $db->insert_id();
+    throws(function () use ($m, $c) { $m->create_package($c, 'Old', 6000, '2026-10-25', 30, ['reel' => 6], null, null, true); }, 'لازم تكون خلصت');
+    $old = $m->create_package($c, 'Growth', 6000, '2026-08-01', 30, ['reel' => 6, 'design' => 4], null, null, true);
+    $p = $m->package($old);
+    ok($p['status'] === 'expired' && (int) $p['historic'] === 1 && $m->balance($old)['reel']['remaining'] == 0, json_encode($p));
+    $m->sync_client_packages($c);
+    ok($m->package($old)['status'] === 'expired' && !$m->active_package($c), 'مبترجعش بفترة السماح');
+    $r = array_values(array_filter($m->renewals(), function ($x) use ($c) { return $x['clientid'] === $c; }));
+    ok(count($r) === 1 && $r[0]['ended'] && $r[0]['days'] === 64 && $r[0]['historic'] && $r[0]['renewal_status'] === '', json_encode($r, JSON_UNESCAPED_UNICODE));
+    // طلب التجديد: من غير جروب ← error · بالجروب ← في الطابور بالنص + المتابعة بقت "اتكلمنا"
+    throws(function () use ($m, $c) { $m->send_manual($c, 'renewal_request'); }, 'مالوش جروب');
+    $m->save_client_wa($c, ['wa_group_jid' => '120363000000000099@g.us']);
+    $m->send_manual($c, 'renewal_request');
+    $o = q("SELECT body FROM tbldse_wa_outbox WHERE clientid = ? AND msg_key = 'renewal_request'", [$c]);
+    ok(count($o) === 1 && strpos($o[0]['body'], 'باقة *Growth* خلصت يوم') !== false && strpos($o[0]['body'], 'عميل قديم') !== false, $o[0]['body'] ?? '');
+    $r = array_values(array_filter($m->renewals(), function ($x) use ($c) { return $x['clientid'] === $c; }))[0];
+    ok($r['renewal_status'] === 'contacted' && $r['last_msg'], json_encode($r, JSON_UNESCAPED_UNICODE));
+    // "مش هيجدد" ← بيختفي من المفتوحين وبيظهر في lost
+    $m->set_renewal_status($c, 'lost', 'راح لوكالة تانية');
+    ok(!array_filter($m->renewals('open'), function ($x) use ($c) { return $x['clientid'] === $c; }) && count(array_filter($m->renewals('lost'), function ($x) use ($c) { return $x['clientid'] === $c; })) === 1);
+    $m->set_renewal_status($c, 'later');
+    // باقة قربت تخلص (خلال 7 أيام) بتظهر · باقة خلصت من 5 أيام ← تنبيه مرة واحدة (القديمة اللي اتضافت بإيدك لأ)
+    $db->insert('tblclients', ['company' => 'قربت تخلص']); $c2 = $db->insert_id();
+    $m->fixed_time = strtotime('2026-10-01 10:00:00');
+    $p2 = $m->create_package($c2, 'Starter', 4000, '2026-10-06', 30, ['reel' => 4]);
+    $m->record_payment($p2, 4000);
+    $m->fixed_time = strtotime('2026-11-01 10:00:00');
+    $r2 = array_values(array_filter($m->renewals(), function ($x) use ($c2) { return $x['clientid'] === $c2; }));
+    ok(count($r2) === 1 && !$r2[0]['ended'] && $r2[0]['days'] === -3, json_encode($r2));
+    $m->fixed_time = strtotime('2026-11-09 10:00:00');
+    $db->insert('tbldse_usage', ['package_id' => $p2, 'type' => 'reel', 'qty' => 4, 'reason' => 'manual', 'created_at' => '2026-11-01 10:00:00']);
+    $a = $m->check_renewals();
+    ok(count(array_filter($a, function ($id) use ($c2) { return q('SELECT clientid FROM tbldse_alerts WHERE id = ?', [$id])[0]['clientid'] == $c2; })) === 1, 'تنبيه');
+    ok(!array_filter($a, function ($id) use ($c) { return q('SELECT clientid FROM tbldse_alerts WHERE id = ?', [$id])[0]['clientid'] == $c; }), 'القديمة من غير تنبيه');
+    ok(count($m->check_renewals()) === 0, 'مرة واحدة');
+    // جدّد ← بيختفي
+    $m->renew_package($p2);
+    ok(!array_filter($m->renewals(''), function ($x) use ($c2) { return $x['clientid'] === $c2; }), 'جدد ← اختفى');
+    $m->renew_package($old);
+    ok(!array_filter($m->renewals(''), function ($x) use ($c) { return $x['clientid'] === $c; }), 'القديم جدد ← اختفى');
+    $db->query("UPDATE tbldse_packages SET status = 'cancelled' WHERE clientid IN (?, ?)", [$c, $c2]);
+    $m->fixed_time = $save;
+});
 echo "\nالتنبيهات:\n";
 test('العميل بقاله فترة مابيصوّرش → تنبيه مرة واحدة، urgent لو مفيش نشر', function () use ($m, $client, $db) {
     ok(count($m->check_inactive_clients()) === 0, 'لسه بادئ');
@@ -611,6 +658,13 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
     ok(count($m->sessions_between('2026-10-31', '2026-11-30', null, 999)) === 0, 'فلتر الاستوديو');
     ok(count($m->sessions_between('2026-10-31', '2026-11-30', null, null, false)) < count($m->sessions_between('2026-10-31', '2026-11-30')), 'من غير الملغية');
     render('alerts', ['all' => true, 'alerts' => $m->alerts(false)]);
+    $db->insert('tblclients', ['company' => 'عيادة د. سامي']); $rc = $db->insert_id();
+    $m->create_package($rc, 'Growth', 6000, '2026-08-01', 30, ['reel' => 6], null, null, true);
+    $m->save_client_wa($rc, ['wa_group_jid' => '120363000000000077@g.us']);
+    $m->send_manual($rc, 'renewal_request');
+    $rn = render('renewals', ['rows' => $m->renewals(''), 'status' => '']);
+    ok(strpos($rn, 'عيادة د. سامي') !== false && strpos($rn, 'ابعت طلب التجديد') !== false && strpos($rn, 'آخر طلب') !== false && strpos($rn, 'قديمة') !== false, 'صف التجديد');
+    file_put_contents(sys_get_temp_dir() . '/dse_renewals.html', $rn);
     render('outbox', ['outbox' => $m->outbox(), 'enabled' => false]);
     $pub = render('publishing', ['clients' => $m->clients_for_publishing(), 'recent' => $m->recent_posts(), 'selected' => 1]);
     ok(strpos($pub, 'وصل الجروب') !== false || strpos($pub, 'مستني') !== false, 'حالة الرسالة');
@@ -661,7 +715,7 @@ test('النص الأصلي زي ما كان · التعديل بيمشي على
     $h = render('messages', ['list' => $list]);
     restore_error_handler();
     file_put_contents(sys_get_temp_dir() . '/dse_messages.html', $h);
-    ok(substr_count($h, '<textarea name="body"') === 9 && strpos($h, 'تم حجز') !== false && strpos($h, 'DSE_SAMPLE') !== false && strpos($h, '{client_name}') !== false);
+    ok(substr_count($h, '<textarea name="body"') === 10 && strpos($h, 'تم حجز') !== false && strpos($h, 'DSE_SAMPLE') !== false && strpos($h, '{client_name}') !== false);
 });
 echo "\n$passed passed · $failed failed\n";
 exit($failed ? 1 : 0);

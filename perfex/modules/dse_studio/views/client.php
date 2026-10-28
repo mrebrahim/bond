@@ -58,6 +58,7 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
               <div>
                 <b><?= html_escape($p['name']); ?></b> · <?= dse_money($p['price']); ?> · <?= dse_day($p['start_date']); ?> ← <?= dse_day($p['end_date']); ?>
                 <span class="label label-<?= ['pending' => 'warning', 'active' => 'success', 'expired' => 'default', 'cancelled' => 'default'][$p['status']]; ?>"><?= dse_package_statuses()[$p['status']]; ?></span>
+                <?php if (!empty($p['historic'])) { ?><span class="label label-default">قديمة — قبل السيستم</span><?php } ?>
                 <?php if ($p['status'] === 'active' && $p['end_date'] < date('Y-m-d')) { ?><span class="label label-warning">⏳ فترة سماح لحد <?= dse_day(date('Y-m-d', strtotime($p['end_date'] . ' +' . (int) (get_option('dse_grace_days') !== '' ? get_option('dse_grace_days') : 15) . ' days'))); ?> علشان الرصيد اللي فاضل</span><?php } ?>
               </div>
               <div class="small mtop5">
@@ -69,8 +70,9 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
               <!-- الفلوس: كل الفواتير (أقساط / فرق ترقية) -->
               <div class="dse-money mtop5">
                 <div class="dse-bar"><div style="width:<?= $p['price'] > 0 ? min(100, round($paidv / $p['price'] * 100)) : 100; ?>%"></div></div>
+                <?php if (!empty($p['historic'])) { ?><div class="small text-muted">اتدفعت برا السيستم</div><?php } else { ?>
                 <div class="small">مدفوع <b><?= dse_money($paidv); ?></b> من <?= dse_money($p['price']); ?>
-                  <?= $p['price'] - $paidv > 0.5 ? ' · <span class="text-danger">الباقي ' . dse_money($p['price'] - $paidv) . '</span>' : ' · ✅ خالص'; ?></div>
+                  <?= $p['price'] - $paidv > 0.5 ? ' · <span class="text-danger">الباقي ' . dse_money($p['price'] - $paidv) . '</span>' : ' · ✅ خالص'; ?></div><?php } ?>
                 <?php foreach ($pinv as $i) { ?>
                   <div class="small text-muted">
                     🧾 <a href="<?= admin_url('invoices/list_invoices/' . $i['invoice_id']); ?>" target="_blank"><?= html_escape($inv_name(['id' => $i['invoice_id'], 'prefix' => $i['prefix'], 'number' => $i['number']])); ?></a>
@@ -105,7 +107,7 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                 </div>
               <?php } ?>
 
-                  <?php $left = round((float) $p['price'] - $paidv, 2); if ($left > 0.5 && $can_pkg && $p['status'] !== 'cancelled') { ?>
+                  <?php $left = round((float) $p['price'] - $paidv, 2); if ($left > 0.5 && $can_pkg && $p['status'] !== 'cancelled' && empty($p['historic'])) { ?>
                   <details class="dse-box" open>
                     <summary>💵 سجّل دفعة (قسط) — الباقي <?= dse_money($left); ?></summary>
                     <?= form_open(admin_url('dse_studio/record_payment/' . $p['id'])); ?>
@@ -236,6 +238,8 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                 </select>
               </div>
             </div>
+            <div class="checkbox" style="margin-top:0"><label><input type="checkbox" name="historic" value="1" onchange="this.form.querySelector('[name=start_date]').max=this.checked?'<?= date('Y-m-d', strtotime('-1 day')); ?>':''">
+              <b>باقة قديمة (خلصت قبل السيستم)</b> — اتدفعت واتصرفت برا السيستم، علشان العميل يظهر في "مستنيين تجديد" ونطالبه يجدد</label></div>
             <button class="btn btn-primary">اعمل الباقة</button>
             <a class="btn btn-default" href="<?= admin_url('invoices/invoice?customer_id=' . $cid); ?>" target="_blank">اعمل فاتورة في Perfex</a>
           <?= form_close(); ?>

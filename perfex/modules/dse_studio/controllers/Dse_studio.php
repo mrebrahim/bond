@@ -77,6 +77,7 @@ class Dse_studio extends AdminController
         $data['packages'] = $this->dse_studio_model->clients_with_packages();
         $data['today']    = $this->dse_studio_model->sessions_between(date('Y-m-d 00:00:00'), date('Y-m-d 00:00:00', strtotime('+1 day')));
         $data['alerts']   = count($this->dse_studio_model->alerts(true));
+        $data['renewals'] = count($this->dse_studio_model->renewals('open'));
         $this->load->view('index', $data);
     }
 
@@ -113,6 +114,34 @@ class Dse_studio extends AdminController
         $all_linked = array_column($this->db->query('SELECT invoice_id FROM ' . db_prefix() . 'dse_package_invoices')->result_array(), 'invoice_id');
         $data['free_invoices'] = array_values(array_filter($data['invoices'], function ($i) use ($all_linked) { return !in_array($i['id'], $all_linked); }));
         $this->load->view('client', $data);
+    }
+
+    /** مستنيين تجديد: آخر باقة خلصت أو قربت ومفيش تجديد */
+    public function renewals()
+    {
+        $this->need('view');
+        $status = in_array($this->input->get('status'), ['', 'open', 'contacted', 'later', 'lost'], true) ? (string) $this->input->get('status') : 'open';
+        $status = $this->input->get('status') === null ? 'open' : $status;
+        $this->load->view('renewals', ['title' => _l('dse_menu_renewals'), 'rows' => $this->dse_studio_model->renewals($status), 'status' => $status]);
+    }
+
+    public function renewal_status($clientid)
+    {
+        $m = $this->dse_studio_model;
+        $this->act('view', function () use ($m, $clientid) {
+            $m->set_renewal_status($clientid, (string) $this->post('status', ''), $this->post('note'));
+            return 'اتحفظ';
+        }, admin_url('dse_studio/renewals' . ($this->input->get('back') ? '?status=' . urlencode($this->input->get('back')) : '')));
+    }
+
+    /** ابعت "طلب تجديد الاشتراك" من صفحة التجديد */
+    public function renewal_message($clientid)
+    {
+        $m = $this->dse_studio_model;
+        $this->act('create', function () use ($m, $clientid) {
+            $m->send_manual($clientid, 'renewal_request');
+            return 'طلب التجديد اتحط في الطابور وهيتبعت على جروب العميل';
+        }, admin_url('dse_studio/renewals'));
     }
 
     public function calendar()
@@ -188,9 +217,10 @@ class Dse_studio extends AdminController
     {
         $m = $this->dse_studio_model;
         $this->act('edit', function () use ($m, $clientid) {
+            $old = (bool) $this->post('historic');
             $m->create_package($clientid, $this->post('name'), $this->post('price', 0), $this->post('start_date'),
-                $this->post('validity_days', 30), (array) $this->input->post('items'), $this->post('invoice_id'), $this->post('notes'));
-            return 'الباقة اتعملت — بتتفعل لوحدها أول ما الفاتورة تتدفع';
+                $this->post('validity_days', 30), (array) $this->input->post('items'), $old ? null : $this->post('invoice_id'), $this->post('notes'), $old);
+            return $old ? 'الباقة القديمة اتسجلت — العميل هيظهر في "مستنيين تجديد"' : 'الباقة اتعملت — بتتفعل لوحدها أول ما تسجّل الدفعة';
         }, admin_url('dse_studio/client/' . (int) $clientid));
     }
 

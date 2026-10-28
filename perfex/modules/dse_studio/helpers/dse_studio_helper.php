@@ -109,6 +109,7 @@ function dse_wa_defaults()
         'outfits_reminder' => '👕 تذكير مهم: لو هتصور أكتر من ريل، هات أكتر من لبس — لبس لكل 3 ريلز تقريبًا — علشان الفيديوهات متبانش شبه بعض.',
         'contract_request' => '📄 من فضلك ابعتلنا صورة العقد بعد التوقيع هنا في الجروب.',
         'access_request'   => "🔐 علشان نقدر ننشر ونتابع الأداء: من فضلك ضيفنا *Partner* على Meta Business Suite (فيسبوك وإنستجرام) — هنبعتلك الخطوات.\nلو عندك تيك توك أو يوتيوب أو Google Business قولنا نتفق على طريقة الأكسس.\n⚠️ متبعتش باسوردات في الجروب.",
+        'renewal_request'  => "أهلًا {client_name} 👋\nباقة *{package_name}* {ended} {end_date}.\nحابين نكمل معاكم الشهر الجاي؟ نجهّز التجديد ونحجز أول ميعاد تصوير 🎬\nرد علينا هنا وإحنا نظبط كل حاجة 🙏",
         // ---- أوتوماتيك (3 بس) ----
         'script_sent'      => "سكربت جديد للمراجعة 📝\n*{title}*\n\n{body}\n\nرد بـ \"موافق\" أو ابعتلنا التعديلات",
         'session_booked'   => "{headline} ✅\n📅 {date} الساعة {time}\n📍 {studio}\n🎬 {count} · {outfits}",
@@ -121,6 +122,7 @@ function dse_wa_vars($key)
 {
     $map = [
         'welcome'        => ['client_name' => 'اسم العميل'],
+        'renewal_request' => ['client_name' => 'اسم العميل', 'package_name' => 'اسم آخر باقة', 'ended' => '"خلصت يوم" أو "بتخلص يوم"', 'end_date' => 'تاريخ نهاية الباقة'],
         'rules'          => ['rules' => 'نص قواعد التعامل (من الإعدادات)', 'client_name' => 'اسم العميل'],
         'script_sent'    => ['title' => 'عنوان السكربت', 'body' => 'نص السكربت', 'client_name' => 'اسم العميل'],
         'session_booked' => ['headline' => '"تم حجز ميعاد التصوير" أو "ميعاد التصوير اتغيّر"', 'date' => 'اليوم والتاريخ', 'time' => 'الساعة',
@@ -164,7 +166,8 @@ function dse_wa_text($key, array $p)
 function dse_wa_values($key, array $p)
 {
     $s = function ($k) use ($p) { return isset($p[$k]) ? (string) $p[$k] : ''; };
-    $v = ['client_name' => $s('client_name'), 'rules' => $s('rules'), 'title' => $s('title'), 'body' => $s('body'), 'post_url' => $s('post_url'),
+    $v = ['client_name' => $s('client_name'), 'rules' => $s('rules'), 'package_name' => $s('package_name'),
+        'ended' => $s('end_date') === '' ? '' : ($s('end_date') < date('Y-m-d') ? 'خلصت يوم' : 'بتخلص يوم'), 'end_date' => $s('end_date') === '' ? '' : dse_day($s('end_date')), 'title' => $s('title'), 'body' => $s('body'), 'post_url' => $s('post_url'),
         'feedback_url' => $s('feedback_url'), 'balance' => $s('balance'), 'studio' => $s('studio')];
     if ($key === 'session_booked') {
         $v['headline'] = $s('rescheduled') ? 'ميعاد التصوير اتغيّر' : 'تم حجز ميعاد التصوير';
@@ -205,13 +208,13 @@ function dse_wa_validate($key, $body)
 /** بيانات تجربة للمعاينة في صفحة الرسايل */
 function dse_wa_sample($key)
 {
-    $base = ['client_name' => 'عيادة د. أحمد', 'rules' => '1) المواعيد بتتأكد قبلها بيوم…'];
+    $base = ['client_name' => 'عيادة د. أحمد', 'rules' => '1) المواعيد بتتأكد قبلها بيوم…', 'package_name' => 'Growth', 'end_date' => date('Y-m-d', strtotime('-3 days'))];
     $more = [
         'script_sent'    => ['title' => 'ريل: 3 أخطاء في تنضيف الأسنان', 'body' => 'أول خطأ: …'],
         'session_booked' => ['start' => date('Y-m-d 17:00:00', strtotime('+2 days')), 'qty' => 3, 'type' => 'reel', 'studio' => 'استوديو 1', 'outfits' => 1],
         'published'      => ['type' => 'reel', 'post_url' => 'https://instagram.com/p/xxxx', 'feedback_url' => 'https://ds.link/f/123', 'balance' => '5 ريل · 2 تصميم', 'end_date' => date('Y-m-d', strtotime('+20 days'))],
     ];
-    return $base + ($more[$key] ?? []);
+    return array_merge($base, $more[$key] ?? []);
 }
 
 function dse_wa_labels()
@@ -228,5 +231,6 @@ function dse_manual_keys()
         'outfits_reminder' => 'تنبيه اللبسات',
         'contract_request' => 'طلب صورة العقد',
         'access_request'   => 'طلب الأكسس على السوشيال',
+        'renewal_request'  => 'طلب تجديد الاشتراك',
     ];
 }

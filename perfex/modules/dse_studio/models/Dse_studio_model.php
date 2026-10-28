@@ -119,7 +119,7 @@ class Dse_studio_model extends App_Model
     /**
      * @param array $items ['reel' => 10, 'design' => 8]
      */
-    public function create_package($clientid, $name, $price, $start_date, $validity_days, array $items, $invoice_id = null, $notes = null)
+    public function create_package($clientid, $name, $price, $start_date, $validity_days, array $items, $invoice_id = null, $notes = null, $historic = false)
     {
         $this->client($clientid);
         $items = array_filter(array_map('floatval', $items), function ($q) { return $q > 0; });
@@ -136,6 +136,9 @@ class Dse_studio_model extends App_Model
             throw new Exception('تاريخ البداية غلط');
         }
         $end = date('Y-m-d', strtotime($start . ' +' . ($validity_days - 1) . ' days'));
+        if ($historic && $end >= $this->today()) {
+            throw new Exception('الباقة القديمة لازم تكون خلصت قبل النهارده — لو لسه شغالة اعملها عادي وسجّل الدفعة عليها');
+        }
 
         $this->db->insert($this->tbl('dse_packages'), [
             'clientid'   => (int) $clientid,
@@ -151,6 +154,14 @@ class Dse_studio_model extends App_Model
         $id = (int) $this->db->insert_id();
         foreach ($items as $type => $qty) {
             $this->db->insert($this->tbl('dse_package_items'), ['package_id' => $id, 'type' => $type, 'qty' => $qty]);
+        }
+        if ($historic) { // اتدفعت واتصرفت قبل السيستم ← خلصت ومفيهاش رصيد (علشان متتفتحش تاني بفترة السماح)
+            $this->db->update($this->tbl('dse_packages'), ['status' => 'expired', 'historic' => 1, 'activated_at' => $start . ' 00:00:00'], ['id' => $id]);
+            foreach ($items as $type => $qty) {
+                $this->db->insert($this->tbl('dse_usage'), ['package_id' => $id, 'type' => $type, 'qty' => $qty, 'reason' => 'manual',
+                    'note' => 'باقة قديمة قبل السيستم', 'staff_id' => $this->staff_id(), 'created_at' => $this->now()]);
+            }
+            return $id;
         }
         if ($invoice_id) {
             $this->link_invoice($id, $invoice_id, 'الفاتورة الأولى');
@@ -1088,10 +1099,19 @@ class Dse_studio_model extends App_Model
         if (!isset(dse_manual_keys()[$key])) {
             throw new Exception('نوع رسالة غير معروف');
         }
-        $c = $this->client($clientid);
-        return $this->queue_wa($clientid, $key, 'manual:' . $key . ':' . $clientid . ':' . microtime(true), [
+        $c    = $this->client($clientid);
+        $last = $this->last_packages()[(int) $clientid] ?? null;
+        $id   = $this->queue_wa($clientid, $key, 'manual:' . $key . ':' . $clientid . ':' . microtime(true), [
             'client_name' => $c['company'], 'rules' => $this->opt('dse_rules_text', ''),
+            'package_name' => $last['name'] ?? '', 'end_date' => $last['end_date'] ?? '',
         ], true);
+        if ($key === 'renewal_request') {
+            $x = $this->row('SELECT renewal_status FROM ' . $this->tbl('dse_clients') . ' WHERE clientid = ?', [(int) $clientid]);
+            if (empty($x['renewal_status'])) {
+                $this->set_renewal_status($clientid, 'contacted', 'اتبعتله طلب التجديد على الجروب');
+            }
+        }
+        return $id;
     }
 
     /**
@@ -1465,6 +1485,82 @@ class Dse_studio_model extends App_Model
             'note' => 'تجديد من باقة #' . $p['id'], 'staff_id' => $this->staff_id(), 'created_at' => $this->now(),
         ]);
         return $id;
+    }
+
+    // =================================================================
+    // العملاء القدام + "مستنيين تجديد"
+    // =================================================================
+    /** آخر باقة لكل عميل (غير الملغية) — المفتاح clientid */
+    private function last_packages()
+    {
+        $out = [];
+        foreach ($this->rows('SELECT * FROM ' . $this->tbl('dse_packages') . " WHERE status <> 'cancelled' ORDER BY end_date, id") as $p) {
+            $out[(int) $p['clientid']] = $p; // الأحدث بيكتب على اللي قبله
+        }
+        return $out;
+    }
+
+    /**
+     * العملاء اللي محتاجين يجددوا: آخر باقة خلصت أو هتخلص خلال dse_renewal_days_before يوم، ومفيش باقة جديدة بعدها.
+     * $status: '' كله · open (مش "مش هيجدد") · contacted · later · lost
+     */
+    public function renewals($status = 'open')
+    {
+        $this->sync_all_packages();
+        $soon = date('Y-m-d', strtotime($this->today() . ' +' . max(0, (int) $this->opt('dse_renewal_days_before', 7)) . ' days'));
+        $out  = [];
+        foreach ($this->last_packages() as $cid => $p) {
+            if ($p['end_date'] > $soon || $p['status'] === 'pending') {
+                continue; // لسه بدري، أو فيه باقة جديدة (تجديد) مستنية الدفع
+            }
+            $c  = $this->client($cid);
+            $x  = $this->row('SELECT renewal_status, renewal_note, renewal_updated_at FROM ' . $this->tbl('dse_clients') . ' WHERE clientid = ?', [$cid]) ?: [];
+            $st = (string) ($x['renewal_status'] ?? '');
+            if (($status === 'open' && $st === 'lost') || ($status !== 'open' && $status !== '' && $st !== $status)) {
+                continue;
+            }
+            $msg = $this->row('SELECT created_at, status FROM ' . $this->tbl('dse_wa_outbox') . " WHERE clientid = ? AND msg_key = 'renewal_request' ORDER BY id DESC LIMIT 1", [$cid]);
+            $out[] = [
+                'clientid' => $cid, 'company' => $c['company'], 'code' => $c['code'], 'phone' => $c['wa_phone'], 'group' => (bool) $c['wa_group_jid'],
+                'package' => $p, 'ended' => $p['end_date'] < $this->today(), 'days' => (int) round((strtotime($this->today()) - strtotime($p['end_date'])) / 86400),
+                'historic' => (int) $p['historic'] === 1, 'renewal_status' => $st, 'renewal_note' => $x['renewal_note'] ?? null,
+                'renewal_updated_at' => $x['renewal_updated_at'] ?? null, 'last_msg' => $msg,
+            ];
+        }
+        // اللي هتخلص قريب الأول، وبعدها اللي خلصت من أقرب لأبعد
+        usort($out, function ($a, $b) { return [$a['ended'], $a['days']] <=> [$b['ended'], $b['days']]; });
+        return $out;
+    }
+
+    public function set_renewal_status($clientid, $status, $note = null)
+    {
+        if (!in_array($status, ['', 'contacted', 'later', 'lost'], true)) {
+            throw new Exception('حالة غلط');
+        }
+        $this->client($clientid);
+        $row = ['renewal_status' => $status ?: null, 'renewal_note' => trim((string) $note) !== '' ? mb_substr(trim($note), 0, 255) : null, 'renewal_updated_at' => $this->now()];
+        if ($this->row('SELECT clientid FROM ' . $this->tbl('dse_clients') . ' WHERE clientid = ?', [(int) $clientid])) {
+            $this->db->update($this->tbl('dse_clients'), $row, ['clientid' => (int) $clientid]);
+        } else {
+            $this->db->insert($this->tbl('dse_clients'), $row + ['clientid' => (int) $clientid, 'updated_at' => $this->now()]);
+        }
+    }
+
+    /** الـ cron: تنبيه مرة واحدة لكل باقة خلصت ومجددتش (للسيلز) */
+    public function check_renewals()
+    {
+        $new = [];
+        foreach ($this->renewals('open') as $r) {
+            if (!$r['ended'] || $r['historic'] || $r['days'] > 30) {
+                continue; // القديمة اللي اتضافت بإيدك بتتابعها من صفحة التجديد من غير تنبيهات
+            }
+            $id = $this->add_alert($r['clientid'], 'renewal_due', 'renewal:' . $r['package']['id'],
+                $r['company'] . ' — باقة "' . $r['package']['name'] . '" خلصت ' . dse_day($r['package']['end_date']) . ' ومجددش. كلمه وابعتله "طلب تجديد الاشتراك" من صفحة التجديد.');
+            if ($id) {
+                $new[] = $id;
+            }
+        }
+        return $new;
     }
 
     public function sync_all_packages()
