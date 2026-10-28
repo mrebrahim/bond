@@ -492,6 +492,17 @@ test('حالة الصورة: باقة خلصت (Customize 15,000) ومدفوع �
     ok($r['left'] == 4500 && count($m->package_payments($pkg)) === 3, json_encode($r));
     $m->record_payment($pkg, 4500);
     ok(count($m->package_payments($pkg)) === 4 && $m->package_paid_amount($m->package($pkg)) == 15000);
+    // مدّ فترة السماح للعميل ده بس: خلصت 30/10 ← +10 أيام ← شغالة تاني لحد 09/11 والحجز ماشي، وبعدها لأ
+    throws(function () use ($m, $pkg) { $m->extend_grace($pkg, 0); }, 'من 1 لـ 180');
+    throws(function () use ($m, $pkg) { $m->extend_grace($pkg, 1); }, 'زوّد الأيام');
+    $end = $m->extend_grace($pkg, 10, 'العميل كان مسافر');
+    ok($end === '2026-11-09' && $m->package($pkg)['status'] === 'active' && (int) $m->package($pkg)['grace_days'] === 25, json_encode($m->package($pkg)));
+    $ev = q("SELECT * FROM tbldse_package_events WHERE package_id = ? AND event = 'grace'", [$pkg]);
+    ok(count($ev) === 1 && $ev[0]['old_end_date'] === '2026-10-30' && $ev[0]['new_end_date'] === '2026-11-09' && $ev[0]['note'] === 'العميل كان مسافر');
+    $m->book_session($c, $st, '2026-11-05 12:00:00', 'reel', 1);
+    throws(function () use ($m, $c, $st) { $m->book_session($c, $st, '2026-11-10 12:00:00', 'reel', 1); }, '09/11 (بفترة السماح)');
+    ok($m->grace_days() === 15, 'الباقي على الإعداد العام');
+    $db->query("UPDATE tbldse_sessions SET status = 'cancelled' WHERE package_id = ?", [$pkg]);
     // باقة خلصت ومفيهاش رصيد ← بتقفل في ميعادها من غير سماح
     $m->fixed_time = strtotime('2026-09-01 10:00:00');
     $p2 = $m->create_package($c, 'Done', 1000, '2026-09-01', 10, ['design' => 1]);
@@ -499,6 +510,7 @@ test('حالة الصورة: باقة خلصت (Customize 15,000) ومدفوع �
     $db->insert('tbldse_usage', ['package_id' => $p2, 'type' => 'design', 'qty' => 1, 'reason' => 'post', 'created_at' => '2026-09-05 10:00:00']);
     $m->fixed_time = strtotime('2026-09-12 10:00:00');
     ok($m->sync_package_status($p2) === 'expired', 'من غير رصيد');
+    throws(function () use ($m, $p2) { $m->extend_grace($p2, 10); }, 'مفيهاش رصيد');
     // باقة قديمة اتقفلت قبل التحديث ولسه في السماح وفيها رصيد ← بترجع شغالة
     $m->fixed_time = strtotime('2026-09-01 10:00:00');
     $p3 = $m->create_package($c, 'Old', 1000, '2026-09-01', 10, ['reel' => 2]);
@@ -658,7 +670,7 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
     $html = render('client', $sum + ['studios' => $m->studios(), 'staff' => [], 'sessions' => $m->client_sessions($up), 'scripts' => [], 'posts' => [],
         'outbox' => [], 'invoices' => [], 'balances' => $balances, 'pkg_invoices' => $pi, 'pkg_events' => $pe, 'pkg_paid' => $pp, 'pkg_busy' => $pb, 'free_invoices' => [], 'pay_modes' => $m->payment_modes(), 'pkg_payments' => array_map(function ($p) use ($m) { return $m->package_payments($p['id']); }, array_column($sum['packages'], null, 'id'))]);
     file_put_contents(sys_get_temp_dir() . '/dse_client.html', $html);
-    ok(strpos($html, 'سجّل الدفعة') !== false && strpos($html, 'جدّد الاشتراك') !== false, 'زرار الدفعة والتجديد');
+    ok(strpos($html, 'سجّل الدفعة') !== false && strpos($html, 'جدّد الاشتراك') !== false && strpos($html, 'مدّ فترة السماح') !== false, 'زرار الدفعة والتجديد ومدّ السماح');
     ok(strpos($html, '<select name="historic"') !== false && strpos($html, 'type="checkbox" name="historic"') === false, 'نوع الباقة select مش checkbox (CSS بتاع Perfex بيخفي الـ checkbox)');
     ok(strpos($html, 'اربط فاتورة عملتها') !== false && strpos($html, 'ترقية / تعديل الباقة') !== false && strpos($html, 'احفظ الترقية') !== false, 'الزراير على الباقة الشغالة');
     $m->fixed_time = strtotime('2026-11-02 10:00:00');

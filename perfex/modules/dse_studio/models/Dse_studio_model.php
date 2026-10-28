@@ -201,16 +201,62 @@ class Dse_studio_model extends App_Model
     }
 
     /** أيام السماح بعد نهاية الباقة لو فيها رصيد (ريلز / تصميمات لسه ماتعملتش) */
-    public function grace_days()
+    /** أيام السماح: الخاصة بالباقة لو اتمدّت، وإلا الإعداد العام */
+    public function grace_days(array $p = null)
     {
+        if ($p && isset($p['grace_days']) && $p['grace_days'] !== null && $p['grace_days'] !== '') {
+            return max(0, (int) $p['grace_days']);
+        }
         return max(0, (int) $this->opt('dse_grace_days', 15));
+    }
+
+    /** آخر يوم في فترة السماح (لو فيها رصيد) */
+    public function grace_end(array $p)
+    {
+        return date('Y-m-d', strtotime($p['end_date'] . ' +' . $this->grace_days($p) . ' days'));
     }
 
     /** آخر يوم الباقة تفضل شغالة فيه: تاريخ النهاية، أو + فترة السماح لو لسه فيها رصيد */
     public function effective_end(array $p)
     {
         $left = array_sum(array_map(function ($b) { return $b['total'] - $b['used']; }, $this->balance($p['id'])));
-        return $left > 0.001 && $this->grace_days() ? date('Y-m-d', strtotime($p['end_date'] . ' +' . $this->grace_days() . ' days')) : $p['end_date'];
+        return $left > 0.001 && $this->grace_days($p) ? $this->grace_end($p) : $p['end_date'];
+    }
+
+    /** مدّ فترة السماح لباقة واحدة (عميل محتاج وقت أكتر يخلص رصيده) — بيرجّعها شغالة لو كانت اتقفلت */
+    public function extend_grace($package_id, $days, $note = null)
+    {
+        $this->ensure_renewal_columns();
+        $p    = $this->package($package_id);
+        $days = (int) $days;
+        if ($days < 1 || $days > 180) {
+            throw new Exception('اكتب عدد أيام من 1 لـ 180');
+        }
+        if ($p['status'] === 'cancelled' || $p['status'] === 'pending' || !empty($p['historic'])) {
+            throw new Exception('فترة السماح بتتمد على باقة اتفعلت وفيها رصيد بس');
+        }
+        $left = array_sum(array_map(function ($b) { return $b['total'] - $b['used']; }, $this->balance($p['id'])));
+        if ($left <= 0.001) {
+            throw new Exception('الباقة مفيهاش رصيد — مفيش حاجة تتمد ليها');
+        }
+        $before = $this->grace_end($p);
+        $new    = $this->grace_days($p) + $days;
+        $this->db->update($this->tbl('dse_packages'), ['grace_days' => $new], ['id' => $p['id']]);
+        $after = $this->grace_end($this->package($p['id']));
+        if ($after < $this->today()) {
+            $this->db->update($this->tbl('dse_packages'), ['grace_days' => $p['grace_days']], ['id' => $p['id']]);
+            throw new Exception('حتى بعد المدّ فترة السماح بتخلص ' . dse_day($after) . ' (عدّت) — زوّد الأيام');
+        }
+        $this->db->insert($this->tbl('dse_package_events'), [
+            'package_id' => $p['id'], 'event' => 'grace', 'old_price' => $p['price'], 'new_price' => $p['price'],
+            'old_end_date' => $before, 'new_end_date' => $after, 'note' => trim((string) $note) ?: ('مدّ فترة السماح ' . $days . ' يوم'),
+            'staff_id' => $this->staff_id(), 'created_at' => $this->now(),
+        ]);
+        if ($p['status'] === 'expired' && empty($p['activated_at'])) {
+            $this->db->update($this->tbl('dse_packages'), ['activated_at' => $p['start_date'] . ' 00:00:00'], ['id' => $p['id']]);
+        }
+        $this->sync_package_status($p['id']);
+        return $after;
     }
 
     /**
@@ -328,7 +374,7 @@ class Dse_studio_model extends App_Model
 
     public function sync_client_packages($clientid)
     {
-        foreach ($this->rows('SELECT id FROM ' . $this->tbl('dse_packages') . " WHERE clientid = ? AND (status IN ('pending','active') OR (status = 'expired' AND end_date >= ?))", [(int) $clientid, date('Y-m-d', strtotime($this->today() . ' -' . $this->grace_days() . ' days'))]) as $p) {
+        foreach ($this->rows('SELECT id FROM ' . $this->tbl('dse_packages') . " WHERE clientid = ? AND (status IN ('pending','active') OR (status = 'expired' AND end_date >= ?))", [(int) $clientid, date('Y-m-d', strtotime($this->today() . ' -' . ($this->grace_days() + 180) . ' days'))]) as $p) {
             $this->sync_package_status($p['id']);
         }
     }
@@ -1502,7 +1548,7 @@ class Dse_studio_model extends App_Model
     private function ensure_renewal_columns()
     {
         if (!self::$renewal_cols_checked && function_exists('dse_studio_add_missing_columns') && function_exists('get_instance')) {
-            dse_studio_add_missing_columns(['dse_clients' => ['renewal_status', 'renewal_note', 'renewal_updated_at'], 'dse_packages' => ['historic']]);
+            dse_studio_add_missing_columns(['dse_clients' => ['renewal_status', 'renewal_note', 'renewal_updated_at'], 'dse_packages' => ['historic', 'grace_days']]);
             self::$renewal_cols_checked = true;
         }
     }
@@ -1583,7 +1629,7 @@ class Dse_studio_model extends App_Model
 
     public function sync_all_packages()
     {
-        foreach ($this->rows('SELECT id FROM ' . $this->tbl('dse_packages') . " WHERE status IN ('pending','active') OR (status = 'expired' AND end_date >= ?)", [date('Y-m-d', strtotime($this->today() . ' -' . $this->grace_days() . ' days'))]) as $p) {
+        foreach ($this->rows('SELECT id FROM ' . $this->tbl('dse_packages') . " WHERE status IN ('pending','active') OR (status = 'expired' AND end_date >= ?)", [date('Y-m-d', strtotime($this->today() . ' -' . ($this->grace_days() + 180) . ' days'))]) as $p) {
             $this->sync_package_status($p['id']);
         }
     }

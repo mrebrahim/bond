@@ -258,6 +258,17 @@ class Dse_studio extends AdminController
         }, admin_url('dse_studio/client/' . $p['clientid']));
     }
 
+    /** مدّ فترة السماح لباقة واحدة */
+    public function extend_grace($package_id)
+    {
+        $m = $this->dse_studio_model;
+        $p = $m->package($package_id);
+        $this->act('edit', function () use ($m, $package_id) {
+            $end = $m->extend_grace($package_id, $this->post('days'), $this->post('note'));
+            return 'فترة السماح اتمدّت لحد ' . dse_day($end) . ' — تقدر تحجز للعميل لحد اليوم ده';
+        }, admin_url('dse_studio/client/' . $p['clientid']));
+    }
+
     public function unlink_invoice($package_id, $invoice_id)
     {
         $m = $this->dse_studio_model;

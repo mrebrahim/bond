@@ -59,7 +59,8 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                 <b><?= html_escape($p['name']); ?></b> · <?= dse_money($p['price']); ?> · <?= dse_day($p['start_date']); ?> ← <?= dse_day($p['end_date']); ?>
                 <span class="label label-<?= ['pending' => 'warning', 'active' => 'success', 'expired' => 'default', 'cancelled' => 'default'][$p['status']]; ?>"><?= dse_package_statuses()[$p['status']]; ?></span>
                 <?php if (!empty($p['historic'])) { ?><span class="label label-default">قديمة — قبل السيستم</span><?php } ?>
-                <?php if ($p['status'] === 'active' && $p['end_date'] < date('Y-m-d')) { ?><span class="label label-warning">⏳ فترة سماح لحد <?= dse_day(date('Y-m-d', strtotime($p['end_date'] . ' +' . (int) (get_option('dse_grace_days') !== '' ? get_option('dse_grace_days') : 15) . ' days'))); ?> علشان الرصيد اللي فاضل</span><?php } ?>
+                <?php $gdays = isset($p['grace_days']) && $p['grace_days'] !== null && $p['grace_days'] !== '' ? (int) $p['grace_days'] : (int) (get_option('dse_grace_days') !== '' ? get_option('dse_grace_days') : 15); $gend = date('Y-m-d', strtotime($p['end_date'] . ' +' . $gdays . ' days')); ?>
+                <?php if ($p['status'] === 'active' && $p['end_date'] < date('Y-m-d')) { ?><span class="label label-warning">⏳ فترة سماح لحد <?= dse_day($gend); ?> علشان الرصيد اللي فاضل<?= isset($p['grace_days']) && $p['grace_days'] !== null && $p['grace_days'] !== '' ? ' (اتمدّت)' : ''; ?></span><?php } ?>
               </div>
               <div class="small mtop5">
                 <?php if (!empty($p['historic'])) { ?>
@@ -102,7 +103,7 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                       $ni = json_decode($e['new_items'], true) ?: [];
                       $ch = [];
                       foreach ($ni as $t => $q) { if (($oi[$t] ?? 0) != $q) { $ch[] = dse_type_name($t) . ' ' . dse_num($oi[$t] ?? 0) . '←' . dse_num($q); } } ?>
-                    <div><?= $e['event'] === 'renew' ? '' : '⬆️ '; ?><?= ['upgrade' => 'ترقية', 'downgrade' => 'تخفيض', 'edit' => 'تعديل', 'renew' => '🔄 تجديد'][$e['event']] ?? $e['event']; ?> <?= dse_day($e['created_at']); ?>:
+                    <div><?= in_array($e['event'], ['renew', 'grace'], true) ? '' : '⬆️ '; ?><?= ['upgrade' => 'ترقية', 'downgrade' => 'تخفيض', 'edit' => 'تعديل', 'renew' => '🔄 تجديد', 'grace' => '⏳ مدّ السماح'][$e['event']] ?? $e['event']; ?> <?= dse_day($e['created_at']); ?>:
                       <?= implode(' · ', $ch); ?><?= $e['old_price'] != $e['new_price'] ? ' · السعر ' . dse_money($e['old_price']) . ' ← ' . dse_money($e['new_price']) : ''; ?>
                       <?= $e['old_end_date'] != $e['new_end_date'] ? ' · لحد ' . dse_day($e['new_end_date']) : ''; ?><?= $e['note'] ? ' — ' . html_escape($e['note']) : ''; ?></div>
                   <?php } ?>
@@ -172,6 +173,20 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                 </div>
               <?php } ?>
 
+              <?php $gleft = array_sum(array_map(function ($b) { return $b['total'] - $b['used']; }, $balances[$p['id']]));
+              if ($can_pkg && in_array($p['status'], ['active', 'expired'], true) && empty($p['historic']) && $gleft > 0.001) { ?>
+                <details class="dse-box">
+                  <summary>⏳ مدّ فترة السماح — دلوقتي لحد <?= dse_day($gend); ?> (<?= $gdays; ?> يوم بعد نهاية الباقة)</summary>
+                  <?= form_open(admin_url('dse_studio/extend_grace/' . $p['id']), ['class' => 'form-inline']); ?>
+                    <p class="small text-muted">للعميل اللي محتاج وقت أكتر يخلص الريلز والتصميمات اللي فاضلة — الباقة بتفضل (أو بترجع) شغالة وتقدر تحجز له لحد آخر يوم.</p>
+                    <label class="small">زوّد</label>
+                    <input type="number" name="days" min="1" max="180" value="15" class="form-control input-sm" style="width:80px" required>
+                    <label class="small">يوم</label>
+                    <input name="note" class="form-control input-sm" placeholder="السبب (العميل مسافر…)" style="min-width:180px">
+                    <button class="btn btn-warning btn-xs">مدّ</button>
+                  <?= form_close(); ?>
+                </details>
+              <?php } ?>
               <?php if ($can_pkg && in_array($p['status'], ['active', 'expired', 'pending'], true)) { $days = (int) round((strtotime($p['end_date']) - strtotime($p['start_date'])) / 86400) + 1; ?>
                 <details class="dse-box">
                   <summary>🔄 جدّد الاشتراك (الشهر الجاي)</summary>

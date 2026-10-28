@@ -50,6 +50,7 @@ function dse_studio_schema()
                 '`created_at` DATETIME NOT NULL',
                 '`activated_at` DATETIME NULL',
                 '`historic` TINYINT NOT NULL DEFAULT 0', // باقة قديمة قبل السيستم (اتدفعت واتصرفت برا)
+                '`grace_days` INT NULL',                 // فترة سماح خاصة بالباقة دي (NULL = الإعداد العام 15)
             ],
             'indexes' => ['idx_dse_packages_client' => '(`clientid`, `status`)'],
         ],
@@ -245,7 +246,7 @@ function dse_studio_default_options()
 
 if (!defined('DSE_STUDIO_SCHEMA_VERSION')) {
 /** نسخة الجداول — زوّدها مع أي جدول جديد */
-    define('DSE_STUDIO_SCHEMA_VERSION', '5');
+    define('DSE_STUDIO_SCHEMA_VERSION', '6');
 }
 
 if (!function_exists('dse_studio_ensure_schema')) {
