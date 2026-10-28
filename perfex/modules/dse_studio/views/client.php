@@ -436,6 +436,22 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
           <?php } ?>
         </div></div>
       </div>
+<?php if (is_admin() && isset($data_counts)) { ?>
+      <div class="col-md-12">
+  <div class="panel_s"><div class="panel-body">
+    <details>
+      <summary class="text-danger bold" style="cursor:pointer">🗑 امسح العميل من الاستوديو (اتضاف أو اتسجل بالغلط)</summary>
+      <p class="mtop10">هيتمسح من الـ module: <b><?= (int) $data_counts['packages']; ?></b> باقة (جديدة وقديمة) · <b><?= (int) $data_counts['sessions']; ?></b> جلسة · <b><?= (int) $data_counts['scripts']; ?></b> سكربت · <b><?= (int) $data_counts['posts']; ?></b> بوست · <b><?= (int) $data_counts['messages']; ?></b> رسالة واتساب · والتنبيهات وربط الجروب.
+        <br><span class="text-muted">العميل نفسه وفواتيره ودفعاته في Perfex <b>مش هيتمسحوا</b> (لو عايز تمسحه خالص امسحه من العملاء في Perfex). مفيش رجوع.</span></p>
+      <?= form_open(admin_url('dse_studio/delete_client/' . $cid), ['class' => 'form-inline', 'onsubmit' => "return confirm('متأكد؟ مفيش رجوع')"]); ?>
+        <label>للتأكيد اكتب كود العميل <b dir="ltr"><?= html_escape($client['code']); ?></b></label>
+        <input name="confirm" class="form-control input-sm" dir="ltr" style="width:100px" required autocomplete="off">
+        <button class="btn btn-danger btn-sm">امسح العميل من الاستوديو</button>
+      <?= form_close(); ?>
+    </details>
+  </div></div>
+      </div>
+<?php } ?>
     </div>
   </div>
 </div>

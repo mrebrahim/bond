@@ -84,17 +84,45 @@ class Dse_evolution
         return [$jid, $link];
     }
 
+    /**
+     * لينك جروب ← JID. بيقبل كمان الـ JID نفسه (1203...@g.us).
+     * لو رقم السيستم مش عضو في الجروب (جروبات العملاء القدام اللي اتعملت من موبايل)، بيدخّله الجروب باللينك (acceptInviteCode).
+     */
     public function group_from_link($link)
     {
-        $parts = explode('/', trim((string) $link));
+        $link = trim((string) $link);
+        if (preg_match('/^\d[\d-]{8,}@g\.us$/', $link)) {
+            return [$link, null];
+        }
+        $parts = explode('/', $link);
         $code  = explode('?', end($parts))[0];
         if (!preg_match('/^[A-Za-z0-9]{10,}$/', $code)) {
             throw new Exception('ده مش لينك جروب واتساب صحيح (https://chat.whatsapp.com/...)');
         }
-        $info = $this->request('GET', '/group/inviteInfo/{instance}?inviteCode=' . $code);
-        $jid  = (string) ($info['id'] ?? '');
-        if (substr($jid, -5) !== '@g.us') {
-            throw new Exception('مقدرتش أوصل للجروب — اتأكد إن رقم السيستم عضو فيه');
+        $pick = function ($r) {
+            foreach ([$r['id'] ?? null, $r['jid'] ?? null, $r['groupJid'] ?? null, $r['data']['id'] ?? null, $r['group']['id'] ?? null] as $v) {
+                if (is_string($v) && substr($v, -5) === '@g.us') {
+                    return $v;
+                }
+            }
+            return '';
+        };
+        $jid = '';
+        $why = '';
+        try {
+            $jid = $pick($this->request('GET', '/group/inviteInfo/{instance}?inviteCode=' . $code));
+        } catch (Exception $e) {
+            $why = $e->getMessage();
+        }
+        if ($jid === '') { // رقم السيستم مش في الجروب ← يدخل باللينك
+            try {
+                $jid = $pick($this->request('GET', '/group/acceptInviteCode/{instance}?inviteCode=' . $code));
+            } catch (Exception $e) {
+                $why = $e->getMessage();
+            }
+        }
+        if ($jid === '') {
+            throw new Exception('مقدرتش أوصل للجروب — اتأكد إن اللينك شغال (مش متقفل أو اتغيّر) وإن رقم السيستم مش محظور فيه، أو ضيف رقم السيستم للجروب بإيدك واربط تاني' . ($why ? ' (' . $why . ')' : ''));
         }
         return [$jid, 'https://chat.whatsapp.com/' . $code];
     }

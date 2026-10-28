@@ -562,7 +562,8 @@ class Dse_studio_model extends App_Model
     /** الباقة اتسجل عليها حاجة؟ (جلسات / خصم / نشر) — لو آه مينفعش تتمسح، تتلغي بس */
     public function package_has_activity($package_id)
     {
-        foreach (['dse_usage' => '', 'dse_posts' => '', 'dse_sessions' => " AND status <> 'cancelled'"] as $t => $extra) {
+        // الخصم الوهمي بتاع "باقة قديمة" مش شغل حقيقي ← ميمنعش المسح
+        foreach (['dse_usage' => " AND NOT (reason = 'manual' AND note = 'باقة قديمة قبل السيستم')", 'dse_posts' => '', 'dse_sessions' => " AND status <> 'cancelled'"] as $t => $extra) {
             if ($this->row('SELECT id FROM ' . $this->tbl($t) . ' WHERE package_id = ?' . $extra . ' LIMIT 1', [(int) $package_id])) {
                 return true;
             }
@@ -604,11 +605,46 @@ class Dse_studio_model extends App_Model
         if ($this->package_has_activity($p['id'])) {
             throw new Exception('الباقة دي اتسجل عليها شغل (تصوير / نشر / خصم) — مينفعش تتمسح، الغيها بدل كده');
         }
-        foreach (['dse_package_items', 'dse_package_invoices', 'dse_package_events', 'dse_sessions'] as $t) {
+        foreach (['dse_package_items', 'dse_package_invoices', 'dse_package_events', 'dse_sessions', 'dse_usage'] as $t) {
             $this->db->query('DELETE FROM ' . $this->tbl($t) . ' WHERE package_id = ?', [$p['id']]);
         }
         $this->db->query('DELETE FROM ' . $this->tbl('dse_packages') . ' WHERE id = ?', [$p['id']]);
         return $p['clientid'];
+    }
+
+    /** اللي هيتمسح لو العميل اتمسح من الاستوديو (للتأكيد قبل المسح) */
+    public function client_data_counts($clientid)
+    {
+        $pk  = array_column($this->rows('SELECT id FROM ' . $this->tbl('dse_packages') . ' WHERE clientid = ?', [(int) $clientid]), 'id');
+        $cnt = function ($t, $where, $b) { return (int) ($this->row('SELECT COUNT(*) n FROM ' . $this->tbl($t) . ' WHERE ' . $where, $b)['n'] ?? 0); };
+        return [
+            'packages' => count($pk), 'sessions' => $cnt('dse_sessions', 'clientid = ?', [(int) $clientid]),
+            'scripts' => $cnt('dse_scripts', 'clientid = ?', [(int) $clientid]), 'posts' => $cnt('dse_posts', 'clientid = ?', [(int) $clientid]),
+            'messages' => $cnt('dse_wa_outbox', 'clientid = ?', [(int) $clientid]),
+        ];
+    }
+
+    /**
+     * امسح العميل من الاستوديو (اتضاف أو اتسجل بالغلط): الباقات والجلسات والسكربتات والنشر والرسايل والتنبيهات.
+     * العميل نفسه وفواتيره ودفعاته في Perfex مبيتلمسوش. لازم يكتب كود العميل (C017) للتأكيد.
+     */
+    public function delete_client_data($clientid, $confirm)
+    {
+        $c = $this->client($clientid);
+        if (strtoupper(trim((string) $confirm)) !== $c['code']) {
+            throw new Exception('للتأكيد اكتب كود العميل ' . $c['code'] . ' بالظبط');
+        }
+        $counts = $this->client_data_counts($clientid);
+        $pk     = array_column($this->rows('SELECT id FROM ' . $this->tbl('dse_packages') . ' WHERE clientid = ?', [(int) $clientid]), 'id');
+        foreach ($pk as $id) {
+            foreach (['dse_package_items', 'dse_package_invoices', 'dse_package_events', 'dse_usage'] as $t) {
+                $this->db->query('DELETE FROM ' . $this->tbl($t) . ' WHERE package_id = ?', [(int) $id]);
+            }
+        }
+        foreach (['dse_packages', 'dse_sessions', 'dse_scripts', 'dse_posts', 'dse_wa_outbox', 'dse_alerts', 'dse_clients'] as $t) {
+            $this->db->query('DELETE FROM ' . $this->tbl($t) . ' WHERE clientid = ?', [(int) $clientid]);
+        }
+        return $counts;
     }
 
     // =================================================================

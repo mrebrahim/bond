@@ -100,6 +100,7 @@ class Dse_studio extends AdminController
         $data['invoices'] = $this->db->query('SELECT id, prefix, number, total, status, date FROM ' . db_prefix() . 'invoices WHERE clientid = ? ORDER BY id DESC LIMIT 30', [(int) $id])->result_array();
         $data['balances'] = $data['pkg_invoices'] = $data['pkg_events'] = $data['pkg_paid'] = $data['pkg_busy'] = $data['pkg_payments'] = [];
         $data['pay_modes'] = $this->dse_studio_model->payment_modes();
+        $data['data_counts'] = $this->dse_studio_model->client_data_counts($id);
         $linked = [];
         foreach ($data['packages'] as $p) {
             $data['balances'][$p['id']]     = $this->dse_studio_model->balance($p['id']);
@@ -267,6 +268,22 @@ class Dse_studio extends AdminController
             $end = $m->extend_grace($package_id, 7 * (int) $this->post('weeks'), $this->post('note'), (array) $this->input->post('left'));
             return 'فترة السماح اتمدّت لحد ' . dse_day($end) . ' — تقدر تحجز للعميل لحد اليوم ده';
         }, admin_url('dse_studio/client/' . $p['clientid']));
+    }
+
+    /** امسح العميل من الاستوديو (الأدمن بس) — Perfex نفسه مبيتلمسش */
+    public function delete_client($clientid)
+    {
+        if (!is_admin()) {
+            access_denied(DSE_STUDIO_MODULE_NAME);
+        }
+        try {
+            $n = $this->dse_studio_model->delete_client_data($clientid, $this->input->post('confirm'));
+            set_alert('success', 'العميل اتمسح من الاستوديو: ' . $n['packages'] . ' باقة · ' . $n['sessions'] . ' جلسة · ' . $n['scripts'] . ' سكربت · ' . $n['posts'] . ' بوست · ' . $n['messages'] . ' رسالة — العميل وفواتيره في Perfex زي ما هم');
+            redirect(admin_url('dse_studio'));
+        } catch (Exception $e) {
+            set_alert('danger', $e->getMessage());
+            redirect(admin_url('dse_studio/client/' . (int) $clientid));
+        }
     }
 
     public function unlink_invoice($package_id, $invoice_id)

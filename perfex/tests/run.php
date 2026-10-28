@@ -87,6 +87,7 @@ $evo->transport = function ($method, $url, $body) use (&$sent) {
     }
     if (strpos($url, '/group/create/') !== false) { $GLOBALS['group_members'] = $body['participants']; return [201, ['id' => '120363000000000001@g.us']]; }
     if (strpos($url, '/group/inviteCode/') !== false) { return [200, ['inviteCode' => 'AbCdEfGhIj12']]; }
+    if (strpos($url, '/group/acceptInviteCode/') !== false) { return [200, ['accepted' => true, 'groupJid' => '120363000000000555@g.us']]; }
     if (strpos($url, '/group/updateParticipant/') !== false) { return [200, ['ok' => true, 'n' => count($body['participants'])]]; }
     return [404, []];
 };
@@ -616,6 +617,37 @@ test('العملاء القدام: باقة قديمة (خلصت) ← "مستن�
     $db->query("UPDATE tbldse_packages SET status = 'cancelled' WHERE clientid IN (?, ?)", [$c, $c2]);
     $m->fixed_time = $save;
 });
+
+test('مسح: الباقة القديمة بتتمسح (الخصم الوهمي مش شغل) · امسح العميل من الاستوديو بكود التأكيد وPerfex زي ما هو', function () use ($m, $db) {
+    $db->insert('tblclients', ['company' => 'اتضاف غلط']); $c = $db->insert_id();
+    $h = $m->create_package($c, 'Old', 5000, '2026-08-01', 30, ['reel' => 6], null, null, true);
+    ok(!$m->package_has_activity($h), 'القديمة ينفع تتمسح');
+    $m->delete_package($h);
+    ok(!q('SELECT id FROM tbldse_packages WHERE id = ?', [$h]) && !q('SELECT id FROM tbldse_usage WHERE package_id = ?', [$h]));
+    $h = $m->create_package($c, 'Old', 5000, '2026-08-01', 30, ['reel' => 6], null, null, true);
+    $n = $m->create_package($c, 'New', 3000, '2026-11-01', 30, ['reel' => 4]);
+    $m->record_payment($n, 3000);
+    $m->save_client_wa($c, ['wa_group_jid' => '120363000000000111@g.us']);
+    $st = q('SELECT id FROM tbldse_studios LIMIT 1')[0]['id'];
+    $m->book_session($c, $st, '2026-11-20 12:00:00', 'reel', 1);
+    $code = dse_client_code($c);
+    throws(function () use ($m, $c) { $m->delete_client_data($c, 'غلط'); }, 'اكتب كود العميل');
+    $cnt = $m->delete_client_data($c, strtolower($code));
+    ok($cnt['packages'] === 2 && $cnt['sessions'] === 1 && $cnt['messages'] >= 1, json_encode($cnt));
+    foreach (['dse_packages', 'dse_sessions', 'dse_wa_outbox', 'dse_clients', 'dse_alerts'] as $t) { ok(!q("SELECT * FROM tbl$t WHERE clientid = ?", [$c]), $t); }
+    ok(q('SELECT userid FROM tblclients WHERE userid = ?', [$c]) && q('SELECT id FROM tblinvoices WHERE clientid = ?', [$c]), 'العميل وفواتيره في Perfex موجودين');
+    ok(!q('SELECT id FROM tbldse_package_items WHERE package_id IN (?, ?)', [$h, $n]));
+});
+test('ربط جروب لعميل باقته خلصت: رقم السيستم مش في الجروب ← بيدخل باللينك ويتربط · أو بالـ JID على طول', function () use ($m, $db) {
+    $db->insert('tblclients', ['company' => 'جروب قديم']); $c = $db->insert_id();
+    $m->create_package($c, 'Old', 5000, '2026-08-01', 30, ['reel' => 6], null, null, true);
+    $jid = $m->link_group($c, 'https://chat.whatsapp.com/AbCdEfGhIj12XyZ');
+    ok($jid === '120363000000000555@g.us' && $m->client($c)['wa_group_jid'] === $jid, $jid);
+    $db->query('DELETE FROM tbldse_clients WHERE clientid = ?', [$c]);
+    ok($m->link_group($c, '120363000000000777@g.us') === '120363000000000777@g.us');
+    throws(function () use ($m, $c) { $m->link_group($c, 'مش لينك'); }, 'مش لينك جروب');
+    $db->query("UPDATE tbldse_packages SET status = 'cancelled' WHERE clientid = ?", [$c]);
+});
 echo "\nالتنبيهات:\n";
 test('العميل بقاله فترة مابيصوّرش → تنبيه مرة واحدة، urgent لو مفيش نشر', function () use ($m, $client, $db) {
     ok(count($m->check_inactive_clients()) === 0, 'لسه بادئ');
@@ -709,9 +741,9 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
         'balances' => $one(function ($p) use ($m) { return $m->balance($p['id']); }), 'pkg_invoices' => $one(function ($p) use ($m) { return $m->package_invoices($p['id']); }),
         'pkg_events' => $one(function ($p) use ($m) { return $m->package_events($p['id']); }), 'pkg_paid' => $one(function ($p) use ($m) { return $m->package_paid_amount($p); }),
         'pkg_busy' => $one(function ($p) use ($m) { return $m->package_has_activity($p['id']); }), 'pkg_payments' => $one(function ($p) use ($m) { return $m->package_payments($p['id']); }),
-        'free_invoices' => [['id' => 99, 'prefix' => 'INV-', 'number' => 9, 'total' => 1000, 'status' => 2]], 'pay_modes' => $m->payment_modes()]);
+        'free_invoices' => [['id' => 99, 'prefix' => 'INV-', 'number' => 9, 'total' => 1000, 'status' => 2]], 'pay_modes' => $m->payment_modes(), 'data_counts' => $m->client_data_counts($rc)]);
     file_put_contents(sys_get_temp_dir() . '/dse_client_historic.html', $hh);
-    ok(strpos($hh, 'مدفوع <b>2,500') !== false && strpos($hh, 'سجّل دفعة على الباقة دي (حتى لو خلصت)') !== false && strpos($hh, 'اربط فاتورة عملتها في Perfex') !== false && strpos($hh, 'قسط قديم') !== false && strpos($hh, 'name="left[reel]"') !== false && strpos($hh, '<option value="4">4 أسابيع') !== false, 'القديمة: دفعات وفواتير ومدّ السماح');
+    ok(strpos($hh, 'مدفوع <b>2,500') !== false && strpos($hh, 'سجّل دفعة على الباقة دي (حتى لو خلصت)') !== false && strpos($hh, 'اربط فاتورة عملتها في Perfex') !== false && strpos($hh, 'قسط قديم') !== false && strpos($hh, 'name="left[reel]"') !== false && strpos($hh, '<option value="4">4 أسابيع') !== false && strpos($hh, 'امسح العميل من الاستوديو') !== false, 'القديمة: دفعات وفواتير ومدّ السماح');
     $rn = render('renewals', ['rows' => $m->renewals(''), 'status' => '']);
     ok(strpos($rn, 'عيادة د. سامي') !== false && strpos($rn, 'ابعت طلب التجديد') !== false && strpos($rn, 'آخر طلب') !== false && strpos($rn, 'قديمة') !== false, 'صف التجديد');
     file_put_contents(sys_get_temp_dir() . '/dse_renewals.html', $rn);
