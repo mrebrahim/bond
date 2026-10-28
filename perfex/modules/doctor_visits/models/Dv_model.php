@@ -16,6 +16,7 @@ class Dv_model extends App_Model
 
     /** @var array إشعارات للمندوب بعد آخر عملية (Toast / Level up / Milestones) */
     public $feedback = [];
+    public $system = false; // true من الـ cron: يشوف كل الدكاترة
 
     // ================================================================= أدوات
     private function t()
@@ -67,7 +68,7 @@ class Dv_model extends App_Model
     /** المندوب يشوف دكاترته بس لو صلاحيته view_own */
     public function can_see_all()
     {
-        if (!function_exists('staff_can')) {
+        if ($this->system || !function_exists('staff_can')) { // الـ cron مفيهوش مستخدم داخل
             return true;
         }
         return (function_exists('is_admin') && is_admin()) || staff_can('view', DOCTOR_VISITS_MODULE_NAME);
@@ -492,6 +493,92 @@ class Dv_model extends App_Model
             $this->autocheck($id, 'follow_4', 'second_visit', $staff);
         }
         $this->path_auto_from_meta($id, $staff);
+    }
+
+    /**
+     * تقرير المسار للمدير (F9 US4): لكل دكتور نسبة التقدم، الخطوة الحالية، آخر بند اتعلّم إمتى، و"واقف"
+     * واقف = المسار مخلصش ومفيش أي علامة من path_stalled_days يوم (من آخر علامة أو من يوم ما الدكتور اتضاف)
+     * $f: staff_id, building_id, step (key الخطوة الحالية), stalled (1)
+     */
+    public function path_report(array $f = [])
+    {
+        $steps = $this->path_steps('lead');
+        $days  = max(1, (int) $this->setting('path_stalled_days', 0, 3));
+        $docs  = $this->doctors(array_filter(['staff_id' => $f['staff_id'] ?? null, 'building_id' => $f['building_id'] ?? null]));
+        $checked = [];
+        $last    = [];
+        foreach ($this->rows('SELECT c.lead_id, c.item_id, c.checked, c.created_at FROM ' . $this->tbl('dv_path_checks') . ' c WHERE c.lead_id IS NOT NULL') as $c) {
+            if ((int) $c['checked']) {
+                $checked[(int) $c['lead_id']][(int) $c['item_id']] = 1;
+            }
+            $l = (int) $c['lead_id'];
+            if (!isset($last[$l]) || $c['created_at'] > $last[$l]) {
+                $last[$l] = $c['created_at'];
+            }
+        }
+        $total = array_sum(array_map(function ($s) { return count($s['items']); }, $steps));
+        $out   = [];
+        $dist  = [];
+        $n_stalled = 0;
+        foreach ($docs as $d) {
+            $l    = (int) $d['lead_id'];
+            $done = 0;
+            $cur  = null;
+            $cur_done = 0;
+            foreach ($steps as $s) {
+                $n = 0;
+                foreach ($s['items'] as $it) {
+                    $n += isset($checked[$l][(int) $it['id']]) ? 1 : 0;
+                }
+                $done += $n;
+                if (!$cur && $n < count($s['items'])) {
+                    $cur      = $s;
+                    $cur_done = $n;
+                }
+            }
+            $since   = $last[$l] ?? ($d['created_at'] ?: null);
+            $stalled = $cur && !$d['lost'] && $since && ($this->t() - strtotime($since)) >= $days * 86400;
+            $row = [
+                'lead_id' => $l, 'name' => $d['name'], 'building' => $d['building'], 'specialty' => $d['specialty'], 'stage' => (int) $d['stage'],
+                'lost' => $d['lost'], 'staff_id' => (int) $d['assigned_staff_id'], 'staff' => $this->staff_name($d['assigned_staff_id']),
+                'done' => $done, 'total' => $total, 'pct' => $total ? (int) round(100 * $done / $total) : 0,
+                'step_key' => $cur['key'] ?? 'done', 'step' => $cur ? (int) $cur['sort'] . ' ' . $cur['title'] : _l('dv_path_all_done_short'),
+                'step_done' => $cur_done, 'step_total' => $cur ? count($cur['items']) : 0,
+                'last_check' => $last[$l] ?? null, 'stalled' => $stalled, 'stalled_days' => $stalled ? (int) floor(($this->t() - strtotime($since)) / 86400) : 0,
+                'stalled_since' => $stalled ? date('Y-m-d H:i:s', strtotime($since) + $days * 86400) : null,
+            ];
+            $dist[$row['step_key']] = ($dist[$row['step_key']] ?? 0) + 1;
+            $n_stalled += $stalled ? 1 : 0;
+            if (!empty($f['step']) && $f['step'] !== $row['step_key']) {
+                continue;
+            }
+            if (!empty($f['stalled']) && !$stalled) {
+                continue;
+            }
+            $out[] = $row;
+        }
+        usort($out, function ($a, $b) { return [$b['stalled'], $b['stalled_days'], $a['pct']] <=> [$a['stalled'], $a['stalled_days'], $b['pct']]; });
+        $all = count($docs);
+        return [
+            'rows' => $out, 'steps' => $steps, 'dist' => $dist, 'days' => $days, 'total' => $total,
+            'kpi' => [
+                'doctors' => $all,
+                'avg' => $all ? (int) round(array_sum(array_map(function ($d) use ($checked, $total) { return $total ? 100 * count($checked[(int) $d['lead_id']] ?? []) / $total : 0; }, $docs)) / $all) : 0,
+                'stalled' => $n_stalled,
+                'complete' => $dist['done'] ?? 0,
+            ],
+        ];
+    }
+
+    /** الـ cron: بيحدّث path_stalled_since علشان يبان في أي مكان تاني */
+    public function path_mark_stalled()
+    {
+        $n = 0;
+        foreach ($this->path_report()['rows'] as $r) {
+            $this->db->update($this->tbl('dv_doctor_meta'), ['path_stalled_since' => $r['stalled_since']], ['lead_id' => $r['lead_id']]);
+            $n += $r['stalled'] ? 1 : 0;
+        }
+        return $n;
     }
 
     /** Proposal اتعمل للـ Lead في Perfex ← close_9 + close_4 (بيتنادى من الـ cron) */

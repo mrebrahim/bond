@@ -731,6 +731,31 @@ test('الشاشات: كارت المسار في صفحة الدكتور · دل
     ok($j['ok'] === false && strpos($j['error'], 'مش من دكاترتك') !== false);
     $GLOBALS['ME'] = 1; $GLOBALS['CAN_ALL'] = true;
 });
+
+test('تقرير المسار للمدير: التقدم والخطوة الحالية وآخر علامة · فلتر مندوب/عمارة/خطوة · "واقف" بعد 3 أيام · المندوب مبيشوفهوش', function () use ($M, &$PL) {
+    $GLOBALS['ME'] = 1; $GLOBALS['CAN_ALL'] = true;
+    $r = $M->path_report();
+    $x = array_values(array_filter($r['rows'], function ($x) use ($PL) { return $x['lead_id'] === $PL; }))[0];
+    ok($x['total'] === 53 && $x['done'] === $M->path_card($PL)['done'] && $x['step_key'] === 'time' && $x['staff'] === 'Andrew Isaac' && $x['last_check'] && !$x['stalled'], json_encode($x, JSON_UNESCAPED_UNICODE));
+    ok($r['kpi']['doctors'] === count($r['rows']) && ($r['dist']['time'] ?? 0) >= 1, json_encode($r['kpi']));
+    ok(count($M->path_report(['staff_id' => 8])['rows']) === count(array_filter($r['rows'], function ($x) { return $x['staff_id'] === 8; })));
+    ok(array_column($M->path_report(['step' => 'time'])['rows'], 'step_key') === array_fill(0, count($M->path_report(['step' => 'time'])['rows']), 'time'));
+    $M->fixed_time = time() + 4 * 86400;
+    $r = $M->path_report(['stalled' => 1]);
+    ok(in_array($PL, array_column($r['rows'], 'lead_id'), true) && $r['rows'][0]['stalled'] && $r['kpi']['stalled'] >= 1, json_encode(array_slice($r['rows'], 0, 1), JSON_UNESCAPED_UNICODE));
+    $M->system = true; $GLOBALS['CAN_ALL'] = false; $GLOBALS['ME'] = 0;
+    ok($M->path_mark_stalled() >= 1 && q('SELECT path_stalled_since FROM tbldv_doctor_meta WHERE lead_id = ?', [$PL])[0]['path_stalled_since'], 'الـ cron شايف كل الدكاترة');
+    $M->system = false; $GLOBALS['CAN_ALL'] = true; $GLOBALS['ME'] = 1;
+    $h = page('path', ['report'], 'path');
+    file_put_contents(sys_get_temp_dir() . '/dv_path_report.html', $h);
+    ok(strpos($h, _l('dv_pr_where')) !== false && strpos($h, 'واقف') !== false && strpos($h, 'د/ مسار') !== false, substr($h, 0, 200));
+    $M->path_toggle($PL, 'time_4', true);
+    ok(q('SELECT path_stalled_since FROM tbldv_doctor_meta WHERE lead_id = ?', [$PL])[0]['path_stalled_since'] === null, 'علامة جديدة بتشيل "واقف"');
+    $M->fixed_time = null;
+    $GLOBALS['CAN_ALL'] = false; $GLOBALS['ME'] = 7;
+    try { (new Doctor_visits())->path('report'); ok(false, 'المندوب شاف التقرير'); } catch (Exception $e) { ok($e->getMessage() === 'denied', $e->getMessage()); }
+    $GLOBALS['CAN_ALL'] = true; $GLOBALS['ME'] = 1;
+});
 restore_error_handler();
 
 echo "\nالـ API (n8n):\n";

@@ -424,6 +424,40 @@ class Dse_studio extends AdminController
         $this->act('view', function () use ($m, $id) { $m->resolve_alert($id, $this->post('resolution')); return 'التنبيه اتقفل'; }, admin_url('dse_studio/alerts'));
     }
 
+    /** رسايل الواتساب للعميل: تعديل النص + معاينة + رجوع للأصلي */
+    public function messages()
+    {
+        if (!is_admin()) {
+            access_denied(DSE_STUDIO_MODULE_NAME);
+        }
+        $key = (string) $this->input->post('key');
+        if ($key !== '') {
+            try {
+                dse_wa_validate($key, 'x'); // الرسالة نفسها معروفة
+                if ($this->input->post('reset')) {
+                    update_option('dse_wa_tpl_' . $key, '');
+                    set_alert('success', 'رجعت للنص الأصلي: ' . dse_wa_labels()[$key]);
+                } else {
+                    $body = trim(str_replace("\r\n", "\n", (string) $this->input->post('body', false)));
+                    dse_wa_validate($key, $body);
+                    update_option('dse_wa_tpl_' . $key, $body === dse_wa_defaults()[$key] ? '' : $body);
+                    set_alert('success', 'اتحفظت: ' . dse_wa_labels()[$key] . ' — الرسايل الجاية هتطلع بالنص الجديد');
+                }
+            } catch (Exception $e) {
+                set_alert('danger', $e->getMessage());
+            }
+            redirect(admin_url('dse_studio/messages#m-' . $key));
+        }
+        $list = [];
+        foreach (dse_wa_defaults() as $k => $def) {
+            $list[$k] = [
+                'label' => dse_wa_labels()[$k] ?? $k, 'auto' => !isset(dse_manual_keys()[$k]), 'body' => dse_wa_template($k), 'default' => $def,
+                'edited' => trim((string) get_option('dse_wa_tpl_' . $k)) !== '', 'vars' => dse_wa_vars($k), 'preview' => dse_wa_text($k, dse_wa_sample($k)),
+            ];
+        }
+        $this->load->view('messages', ['title' => _l('dse_menu_messages'), 'list' => $list]);
+    }
+
     public function test_wa()
     {
         if (!is_admin()) {

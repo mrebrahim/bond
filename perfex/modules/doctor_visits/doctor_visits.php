@@ -5,7 +5,7 @@ defined('BASEPATH') or exit('No direct script access allowed');
 /*
 Module Name: Doctor Visits Tracker — زيارات الدكاترة
 Description: تسجيل زيارات العيادات من الموبايل في أقل من 30 ثانية، سلم المراحل، قيمة كل زيارة، الحافز والـ XP، الـ QR والواتساب، والتقارير.
-Version: 1.4.0
+Version: 1.5.0
 Requires at least: 3.0.*
 Author: Digital Solution
 */
@@ -59,6 +59,7 @@ function doctor_visits_admin_init()
             ['doctor-visits-dashboard', 'dv_menu_dashboard', 'doctor_visits/dashboard', null],
             ['doctor-visits-buildings', 'dv_menu_buildings', 'doctor_visits/buildings', null],
             ['doctor-visits-reports', 'dv_menu_reports', 'doctor_visits/reports', null],
+            ['doctor-visits-path-report', 'dv_menu_path_report', 'doctor_visits/path/report', 'view'],
             ['doctor-visits-import', 'dv_menu_import', 'doctor_visits/import', 'create'],
             ['doctor-visits-settings', 'dv_menu_settings', 'doctor_visits/settings', 'manage_settings'],
         ];
@@ -115,8 +116,10 @@ function doctor_visits_cron()
     update_option('dv_last_daily', date('Y-m-d'));
     $CI = &get_instance();
     $CI->load->model(DOCTOR_VISITS_MODULE_NAME . '/dv_model');
+    $CI->dv_model->system = true;
     try {
         $CI->dv_model->path_auto_proposals(); // F9: Proposal اتعمل للدكتور ← بند "ابعت العرض كـ Proposal"
+        $CI->dv_model->path_mark_stalled();   // F9: علامة "واقف"
         $count = [];
         foreach ($CI->dv_model->followups_due() as $d) {
             $count[(int) $d['assigned_staff_id']] = ($count[(int) $d['assigned_staff_id']] ?? 0) + 1;
@@ -129,5 +132,6 @@ function doctor_visits_cron()
     } catch (Exception $e) {
         log_message('error', 'doctor_visits cron: ' . $e->getMessage());
     }
+    $CI->dv_model->system = false;
 }
 

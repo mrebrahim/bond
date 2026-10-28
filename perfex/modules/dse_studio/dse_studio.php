@@ -5,7 +5,7 @@ defined('BASEPATH') or exit('No direct script access allowed');
 /*
 Module Name: Digital Solution — الاستوديو والباقات
 Description: رصيد الباقات، حجز الاستوديو، السكربتات والنشر، جروبات واتساب العملاء (Evolution API)، وتنبيه العميل اللي مابيصوّرش.
-Version: 1.0.1
+Version: 1.0.2
 Requires at least: 3.0.*
 Author: Digital Solution
 */
@@ -64,7 +64,8 @@ function dse_studio_admin_init()
             ['dse-studio-outbox', 'dse_menu_outbox', 'dse_studio/outbox', 4],
         ];
         if (is_admin()) {
-            $children[] = ['dse-studio-settings', 'dse_menu_settings', 'dse_studio/settings', 5];
+            $children[] = ['dse-studio-messages', 'dse_menu_messages', 'dse_studio/messages', 5];
+            $children[] = ['dse-studio-settings', 'dse_menu_settings', 'dse_studio/settings', 6];
         }
         foreach ($children as $c) {
             $CI->app_menu->add_sidebar_children_item('dse-studio', [

@@ -351,6 +351,14 @@ class Doctor_visits extends AdminController
     {
         $this->need_view();
         $ajax = $this->input->post('ajax') || strtolower((string) $this->input->get_request_header('X-Requested-With')) === 'xmlhttprequest';
+        if ($action === 'report') { // للمدير بس
+            $this->need('view');
+            $f = ['staff_id' => (int) $this->input->get('staff_id') ?: null, 'building_id' => (int) $this->input->get('building_id') ?: null,
+                'step' => $this->input->get('step') ?: null, 'stalled' => $this->input->get('stalled') ? 1 : null];
+            $this->view('path_report', ['title' => _l('dv_menu_path_report'), 'r' => $this->dv_model->path_report($f), 'f' => $f,
+                'staff' => $this->staff_list(), 'buildings' => $this->dv_model->buildings()]);
+            return;
+        }
         if ($action === 'lead') {
             $this->view('_path_card', ['path' => $this->dv_model->path_card((int) $id), 'lead_id' => (int) $id]);
             return;

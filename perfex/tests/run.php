@@ -535,5 +535,29 @@ test('لو Perfex ماشغّلش الـ migration: الجداول الناقصة
     ok(count(q('SELECT id FROM tbldse_package_invoices')) === 1, 'مفيش تكرار');
 });
 
+
+echo "\nرسايل الواتساب (تتعدّل):\n";
+test('النص الأصلي زي ما كان · التعديل بيمشي على الرسايل الجاية · السطر اللي متغيراته فاضية بيتشال · رجوع للأصلي · متغير غلط بيترفض', function () use ($m) {
+    $p = ['start' => '2026-11-03 17:00:00', 'qty' => 3, 'type' => 'reel', 'studio' => '', 'outfits' => 0];
+    ok(dse_wa_text('session_booked', $p) === "تم حجز ميعاد التصوير ✅\n📅 " . dse_day('2026-11-03 17:00:00') . ' الساعة ' . dse_time('2026-11-03 17:00:00') . "\n🎬 3 ريل", dse_wa_text('session_booked', $p));
+    update_option('dse_wa_tpl_session_booked', "يا {client_name} 👋\n{headline}\nيوم {date} الساعة {time}\nفي {studio}\nهات معاك: {outfits}");
+    $t = dse_wa_text('session_booked', $p + ['client_name' => 'مطعم الشيف']);
+    ok($t === "يا مطعم الشيف 👋\nتم حجز ميعاد التصوير\nيوم " . dse_day('2026-11-03 17:00:00') . ' الساعة ' . dse_time('2026-11-03 17:00:00'), $t);
+    try { dse_wa_validate('session_booked', 'الساعة {وقت}'); ok(false); } catch (Exception $e) { ok(strpos($e->getMessage(), 'متغير مش معروف: {وقت}') === 0, $e->getMessage()); }
+    try { dse_wa_validate('session_booked', '  '); ok(false); } catch (Exception $e) { ok(strpos($e->getMessage(), 'فاضية') !== false); }
+    ok(dse_wa_validate('published', '{headline} {post_url} {balance}') === true);
+    update_option('dse_wa_tpl_session_booked', '');
+    ok(strpos(dse_wa_text('session_booked', $p), 'تم حجز ميعاد التصوير ✅') === 0, 'رجع للأصلي');
+    // الصفحة
+    $list = [];
+    foreach (dse_wa_defaults() as $k => $def) {
+        $list[$k] = ['label' => dse_wa_labels()[$k], 'auto' => !isset(dse_manual_keys()[$k]), 'body' => dse_wa_template($k), 'default' => $def, 'edited' => false, 'vars' => dse_wa_vars($k), 'preview' => dse_wa_text($k, dse_wa_sample($k))];
+    }
+    set_error_handler(function ($no, $str, $file, $line) { throw new ErrorException($str . ' in ' . basename($file) . ':' . $line); });
+    $h = render('messages', ['list' => $list]);
+    restore_error_handler();
+    file_put_contents(sys_get_temp_dir() . '/dse_messages.html', $h);
+    ok(substr_count($h, '<textarea name="body"') === 9 && strpos($h, 'تم حجز') !== false && strpos($h, 'DSE_SAMPLE') !== false && strpos($h, '{client_name}') !== false);
+});
 echo "\n$passed passed · $failed failed\n";
 exit($failed ? 1 : 0);
