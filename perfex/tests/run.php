@@ -646,6 +646,7 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
         'outbox' => [], 'invoices' => [], 'balances' => $balances, 'pkg_invoices' => $pi, 'pkg_events' => $pe, 'pkg_paid' => $pp, 'pkg_busy' => $pb, 'free_invoices' => [], 'pay_modes' => $m->payment_modes(), 'pkg_payments' => array_map(function ($p) use ($m) { return $m->package_payments($p['id']); }, array_column($sum['packages'], null, 'id'))]);
     file_put_contents(sys_get_temp_dir() . '/dse_client.html', $html);
     ok(strpos($html, 'سجّل الدفعة') !== false && strpos($html, 'جدّد الاشتراك') !== false, 'زرار الدفعة والتجديد');
+    ok(strpos($html, '<select name="historic"') !== false && strpos($html, 'type="checkbox" name="historic"') === false, 'نوع الباقة select مش checkbox (CSS بتاع Perfex بيخفي الـ checkbox)');
     ok(strpos($html, 'اربط فاتورة عملتها') !== false && strpos($html, 'ترقية / تعديل الباقة') !== false && strpos($html, 'احفظ الترقية') !== false, 'الزراير على الباقة الشغالة');
     $m->fixed_time = strtotime('2026-11-02 10:00:00');
     ok(strpos($html, 'ترقية') !== false && strpos($html, 'ريلز 8←20') !== false && strpos($html, 'فرق الترقية') !== false, 'تاريخ الترقية');

@@ -5,7 +5,7 @@ defined('BASEPATH') or exit('No direct script access allowed');
 /*
 Module Name: Digital Solution — الاستوديو والباقات
 Description: رصيد الباقات، حجز الاستوديو، السكربتات والنشر، جروبات واتساب العملاء (Evolution API)، وتنبيه العميل اللي مابيصوّرش.
-Version: 1.0.6
+Version: 1.0.7
 Requires at least: 3.0.*
 Author: Digital Solution
 */

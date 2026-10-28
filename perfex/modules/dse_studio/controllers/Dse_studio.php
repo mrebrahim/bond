@@ -217,7 +217,7 @@ class Dse_studio extends AdminController
     {
         $m = $this->dse_studio_model;
         $this->act('edit', function () use ($m, $clientid) {
-            $old = (bool) $this->post('historic');
+            $old = $this->post('historic') === '1';
             $m->create_package($clientid, $this->post('name'), $this->post('price', 0), $this->post('start_date'),
                 $this->post('validity_days', 30), (array) $this->input->post('items'), $old ? null : $this->post('invoice_id'), $this->post('notes'), $old);
             return $old ? 'الباقة القديمة اتسجلت — العميل هيظهر في "مستنيين تجديد"' : 'الباقة اتعملت — بتتفعل لوحدها أول ما تسجّل الدفعة';

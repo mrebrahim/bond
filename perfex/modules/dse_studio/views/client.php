@@ -238,8 +238,14 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                 </select>
               </div>
             </div>
-            <div class="checkbox" style="margin-top:0"><label><input type="checkbox" name="historic" value="1" onchange="this.form.querySelector('[name=start_date]').max=this.checked?'<?= date('Y-m-d', strtotime('-1 day')); ?>':''">
-              <b>باقة قديمة (خلصت قبل السيستم)</b> — اتدفعت واتصرفت برا السيستم، علشان العميل يظهر في "مستنيين تجديد" ونطالبه يجدد</label></div>
+            <div class="form-group">
+              <label>نوع الباقة</label>
+              <select name="historic" class="form-control" onchange="var d=this.form.querySelector('[name=start_date]');d.max=this.value==='1'?'<?= date('Y-m-d', strtotime('-1 day')); ?>':'';this.form.querySelector('.dse-hist-hint').style.display=this.value==='1'?'block':'none'">
+                <option value="0">باقة جديدة (بتتفعل لما تسجّل الدفعة)</option>
+                <option value="1">باقة قديمة — خلصت قبل السيستم (اتدفعت واتصرفت برا)</option>
+              </select>
+              <p class="small text-muted dse-hist-hint" style="display:none;margin:4px 0 0">اكتب تاريخ بداية آخر باقة كانت معاه ومدتها — العميل هيظهر في "🔄 مستنيين تجديد" علشان نطالبه يجدد.</p>
+            </div>
             <button class="btn btn-primary">اعمل الباقة</button>
             <a class="btn btn-default" href="<?= admin_url('invoices/invoice?customer_id=' . $cid); ?>" target="_blank">اعمل فاتورة في Perfex</a>
           <?= form_close(); ?>
