@@ -359,6 +359,10 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
           <h5 class="bold">💬 واتساب العميل</h5>
           <?php if ($client['wa_group_jid']) { ?>
             <p>✅ الجروب متربط <?php if ($client['wa_group_link']) { ?>· <a href="<?= html_escape($client['wa_group_link']); ?>" target="_blank">لينك الجروب</a><?php } ?></p>
+          <?php } elseif ($client['wa_group_link']) { ?>
+            <p>✅ لينك الجروب اتحفظ · <a href="<?= html_escape($client['wa_group_link']); ?>" target="_blank">لينك الجروب</a>
+              <br><span class="small text-muted">⏳ السيستم بيدخل الجروب ويربطه لوحده (بيجرّب كل شوية). لو الجروب فيه موافقة على الأعضاء الجداد، وافق على رقم السيستم.</span>
+              <?php if ($client['wa_link_error']) { ?><br><span class="small text-warning">آخر محاولة: <?= html_escape($client['wa_link_error']); ?></span><?php } ?></p>
           <?php } ?>
           <?php if ($can_book) { ?>
             <?= form_open(admin_url('dse_studio/wa/' . $cid . '/phone'), ['class' => 'form-inline mbot10']); ?>
@@ -366,13 +370,11 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
               <button class="btn btn-default btn-sm">احفظ رقم الواتساب</button>
             <?= form_close(); ?>
             <?php if (!$client['wa_group_jid']) { ?>
-              <?= form_open(admin_url('dse_studio/wa/' . $cid . '/create_group'), ['class' => 'inline-block']); ?><button class="btn btn-success btn-sm">اعمل جروب واتساب</button><?= form_close(); ?>
+              <?php if (!$client['wa_group_link']) { ?><?= form_open(admin_url('dse_studio/wa/' . $cid . '/create_group'), ['class' => 'inline-block']); ?><button class="btn btn-success btn-sm">اعمل جروب واتساب</button><?= form_close(); ?><?php } ?>
               <?= form_open(admin_url('dse_studio/wa/' . $cid . '/link_group'), ['class' => 'form-inline mtop5']); ?>
-                <input name="link" placeholder="أو لينك جروب موجود https://chat.whatsapp.com/..." class="form-control input-sm" dir="ltr" style="min-width:260px">
+                <input name="link" value="<?= html_escape((string) $client['wa_group_link']); ?>" placeholder="حط لينك جروب العميل https://chat.whatsapp.com/..." class="form-control input-sm" dir="ltr" style="min-width:260px">
                 <button class="btn btn-default btn-sm">اربط</button>
               <?= form_close(); ?>
-              <a class="btn btn-link btn-sm" href="<?= admin_url('dse_studio/pick_group/' . $cid); ?>">📋 أو اختار من جروبات رقم السيستم</a>
-              <div class="small text-muted">لو اللينك مش راضي يربط: ضيف رقم السيستم للجروب من الموبايل، وبعدين اختاره من القايمة.</div>
             <?php } else { ?>
               <?= form_open(admin_url('dse_studio/wa/' . $cid . '/add_team'), ['class' => 'inline-block']); ?><button class="btn btn-default btn-sm">ضيف أرقام الفريق للجروب</button><?= form_close(); ?>
             <?php } ?>

@@ -5,7 +5,7 @@ defined('BASEPATH') or exit('No direct script access allowed');
 /*
 Module Name: Digital Solution — الاستوديو والباقات
 Description: رصيد الباقات، حجز الاستوديو، السكربتات والنشر، جروبات واتساب العملاء (Evolution API)، وتنبيه العميل اللي مابيصوّرش.
-Version: 1.1.4
+Version: 1.1.5
 Requires at least: 3.0.*
 Author: Digital Solution
 */
@@ -96,6 +96,7 @@ function dse_studio_cron()
     $CI->dse_studio_model->evo = $CI->dse_evolution;
 
     try {
+        $CI->dse_studio_model->resolve_pending_groups(5); // لينكات جروبات اتحفظت ولسه مااتربطتش
         $CI->dse_studio_model->process_outbox(10);
     } catch (Exception $e) {
         log_message('error', 'dse_studio outbox: ' . $e->getMessage());

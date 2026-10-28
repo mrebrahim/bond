@@ -19,6 +19,7 @@ function dse_studio_schema()
                 '`wa_phone` VARCHAR(20) NULL',
                 '`wa_group_jid` VARCHAR(80) NULL',
                 '`wa_group_link` VARCHAR(255) NULL',
+                '`wa_link_error` VARCHAR(255) NULL', // اللينك اتحفظ بس لسه مااتربطش (رقم السيستم مش في الجروب) — بيتجرّب تاني لوحده
                 // متابعة التجديد: '' لسه · contacted اتكلمنا · later بعدين · lost مش هيجدد
                 '`renewal_status` VARCHAR(20) NULL',
                 '`renewal_note` VARCHAR(255) NULL',
@@ -246,7 +247,7 @@ function dse_studio_default_options()
 
 if (!defined('DSE_STUDIO_SCHEMA_VERSION')) {
 /** نسخة الجداول — زوّدها مع أي جدول جديد */
-    define('DSE_STUDIO_SCHEMA_VERSION', '6');
+    define('DSE_STUDIO_SCHEMA_VERSION', '7');
 }
 
 if (!function_exists('dse_studio_ensure_schema')) {

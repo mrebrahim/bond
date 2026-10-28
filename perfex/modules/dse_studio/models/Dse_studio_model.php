@@ -92,6 +92,7 @@ class Dse_studio_model extends App_Model
         $c['wa_phone']      = $x['wa_phone'] ?? null ?: dse_normalize_phone($c['phonenumber']);
         $c['wa_group_jid']  = $x['wa_group_jid'] ?? null;
         $c['wa_group_link'] = $x['wa_group_link'] ?? null;
+        $c['wa_link_error'] = $x['wa_link_error'] ?? null;
         return $c;
     }
 
@@ -1166,6 +1167,9 @@ class Dse_studio_model extends App_Model
     public function wa_destination($clientid)
     {
         $c = $this->client($clientid);
+        if (!$c['wa_group_jid'] && $c['wa_group_link']) {
+            return $this->resolve_group($clientid); // اللينك اتحفظ ولسه مااتربطش ← جرّب دلوقتي
+        }
         return $c['wa_group_jid'] ?: null;
     }
 
@@ -1183,6 +1187,9 @@ class Dse_studio_model extends App_Model
             return false;
         }
         $dest = $this->wa_destination($clientid);
+        if (!$dest && $this->client($clientid)['wa_group_link']) {
+            $dest = 'pending'; // اللينك اتحفظ ولسه مااتربطش ← الرسالة تستنى في الطابور وتتبعت أول ما يتربط
+        }
         if (!$dest) {
             if ($manual) {
                 throw new Exception('العميل مالوش جروب واتساب — اعمل الجروب أو اربطه الأول (الرسايل بتروح الجروب بس)');
@@ -1241,6 +1248,15 @@ class Dse_studio_model extends App_Model
         foreach ($queue as $m) {
             if ($done >= $limit) {
                 break;
+            }
+            if ($m['destination'] === 'pending') {
+                $jid = $this->resolve_group($m['clientid']);
+                if (!$jid) {
+                    $res['waiting']++;
+                    continue;
+                }
+                $this->db->update($this->tbl('dse_wa_outbox'), ['destination' => $jid], ['id' => $m['id']]);
+                $m['destination'] = $jid;
             }
             if (substr($m['destination'], -5) !== '@g.us') {
                 $this->db->update($this->tbl('dse_wa_outbox'), ['status' => 'failed', 'error' => 'مش جروب — رسايل العملاء بتروح الجروب بس'], ['id' => $m['id'], 'status' => 'queued']);
@@ -1305,18 +1321,65 @@ class Dse_studio_model extends App_Model
         return ['jid' => $jid, 'link' => $link];
     }
 
+    /**
+     * اربط جروب العميل باللينك: اللينك بيتحفظ على طول (العميل بيبقى ليه جروب)، والسيستم بيدخل الجروب ويجيب الـ JID.
+     * لو Evolution مقدرش دلوقتي (رقم السيستم مستني موافقة / مش واصل) اللينك بيفضل محفوظ وبيتجرّب تاني لوحده
+     * مع أول رسالة ومع الـ cron — من غير ما حد يعمل حاجة. بيرجّع الـ JID أو null لو لسه.
+     */
     public function link_group($clientid, $link)
     {
-        if (!$this->evo || !$this->evo->configured()) {
-            throw new Exception('ظبط Evolution API من إعدادات الـ module الأول');
+        $this->ensure_renewal_columns();
+        $this->client($clientid);
+        $link = trim((string) $link);
+        if (preg_match('/^\d[\d-]{8,}@g\.us$/', $link)) {
+            $url = null;
+        } else {
+            $code = explode('?', (string) basename(parse_url($link, PHP_URL_PATH) ?: $link))[0];
+            if (stripos($link, 'chat.whatsapp.com') === false || !preg_match('/^[A-Za-z0-9]{10,}$/', $code)) {
+                throw new Exception('ده مش لينك جروب واتساب — انسخه من الجروب: معلومات الجروب ← دعوة عن طريق رابط (https://chat.whatsapp.com/...)');
+            }
+            $url = 'https://chat.whatsapp.com/' . $code;
         }
-        list($jid, $url) = $this->evo->group_from_link($link);
-        $other = $this->row('SELECT clientid FROM ' . $this->tbl('dse_clients') . ' WHERE wa_group_jid = ? AND clientid <> ?', [$jid, (int) $clientid]);
-        if ($other) {
-            throw new Exception('الجروب ده مربوط بعميل تاني (' . $this->client($other['clientid'])['company'] . ')');
+        $this->save_client_wa($clientid, ['wa_group_link' => $url ?: $link, 'wa_group_jid' => null, 'wa_link_error' => null]);
+        return $this->resolve_group($clientid);
+    }
+
+    /** يجيب الـ JID من اللينك المحفوظ (ويدخّل رقم السيستم الجروب) — بيرجّع الـ JID أو null ويسجّل السبب */
+    public function resolve_group($clientid)
+    {
+        $c = $this->client($clientid);
+        if ($c['wa_group_jid']) {
+            return $c['wa_group_jid'];
         }
-        $this->save_client_wa($clientid, ['wa_group_jid' => $jid] + ($url ? ['wa_group_link' => $url] : []));
-        return $jid;
+        if (!$c['wa_group_link']) {
+            return null;
+        }
+        try {
+            if (!$this->evo || !$this->evo->configured()) {
+                throw new Exception('Evolution API مش متظبط في الإعدادات');
+            }
+            list($jid) = $this->evo->group_from_link($c['wa_group_link']);
+            $other = $this->row('SELECT clientid FROM ' . $this->tbl('dse_clients') . ' WHERE wa_group_jid = ? AND clientid <> ?', [$jid, (int) $clientid]);
+            if ($other) {
+                throw new Exception('الجروب ده مربوط بعميل تاني (' . $this->client($other['clientid'])['company'] . ')');
+            }
+            $this->save_client_wa($clientid, ['wa_group_jid' => $jid, 'wa_link_error' => null]);
+            return $jid;
+        } catch (Exception $e) {
+            $this->save_client_wa($clientid, ['wa_link_error' => mb_substr($e->getMessage(), 0, 250)]);
+            return null;
+        }
+    }
+
+    /** الـ cron: يجرّب يربط اللينكات اللي لسه مستنية */
+    public function resolve_pending_groups($limit = 20)
+    {
+        $this->ensure_renewal_columns();
+        $n = 0;
+        foreach ($this->rows('SELECT clientid FROM ' . $this->tbl('dse_clients') . ' WHERE wa_group_jid IS NULL AND wa_group_link IS NOT NULL LIMIT ' . (int) $limit) as $r) {
+            $n += $this->resolve_group($r['clientid']) ? 1 : 0;
+        }
+        return $n;
     }
 
     /** جروبات رقم السيستم علشان تختار جروب العميل منها — وجنب كل جروب مربوط بمين */
@@ -1624,7 +1687,7 @@ class Dse_studio_model extends App_Model
     private function ensure_renewal_columns()
     {
         if (!self::$renewal_cols_checked && function_exists('dse_studio_add_missing_columns') && function_exists('get_instance')) {
-            dse_studio_add_missing_columns(['dse_clients' => ['renewal_status', 'renewal_note', 'renewal_updated_at'], 'dse_packages' => ['historic', 'grace_days']]);
+            dse_studio_add_missing_columns(['dse_clients' => ['renewal_status', 'renewal_note', 'renewal_updated_at', 'wa_link_error'], 'dse_packages' => ['historic', 'grace_days']]);
             self::$renewal_cols_checked = true;
         }
     }

@@ -483,8 +483,7 @@ class Dse_studio extends AdminController
                     $g = $m->create_group($clientid);
                     return 'الجروب اتعمل ✅ ' . ($g['link'] ?: '');
                 case 'link_group':
-                    $m->link_group($clientid, $this->post('link'));
-                    return 'الجروب اتربط';
+                    return $m->link_group($clientid, $this->post('link')) ? 'الجروب اتربط ✅' : 'لينك الجروب اتحفظ ✅ — هيتربط لوحده أول ما رقم السيستم يدخل الجروب';
                 case 'add_team':
                     $m->add_team_to_group($clientid);
                     return 'الفريق اتضاف للجروب';

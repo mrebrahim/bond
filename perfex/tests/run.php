@@ -88,6 +88,7 @@ $evo->transport = function ($method, $url, $body) use (&$sent) {
     if (strpos($url, '/group/create/') !== false) { $GLOBALS['group_members'] = $body['participants']; return [201, ['id' => '120363000000000001@g.us']]; }
     if (strpos($url, '/group/inviteCode/') !== false) { return [200, ['inviteCode' => 'AbCdEfGhIj12']]; }
     if (strpos($url, '/group/fetchAllGroups/') !== false) { return [200, [['id' => '120363000000000888@g.us', 'subject' => 'عيادات الشهيد × DS', 'size' => 6], ['id' => '120363000000000777@g.us', 'subject' => 'جروب تاني', 'size' => 3], ['id' => '2010@s.whatsapp.net', 'subject' => 'مش جروب']]]; }
+    if (!empty($GLOBALS['evo_join_fails']) && (strpos($url, '/group/acceptInviteCode/') !== false || strpos($url, '/group/inviteInfo/') !== false)) { return [403, ['error' => 'not-authorized']]; }
     if (strpos($url, '/group/acceptInviteCode/') !== false) { return [200, ['accepted' => true, 'groupJid' => '120363000000000555@g.us']]; }
     if (strpos($url, '/group/updateParticipant/') !== false) { return [200, ['ok' => true, 'n' => count($body['participants'])]]; }
     return [404, []];
@@ -651,11 +652,31 @@ test('ربط جروب لعميل باقته خلصت: رقم السيستم مش
     $g = $m->system_groups();
     ok(count($g) === 2 && $g[0]['subject'] === 'جروب تاني' && (int) $g[0]['linked']['clientid'] === $c && $g[1]['linked'] === null, json_encode($g, JSON_UNESCAPED_UNICODE));
     $db->insert('tblclients', ['company' => 'عيادات الشهيد']); $c2 = $db->insert_id();
-    throws(function () use ($m, $c2) { $m->link_group($c2, '120363000000000777@g.us'); }, 'مربوط بعميل تاني');
+    ok($m->link_group($c2, '120363000000000777@g.us') === null && strpos($m->client($c2)['wa_link_error'], 'مربوط بعميل تاني') !== false, 'جروب عميل تاني');
     $m->link_group($c2, '120363000000000888@g.us');
     ok($m->client($c2)['wa_group_jid'] === '120363000000000888@g.us');
     $GLOBALS['pick'] = [$m->client($c2), $m->system_groups()];
     $db->query("UPDATE tbldse_packages SET status = 'cancelled' WHERE clientid = ?", [$c]);
+});
+
+test('حط اللينك وبس: لو رقم السيستم مش قادر يدخل دلوقتي اللينك بيتحفظ، والرسايل بتستنى، وأول ما يدخل بيتربط ويتبعت لوحده', function () use ($m, $db, &$sent) {
+    $db->insert('tblclients', ['company' => 'لينك بس']); $c = $db->insert_id();
+    throws(function () use ($m, $c) { $m->link_group($c, 'https://example.com/abc'); }, 'مش لينك جروب واتساب');
+    $GLOBALS['evo_join_fails'] = true;
+    $r = $m->link_group($c, 'https://chat.whatsapp.com/KxYz1234567890abc?mode=ac_t');
+    $cl = $m->client($c);
+    ok($r === null && $cl['wa_group_link'] === 'https://chat.whatsapp.com/KxYz1234567890abc' && !$cl['wa_group_jid'] && strpos($cl['wa_link_error'], 'مقدرتش أوصل للجروب') === 0, json_encode($cl, JSON_UNESCAPED_UNICODE));
+    $id = $m->send_manual($c, 'welcome'); // مبيرميش "مالوش جروب"
+    ok(q('SELECT destination, status FROM tbldse_wa_outbox WHERE id = ?', [$id])[0] === ['destination' => 'pending', 'status' => 'queued']);
+    update_option('dse_wa_enabled', '1');
+    $res = $m->process_outbox(10);
+    ok(q('SELECT status FROM tbldse_wa_outbox WHERE id = ?', [$id])[0]['status'] === 'queued' && $res['waiting'] >= 1, 'لسه مستنية');
+    $GLOBALS['evo_join_fails'] = false; // رقم السيستم دخل الجروب
+    $before = count($sent);
+    $m->process_outbox(10);
+    $o = q('SELECT destination, status FROM tbldse_wa_outbox WHERE id = ?', [$id])[0];
+    ok($o['destination'] === '120363000000000555@g.us' && $o['status'] === 'sent' && count($sent) > $before && $m->client($c)['wa_group_jid'] === '120363000000000555@g.us' && !$m->client($c)['wa_link_error'], json_encode($o));
+    $db->query('DELETE FROM tbldse_clients WHERE clientid = ?', [$c]);
 });
 echo "\nالتنبيهات:\n";
 test('العميل بقاله فترة مابيصوّرش → تنبيه مرة واحدة، urgent لو مفيش نشر', function () use ($m, $client, $db) {
