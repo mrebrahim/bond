@@ -245,7 +245,7 @@ function dse_studio_default_options()
 
 if (!defined('DSE_STUDIO_SCHEMA_VERSION')) {
 /** نسخة الجداول — زوّدها مع أي جدول جديد */
-    define('DSE_STUDIO_SCHEMA_VERSION', '4');
+    define('DSE_STUDIO_SCHEMA_VERSION', '5');
 }
 
 if (!function_exists('dse_studio_ensure_schema')) {
@@ -268,17 +268,7 @@ function dse_studio_ensure_schema()
             }
         }
     }
-    // أعمدة اتضافت بعد ما الجدول اتعمل (1.0.5: متابعة التجديد + الباقات القديمة) ← ALTER
-    foreach (dse_studio_schema() as $table => $def) {
-        foreach ($def['cols'] as $col) {
-            if ($col === '{pk}' || stripos($col, 'PRIMARY KEY') !== false || !preg_match('/^`([a-z_]+)`\s+/i', $col, $m)) {
-                continue;
-            }
-            if (!$CI->db->field_exists($m[1], db_prefix() . $table)) {
-                $CI->db->query('ALTER TABLE `' . db_prefix() . $table . '` ADD COLUMN ' . $col);
-            }
-        }
-    }
+    dse_studio_add_missing_columns();
     // 1.0.1: الفاتورة اللي كانت على الباقة نفسها ← جدول فواتير الباقة
     $CI->db->query('INSERT INTO ' . db_prefix() . "dse_package_invoices (package_id, invoice_id, note, created_at)
         SELECT p.id, p.invoice_id, 'الفاتورة الأولى', p.created_at FROM " . db_prefix() . 'dse_packages p
@@ -288,4 +278,41 @@ function dse_studio_ensure_schema()
     }
     update_option('dse_schema_version', DSE_STUDIO_SCHEMA_VERSION);
 }
+}
+
+/**
+ * أعمدة اتضافت بعد ما الجدول اتعمل ← ALTER. بيتنادى من ensure_schema، ومن الموديل نفسه قبل أي كود بيستخدم عمود جديد
+ * (لو السيرفر شال نسخة قديمة من الملف ده في الكاش أو Perfex ماشغّلش التحديث، العمود يتضاف برضه بدل ما الصفحة تقع).
+ * $only: [table => [cols]] علشان يشيك على أعمدة معينة بس.
+ */
+if (!function_exists('dse_studio_add_missing_columns')) {
+    function dse_studio_add_missing_columns(array $only = [])
+    {
+        $CI    = &get_instance();
+        $added = [];
+        if (!is_object($CI) || !isset($CI->db) || !is_object($CI->db)) {
+            return $added;
+        }
+        foreach (dse_studio_schema() as $table => $def) {
+            if ($only && !isset($only[$table])) {
+                continue;
+            }
+            if (!$CI->db->table_exists(db_prefix() . $table)) {
+                continue;
+            }
+            foreach ($def['cols'] as $col) {
+                if ($col === '{pk}' || stripos($col, 'PRIMARY KEY') !== false || !preg_match('/^`([a-z_]+)`\s+/i', $col, $m)) {
+                    continue;
+                }
+                if ($only && !in_array($m[1], $only[$table], true)) {
+                    continue;
+                }
+                if (!$CI->db->field_exists($m[1], db_prefix() . $table)) {
+                    $CI->db->query('ALTER TABLE `' . db_prefix() . $table . '` ADD COLUMN ' . $col);
+                    $added[] = $table . '.' . $m[1];
+                }
+            }
+        }
+        return $added;
+    }
 }

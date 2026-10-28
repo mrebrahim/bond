@@ -717,5 +717,18 @@ test('النص الأصلي زي ما كان · التعديل بيمشي على
     file_put_contents(sys_get_temp_dir() . '/dse_messages.html', $h);
     ok(substr_count($h, '<textarea name="body"') === 10 && strpos($h, 'تم حجز') !== false && strpos($h, 'DSE_SAMPLE') !== false && strpos($h, '{client_name}') !== false);
 });
+
+test('السيرفر بنسخة قديمة من الداتابيز (من غير renewal_status / historic) والـ version متسجلة: صفحة التجديد بتضيف الأعمدة لوحدها بدل ما تقع', function () use ($m, $db) {
+    $db->pdo->exec('ALTER TABLE tbldse_clients RENAME TO tbldse_clients_bak');
+    $db->pdo->exec('CREATE TABLE tbldse_clients (clientid INTEGER PRIMARY KEY, wa_phone TEXT, wa_group_jid TEXT, wa_group_link TEXT, updated_at TEXT)');
+    $db->pdo->exec('INSERT INTO tbldse_clients (clientid, wa_phone, wa_group_jid, wa_group_link, updated_at) SELECT clientid, wa_phone, wa_group_jid, wa_group_link, updated_at FROM tbldse_clients_bak');
+    ok(!$db->field_exists('renewal_status', 'tbldse_clients'));
+    update_option('dse_schema_version', DSE_STUDIO_SCHEMA_VERSION); // ensure_schema مش هيعمل حاجة
+    dse_studio_ensure_schema();
+    Dse_studio_model::$renewal_cols_checked = false; // طلب جديد
+    $rows = $m->renewals('');
+    ok($db->field_exists('renewal_status', 'tbldse_clients') && $db->field_exists('renewal_updated_at', 'tbldse_clients') && is_array($rows), 'اتضافت');
+    ok(dse_studio_add_missing_columns() === [], 'مفيش حاجة ناقصة تاني');
+});
 echo "\n$passed passed · $failed failed\n";
 exit($failed ? 1 : 0);

@@ -2,6 +2,8 @@
 
 defined('BASEPATH') or exit('No direct script access allowed');
 
+require_once __DIR__ . '/../helpers/dse_studio_setup.php'; // dse_studio_add_missing_columns()
+
 /**
  * كل قواعد الشغل هنا: الرصيد، الحجز، الخصم، الرسايل، التنبيهات.
  * الكنترولر بينادي الدوال دي بس — ومفيش حسابات في الـ views.
@@ -136,6 +138,9 @@ class Dse_studio_model extends App_Model
             throw new Exception('تاريخ البداية غلط');
         }
         $end = date('Y-m-d', strtotime($start . ' +' . ($validity_days - 1) . ' days'));
+        if ($historic) {
+            $this->ensure_renewal_columns();
+        }
         if ($historic && $end >= $this->today()) {
             throw new Exception('الباقة القديمة لازم تكون خلصت قبل النهارده — لو لسه شغالة اعملها عادي وسجّل الدفعة عليها');
         }
@@ -1491,8 +1496,20 @@ class Dse_studio_model extends App_Model
     // العملاء القدام + "مستنيين تجديد"
     // =================================================================
     /** آخر باقة لكل عميل (غير الملغية) — المفتاح clientid */
+    /** أعمدة 1.0.5 (التجديد + الباقات القديمة) — بتتضاف لو ناقصة، مرة واحدة في الطلب */
+    public static $renewal_cols_checked = false;
+
+    private function ensure_renewal_columns()
+    {
+        if (!self::$renewal_cols_checked && function_exists('dse_studio_add_missing_columns') && function_exists('get_instance')) {
+            dse_studio_add_missing_columns(['dse_clients' => ['renewal_status', 'renewal_note', 'renewal_updated_at'], 'dse_packages' => ['historic']]);
+            self::$renewal_cols_checked = true;
+        }
+    }
+
     private function last_packages()
     {
+        $this->ensure_renewal_columns();
         $out = [];
         foreach ($this->rows('SELECT * FROM ' . $this->tbl('dse_packages') . " WHERE status <> 'cancelled' ORDER BY end_date, id") as $p) {
             $out[(int) $p['clientid']] = $p; // الأحدث بيكتب على اللي قبله
@@ -1534,6 +1551,7 @@ class Dse_studio_model extends App_Model
 
     public function set_renewal_status($clientid, $status, $note = null)
     {
+        $this->ensure_renewal_columns();
         if (!in_array($status, ['', 'contacted', 'later', 'lost'], true)) {
             throw new Exception('حالة غلط');
         }
