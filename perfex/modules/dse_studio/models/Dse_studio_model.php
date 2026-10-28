@@ -1311,8 +1311,25 @@ class Dse_studio_model extends App_Model
             throw new Exception('ظبط Evolution API من إعدادات الـ module الأول');
         }
         list($jid, $url) = $this->evo->group_from_link($link);
-        $this->save_client_wa($clientid, ['wa_group_jid' => $jid, 'wa_group_link' => $url]);
+        $other = $this->row('SELECT clientid FROM ' . $this->tbl('dse_clients') . ' WHERE wa_group_jid = ? AND clientid <> ?', [$jid, (int) $clientid]);
+        if ($other) {
+            throw new Exception('الجروب ده مربوط بعميل تاني (' . $this->client($other['clientid'])['company'] . ')');
+        }
+        $this->save_client_wa($clientid, ['wa_group_jid' => $jid] + ($url ? ['wa_group_link' => $url] : []));
         return $jid;
+    }
+
+    /** جروبات رقم السيستم علشان تختار جروب العميل منها — وجنب كل جروب مربوط بمين */
+    public function system_groups()
+    {
+        if (!$this->evo || !$this->evo->configured()) {
+            throw new Exception('ظبط Evolution API من إعدادات الـ module الأول');
+        }
+        $linked = [];
+        foreach ($this->rows('SELECT x.clientid, x.wa_group_jid, ' . $this->name_sql('c') . ' AS company FROM ' . $this->tbl('dse_clients') . ' x JOIN ' . $this->tbl('clients') . ' c ON c.userid = x.clientid WHERE x.wa_group_jid IS NOT NULL') as $r) {
+            $linked[$r['wa_group_jid']] = $r;
+        }
+        return array_map(function ($g) use ($linked) { return $g + ['linked' => $linked[$g['id']] ?? null]; }, $this->evo->fetch_groups());
     }
 
     public function add_team_to_group($clientid)

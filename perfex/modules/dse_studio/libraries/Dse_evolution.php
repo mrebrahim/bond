@@ -127,6 +127,22 @@ class Dse_evolution
         return [$jid, 'https://chat.whatsapp.com/' . $code];
     }
 
+    /** كل الجروبات اللي رقم السيستم عضو فيها: [[id, subject, size], …] */
+    public function fetch_groups()
+    {
+        $r    = $this->request('GET', '/group/fetchAllGroups/{instance}?getParticipants=false');
+        $list = isset($r[0]) || $r === [] ? $r : ($r['groups'] ?? ($r['data'] ?? []));
+        $out  = [];
+        foreach ((array) $list as $g) {
+            $id = (string) ($g['id'] ?? ($g['jid'] ?? ''));
+            if (substr($id, -5) === '@g.us') {
+                $out[] = ['id' => $id, 'subject' => (string) ($g['subject'] ?? $id), 'size' => (int) ($g['size'] ?? 0)];
+            }
+        }
+        usort($out, function ($a, $b) { return strcmp($a['subject'], $b['subject']); });
+        return $out;
+    }
+
     public function add_members($jid, array $numbers)
     {
         return $this->request('POST', '/group/updateParticipant/{instance}?groupJid=' . rawurlencode($jid), [

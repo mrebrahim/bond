@@ -87,6 +87,7 @@ $evo->transport = function ($method, $url, $body) use (&$sent) {
     }
     if (strpos($url, '/group/create/') !== false) { $GLOBALS['group_members'] = $body['participants']; return [201, ['id' => '120363000000000001@g.us']]; }
     if (strpos($url, '/group/inviteCode/') !== false) { return [200, ['inviteCode' => 'AbCdEfGhIj12']]; }
+    if (strpos($url, '/group/fetchAllGroups/') !== false) { return [200, [['id' => '120363000000000888@g.us', 'subject' => 'عيادات الشهيد × DS', 'size' => 6], ['id' => '120363000000000777@g.us', 'subject' => 'جروب تاني', 'size' => 3], ['id' => '2010@s.whatsapp.net', 'subject' => 'مش جروب']]]; }
     if (strpos($url, '/group/acceptInviteCode/') !== false) { return [200, ['accepted' => true, 'groupJid' => '120363000000000555@g.us']]; }
     if (strpos($url, '/group/updateParticipant/') !== false) { return [200, ['ok' => true, 'n' => count($body['participants'])]]; }
     return [404, []];
@@ -646,6 +647,14 @@ test('ربط جروب لعميل باقته خلصت: رقم السيستم مش
     $db->query('DELETE FROM tbldse_clients WHERE clientid = ?', [$c]);
     ok($m->link_group($c, '120363000000000777@g.us') === '120363000000000777@g.us');
     throws(function () use ($m, $c) { $m->link_group($c, 'مش لينك'); }, 'مش لينك جروب');
+    // اختار من جروبات رقم السيستم: الجروبات بس (مش الشاتات) · المربوط بعميل تاني متعلّم ومينفعش يتربط مرتين
+    $g = $m->system_groups();
+    ok(count($g) === 2 && $g[0]['subject'] === 'جروب تاني' && (int) $g[0]['linked']['clientid'] === $c && $g[1]['linked'] === null, json_encode($g, JSON_UNESCAPED_UNICODE));
+    $db->insert('tblclients', ['company' => 'عيادات الشهيد']); $c2 = $db->insert_id();
+    throws(function () use ($m, $c2) { $m->link_group($c2, '120363000000000777@g.us'); }, 'مربوط بعميل تاني');
+    $m->link_group($c2, '120363000000000888@g.us');
+    ok($m->client($c2)['wa_group_jid'] === '120363000000000888@g.us');
+    $GLOBALS['pick'] = [$m->client($c2), $m->system_groups()];
     $db->query("UPDATE tbldse_packages SET status = 'cancelled' WHERE clientid = ?", [$c]);
 });
 echo "\nالتنبيهات:\n";
@@ -745,6 +754,8 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
         'free_invoices' => [['id' => 99, 'prefix' => 'INV-', 'number' => 9, 'total' => 1000, 'status' => 2]], 'pay_modes' => $m->payment_modes(), 'data_counts' => $m->client_data_counts($rc)]);
     file_put_contents(sys_get_temp_dir() . '/dse_client_historic.html', $hh);
     ok(strpos($hh, 'مدفوع <b>2,500') !== false && strpos($hh, 'سجّل دفعة') !== false && strpos($hh, 'اربط فاتورة عملتها في Perfex') !== false && strpos($hh, 'قسط قديم') !== false && strpos($hh, 'name="left[reel]"') !== false && strpos($hh, '<option value="4">4 أسابيع') !== false && strpos($hh, 'امسح العميل من الاستوديو') !== false && strpos($hh, '⏳ مدّ السماح') !== false && strpos($hh, ': · ') === false, 'القديمة: دفعات وفواتير ومدّ السماح');
+    $pg = render('pick_group', ['client' => $GLOBALS['pick'][0], 'groups' => $GLOBALS['pick'][1]]);
+    ok(strpos($pg, 'مربوط بالعميل ده') !== false && strpos($pg, 'مربوط بـ جروب قديم') !== false, 'صفحة اختيار الجروب');
     $rn = render('renewals', ['rows' => $m->renewals(''), 'status' => '']);
     ok(strpos($rn, 'عيادة د. سامي') !== false && strpos($rn, 'ابعت طلب التجديد') !== false && strpos($rn, 'آخر طلب') !== false && strpos($rn, 'قديمة') !== false, 'صف التجديد');
     file_put_contents(sys_get_temp_dir() . '/dse_renewals.html', $rn);

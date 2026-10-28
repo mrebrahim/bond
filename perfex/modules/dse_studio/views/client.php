@@ -371,6 +371,8 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                 <input name="link" placeholder="أو لينك جروب موجود https://chat.whatsapp.com/..." class="form-control input-sm" dir="ltr" style="min-width:260px">
                 <button class="btn btn-default btn-sm">اربط</button>
               <?= form_close(); ?>
+              <a class="btn btn-link btn-sm" href="<?= admin_url('dse_studio/pick_group/' . $cid); ?>">📋 أو اختار من جروبات رقم السيستم</a>
+              <div class="small text-muted">لو اللينك مش راضي يربط: ضيف رقم السيستم للجروب من الموبايل، وبعدين اختاره من القايمة.</div>
             <?php } else { ?>
               <?= form_open(admin_url('dse_studio/wa/' . $cid . '/add_team'), ['class' => 'inline-block']); ?><button class="btn btn-default btn-sm">ضيف أرقام الفريق للجروب</button><?= form_close(); ?>
             <?php } ?>

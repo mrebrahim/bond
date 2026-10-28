@@ -496,6 +496,21 @@ class Dse_studio extends AdminController
         }, admin_url('dse_studio/client/' . (int) $clientid));
     }
 
+    /** اختار جروب العميل من جروبات رقم السيستم (لما اللينك مش راضي يربط) */
+    public function pick_group($clientid)
+    {
+        $this->need('create');
+        $m = $this->dse_studio_model;
+        try {
+            $client = $m->client($clientid);
+            $groups = $m->system_groups();
+        } catch (Exception $e) {
+            set_alert('danger', $e->getMessage());
+            redirect(admin_url('dse_studio/client/' . (int) $clientid));
+        }
+        $this->load->view('pick_group', ['title' => 'اختار جروب ' . $client['company'], 'client' => $client, 'groups' => $groups]);
+    }
+
     public function retry($id)
     {
         $m = $this->dse_studio_model;
