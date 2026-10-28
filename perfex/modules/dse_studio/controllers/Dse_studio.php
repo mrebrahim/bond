@@ -97,7 +97,8 @@ class Dse_studio extends AdminController
         $data['posts']    = $this->dse_studio_model->client_posts($id);
         $data['outbox']   = $this->dse_studio_model->outbox(20, $id);
         $data['invoices'] = $this->db->query('SELECT id, prefix, number, total, status, date FROM ' . db_prefix() . 'invoices WHERE clientid = ? ORDER BY id DESC LIMIT 30', [(int) $id])->result_array();
-        $data['balances'] = $data['pkg_invoices'] = $data['pkg_events'] = $data['pkg_paid'] = $data['pkg_busy'] = [];
+        $data['balances'] = $data['pkg_invoices'] = $data['pkg_events'] = $data['pkg_paid'] = $data['pkg_busy'] = $data['pkg_payments'] = [];
+        $data['pay_modes'] = $this->dse_studio_model->payment_modes();
         $linked = [];
         foreach ($data['packages'] as $p) {
             $data['balances'][$p['id']]     = $this->dse_studio_model->balance($p['id']);
@@ -105,6 +106,7 @@ class Dse_studio extends AdminController
             $data['pkg_events'][$p['id']]   = $this->dse_studio_model->package_events($p['id']);
             $data['pkg_paid'][$p['id']]     = $this->dse_studio_model->package_paid_amount($p);
             $data['pkg_busy'][$p['id']]     = $this->dse_studio_model->package_has_activity($p['id']);
+            $data['pkg_payments'][$p['id']] = $this->dse_studio_model->package_payments($p['id']);
             $linked = array_merge($linked, array_column($data['pkg_invoices'][$p['id']], 'invoice_id'));
         }
         // الفواتير اللي لسه مش متربطة بباقة
@@ -199,6 +201,30 @@ class Dse_studio extends AdminController
         $this->act('edit', function () use ($m, $package_id) {
             $st = $m->link_invoice($package_id, $this->post('invoice_id'), $this->post('note'));
             return $st === 'active' ? 'الفاتورة اتربطت والباقة اتفعلت' : 'الفاتورة اتربطت — الباقة هتتفعل أول ما تتدفع';
+        }, admin_url('dse_studio/client/' . $p['clientid']));
+    }
+
+    /** سجّل دفعة (قسط) على الباقة — من غير حد للعدد */
+    public function record_payment($package_id)
+    {
+        $m = $this->dse_studio_model;
+        $p = $m->package($package_id);
+        $this->act('edit', function () use ($m, $package_id) {
+            $r = $m->record_payment($package_id, $this->post('amount'), $this->post('date'), $this->post('paymentmode'), $this->post('note'));
+            return 'الدفعة اتسجلت ✅' . ($r['left'] > 0.5 ? ' — الباقي ' . dse_money($r['left']) : ' — الباقة خالصة') . ($r['status'] === 'active' ? '' : ' · الباقة لسه مستنية توصل نسبة التفعيل');
+        }, admin_url('dse_studio/client/' . $p['clientid']));
+    }
+
+    /** جدّد الاشتراك (الشهر الجاي) بنفس الخدمات — وتقدر تغيّر السعر والعدد والتاريخ */
+    public function renew_package($package_id)
+    {
+        $m = $this->dse_studio_model;
+        $p = $m->package($package_id);
+        $this->act('edit', function () use ($m, $package_id) {
+            $id = $m->renew_package($package_id, ['items' => (array) $this->input->post('items'), 'price' => $this->post('price'),
+                'start_date' => $this->post('start_date'), 'validity_days' => $this->post('validity_days'), 'name' => $this->post('name')]);
+            $n  = $m->package($id);
+            return 'الاشتراك اتجدد ✅ ' . dse_day($n['start_date']) . ' ← ' . dse_day($n['end_date']) . ' — سجّل الدفعة عليه علشان يتفعل';
         }, admin_url('dse_studio/client/' . $p['clientid']));
     }
 

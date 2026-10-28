@@ -67,11 +67,13 @@ foreach (dse_studio_schema() as $t => $def) {
     }
 }
 // جداول Perfex اللي بنقرا منها
-$db->pdo->exec('CREATE TABLE tblclients (userid INTEGER PRIMARY KEY AUTOINCREMENT, company TEXT, phonenumber TEXT)');
+$db->pdo->exec('CREATE TABLE tblclients (userid INTEGER PRIMARY KEY AUTOINCREMENT, company TEXT, phonenumber TEXT, default_currency INT DEFAULT 0)');
 $db->pdo->exec('CREATE TABLE tblcontacts (id INTEGER PRIMARY KEY AUTOINCREMENT, userid INT, firstname TEXT, lastname TEXT, is_primary INT)');
 $db->pdo->exec('CREATE TABLE tblstaff (staffid INTEGER PRIMARY KEY, firstname TEXT, lastname TEXT, email TEXT, active INT, admin INT)');
 $db->pdo->exec("INSERT INTO tblstaff VALUES (7, 'أندرو', 'إسحاق', 'a@x.com', 1, 0)");
-$db->pdo->exec('CREATE TABLE tblinvoicepaymentrecords (id INTEGER PRIMARY KEY AUTOINCREMENT, invoiceid INT, amount REAL)');
+$db->pdo->exec('CREATE TABLE tblinvoicepaymentrecords (id INTEGER PRIMARY KEY AUTOINCREMENT, invoiceid INT, amount REAL, paymentmode TEXT, date TEXT, daterecorded TEXT, note TEXT)');
+$db->pdo->exec('CREATE TABLE tblpayment_modes (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, active INT)');
+$db->pdo->exec("INSERT INTO tblpayment_modes (name, active) VALUES ('كاش', 1), ('فودافون كاش', 1), ('قديمة', 0)");
 $db->pdo->exec('CREATE TABLE tblinvoices (id INTEGER PRIMARY KEY AUTOINCREMENT, clientid INT, total REAL, status INT, prefix TEXT DEFAULT "INV-", number INT DEFAULT 1, date TEXT)');
 
 $sent = [];
@@ -431,6 +433,60 @@ test('الفشل بيتسجل ومبيتعادش لوحده', function () use ($
     update_option('dse_wa_enabled', '0');
 });
 
+
+echo "\nالدفعات (أقساط من غير حد) + التجديد:\n";
+test('باقة من غير فاتورة: 4 أقساط · أول دفعة بتعمل فاتورة الباقة لوحدها · بتتفعل عند 50% · الباقة تبقى خالصة · أكتر من الباقي بيترفض', function () use ($m, $db) {
+    $db->insert('tblclients', ['company' => 'عيادة الأقساط']); $c = $db->insert_id();
+    $pkg = $m->create_package($c, 'Growth', 8000, '2026-11-01', 30, ['reel' => 8, 'design' => 4]);
+    ok($m->package($pkg)['status'] === 'pending');
+    $r = $m->record_payment($pkg, 2000, '2026-11-01', 2, 'القسط الأول');
+    ok($r['status'] === 'pending' && $r['left'] == 6000, json_encode($r));
+    $inv = q('SELECT * FROM tblinvoices WHERE clientid = ?', [$c]);
+    ok(count($inv) === 1 && (float) $inv[0]['total'] === 8000.0 && (int) $inv[0]['status'] === 3, json_encode($inv));
+    $r = $m->record_payment($pkg, 2000, '2026-11-02');
+    ok($r['status'] === 'active', 'اتفعلت عند 50%');
+    $m->record_payment($pkg, 1500, '2026-11-02');
+    $r = $m->record_payment($pkg, 2500, null, null, 'آخر قسط');
+    ok($r['left'] == 0 && (int) q('SELECT status FROM tblinvoices WHERE clientid = ?', [$c])[0]['status'] === 2, json_encode($r));
+    $pays = $m->package_payments($pkg);
+    ok(count($pays) === 4 && $pays[0]['mode_name'] === 'فودافون كاش' && $pays[0]['note'] === 'القسط الأول' && $pays[1]['mode_name'] === 'كاش', json_encode($pays, JSON_UNESCAPED_UNICODE));
+    ok(count(q('SELECT id FROM tblinvoices WHERE clientid = ?', [$c])) === 1, 'فاتورة واحدة بس');
+    throws(function () use ($m, $pkg) { $m->record_payment($pkg, 100); }, 'أكبر من الباقي');
+    throws(function () use ($m, $pkg) { $m->record_payment($pkg, 0); }, 'اكتب المبلغ');
+    throws(function () use ($m, $pkg) { $m->record_payment($pkg, 1, '2026-12-30'); }, 'المستقبل');
+});
+test('باقة عليها فاتورة أقل من سعرها (بعد ترقية): الدفعة بتملا الفاتورة وبعدها فاتورة "باقي الباقة"', function () use ($m, $db) {
+    $db->insert('tblclients', ['company' => 'ترقية']); $c = $db->insert_id();
+    $db->insert('tblinvoices', ['clientid' => $c, 'total' => 5000, 'status' => 1]); $i1 = $db->insert_id();
+    $pkg = $m->create_package($c, 'Basic', 5000, '2026-11-01', 30, ['reel' => 8, 'design' => 4], $i1);
+    $m->record_payment($pkg, 5000);
+    $m->upgrade_package($pkg, ['reel' => 20, 'design' => 4], 13000, 0, null, 'ترقية');
+    $r = $m->record_payment($pkg, 6000, null, null, 'فرق الترقية');
+    $inv = q('SELECT total, status FROM tblinvoices WHERE clientid = ? ORDER BY id', [$c]);
+    ok(count($inv) === 2 && (float) $inv[1]['total'] === 8000.0 && (int) $inv[1]['status'] === 3 && $r['left'] == 2000, json_encode([$inv, $r]));
+    $m->record_payment($pkg, 2000);
+    ok((int) q('SELECT status FROM tblinvoices WHERE clientid = ? ORDER BY id DESC', [$c])[0]['status'] === 2 && count($m->package_payments($pkg)) === 3);
+});
+test('جدّد الاشتراك: نفس الخدمات والسعر والمدة · بيبدأ بعد القديمة · مستني الدفع · القديمة تكمل لآخر يوم · تقدر تغيّر السعر والعدد', function () use ($m, $db) {
+    $db->insert('tblclients', ['company' => 'تجديد']); $c = $db->insert_id();
+    $old = $m->create_package($c, 'Growth', 8000, '2026-11-01', 30, ['reel' => 8, 'design' => 4]);
+    $m->record_payment($old, 8000);
+    $new = $m->renew_package($old);
+    $n = $m->package($new);
+    ok($n['start_date'] === '2026-12-01' && $n['end_date'] === '2026-12-30' && (float) $n['price'] === 8000.0 && $n['status'] === 'pending' && $n['name'] === 'Growth', json_encode($n, JSON_UNESCAPED_UNICODE));
+    ok(array_map(function ($b) { return $b['total']; }, $m->balance($new)) == ['reel' => 8.0, 'design' => 4.0], json_encode($m->balance($new)));
+    ok(strpos($n['notes'], 'تجديد') === 0 && q("SELECT event FROM tbldse_package_events WHERE package_id = ?", [$new])[0]['event'] === 'renew', 'event');
+    $m->record_payment($new, 4000);
+    ok($m->package($new)['status'] === 'active', 'الجديدة اتفعلت'); ok((int) $m->active_package($c)['id'] === $old, 'القديمة لسه هي الشغالة');
+    $save = $m->fixed_time; $m->fixed_time = strtotime('2026-12-02 10:00:00');
+    ok((int) $m->active_package($c)['id'] === $new && $m->package($old)['status'] === 'expired', 'الجديدة اشتغلت');
+    $m->fixed_time = $save;
+    $x = $m->package($m->renew_package($new, ['price' => 9000, 'items' => ['reel' => 12, 'design' => ''], 'start_date' => '2026-12-31', 'validity_days' => 31]));
+    ok((float) $x['price'] === 9000.0 && $x['end_date'] === '2027-01-30' && $m->balance($x['id'])['reel']['total'] === 12.0 && $m->balance($x['id'])['design']['total'] === 4.0, json_encode($x, JSON_UNESCAPED_UNICODE));
+    $m->cancel_package($x['id']);
+    throws(function () use ($m, $x) { $m->renew_package($x['id']); }, 'ملغية');
+    throws(function () use ($m, $x) { $m->record_payment($x['id'], 10); }, 'اتلغت');
+});
 echo "\nالتنبيهات:\n";
 test('العميل بقاله فترة مابيصوّرش → تنبيه مرة واحدة، urgent لو مفيش نشر', function () use ($m, $client, $db) {
     ok(count($m->check_inactive_clients()) === 0, 'لسه بادئ');
@@ -493,9 +549,10 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
     $pi = $pe = $pp = $pb = $balances = [];
     foreach ($sum['packages'] as $p) { $balances[$p['id']] = $m->balance($p['id']); $pi[$p['id']] = $m->package_invoices($p['id']); $pe[$p['id']] = $m->package_events($p['id']); $pp[$p['id']] = $m->package_paid_amount($p); $pb[$p['id']] = $m->package_has_activity($p['id']); }
     $html = render('client', $sum + ['studios' => $m->studios(), 'staff' => [], 'sessions' => $m->client_sessions($up), 'scripts' => [], 'posts' => [],
-        'outbox' => [], 'invoices' => [], 'balances' => $balances, 'pkg_invoices' => $pi, 'pkg_events' => $pe, 'pkg_paid' => $pp, 'pkg_busy' => $pb, 'free_invoices' => []]);
+        'outbox' => [], 'invoices' => [], 'balances' => $balances, 'pkg_invoices' => $pi, 'pkg_events' => $pe, 'pkg_paid' => $pp, 'pkg_busy' => $pb, 'free_invoices' => [], 'pay_modes' => $m->payment_modes(), 'pkg_payments' => array_map(function ($p) use ($m) { return $m->package_payments($p['id']); }, array_column($sum['packages'], null, 'id'))]);
     file_put_contents(sys_get_temp_dir() . '/dse_client.html', $html);
-    ok(strpos($html, 'سجّل دفعة / قسط') !== false && strpos($html, 'ترقية / تعديل الباقة') !== false && strpos($html, 'احفظ الترقية') !== false, 'الزراير على الباقة الشغالة');
+    ok(strpos($html, 'سجّل الدفعة') !== false && strpos($html, 'جدّد الاشتراك') !== false, 'زرار الدفعة والتجديد');
+    ok(strpos($html, 'اربط فاتورة عملتها') !== false && strpos($html, 'ترقية / تعديل الباقة') !== false && strpos($html, 'احفظ الترقية') !== false, 'الزراير على الباقة الشغالة');
     $m->fixed_time = strtotime('2026-11-02 10:00:00');
     ok(strpos($html, 'ترقية') !== false && strpos($html, 'ريلز 8←20') !== false && strpos($html, 'فرق الترقية') !== false, 'تاريخ الترقية');
     render('index', ['clients' => [['userid' => 1, 'company' => 'x']], 'packages' => $m->clients_with_packages(),

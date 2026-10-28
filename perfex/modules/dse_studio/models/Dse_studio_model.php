@@ -1268,6 +1268,186 @@ class Dse_studio_model extends App_Model
     }
 
     /** كل الباقات: تفعيل بالفاتورة + انتهاء المدة */
+    // =================================================================
+    // الدفعات (أقساط من غير عدد) + التجديد
+    // =================================================================
+    /** موديل Perfex (invoices_model / payments_model) لو موجود — في الاختبارات بيرجع null */
+    private function perfex_model($name)
+    {
+        if (!function_exists('get_instance')) {
+            return null;
+        }
+        $CI = &get_instance();
+        if (!is_object($CI) || !isset($CI->load) || !method_exists($CI->load, 'model')) {
+            return null;
+        }
+        try {
+            $CI->load->model($name);
+        } catch (Throwable $e) {
+            return null;
+        }
+        return isset($CI->$name) && is_object($CI->$name) ? $CI->$name : null;
+    }
+
+    public function payment_modes()
+    {
+        if (!$this->db->table_exists($this->tbl('payment_modes'))) {
+            return [];
+        }
+        return $this->rows('SELECT id, name FROM ' . $this->tbl('payment_modes') . ' WHERE active = 1 ORDER BY id');
+    }
+
+    /** كل الدفعات اللي اتسجلت على فواتير الباقة */
+    public function package_payments($package_id)
+    {
+        $modes = $this->db->table_exists($this->tbl('payment_modes'));
+        return $this->rows('SELECT r.*' . ($modes ? ', pm.name AS mode_name' : '') . ' FROM ' . $this->tbl('invoicepaymentrecords') . ' r
+              JOIN ' . $this->tbl('dse_package_invoices') . ' pi ON pi.invoice_id = r.invoiceid'
+            . ($modes ? ' LEFT JOIN ' . $this->tbl('payment_modes') . ' pm ON pm.id = r.paymentmode' : '')
+            . ' WHERE pi.package_id = ? ORDER BY r.date, r.id', [(int) $package_id]);
+    }
+
+    /** فاتورة Perfex للباقة بالمبلغ ده (لما مفيش فاتورة مربوطة فيها مكان للدفعة) */
+    private function create_package_invoice(array $p, $amount, $label)
+    {
+        $c        = $this->row('SELECT default_currency FROM ' . $this->tbl('clients') . ' WHERE userid = ?', [(int) $p['clientid']]);
+        $currency = (int) ($c['default_currency'] ?? 0);
+        if (!$currency && $this->db->table_exists($this->tbl('currencies'))) {
+            $currency = (int) ($this->row('SELECT id FROM ' . $this->tbl('currencies') . ' WHERE isdefault = 1')['id'] ?? 0);
+        }
+        $desc = $label . ' — ' . $p['name'];
+        $long = dse_day($p['start_date']) . ' ← ' . dse_day($p['end_date']);
+        $inv  = $this->perfex_model('invoices_model');
+        if ($inv) {
+            $d  = function ($v) { return function_exists('_d') ? _d($v) : $v; };
+            $id = $inv->add([
+                'clientid' => (int) $p['clientid'], 'number' => get_option('next_invoice_number'), 'date' => $d($this->today()), 'duedate' => $d($this->today()),
+                'currency' => $currency, 'subtotal' => $amount, 'total' => $amount, 'discount_total' => 0, 'adjustment' => 0, 'show_quantity_as' => 1,
+                'clientnote' => '', 'terms' => '', 'adminnote' => 'اتعملت من الاستوديو والباقات',
+                'newitems' => [['description' => $desc, 'long_description' => $long, 'qty' => 1, 'unit' => '', 'rate' => $amount, 'order' => 1, 'taxname' => []]],
+            ]);
+            if (!$id) {
+                throw new Exception('Perfex مارضيش يعمل الفاتورة — اعملها من الفواتير واربطها');
+            }
+        } else { // من غير Perfex (الاختبارات)
+            $this->db->insert($this->tbl('invoices'), ['clientid' => (int) $p['clientid'], 'total' => $amount, 'status' => 1, 'date' => $this->today()]);
+            $id = (int) $this->db->insert_id();
+        }
+        $this->db->insert($this->tbl('dse_package_invoices'), [
+            'package_id' => $p['id'], 'invoice_id' => (int) $id, 'note' => $label, 'created_by' => $this->staff_id(), 'created_at' => $this->now(),
+        ]);
+        return (int) $id;
+    }
+
+    /**
+     * سجّل دفعة على الباقة — من غير حد لعدد الدفعات.
+     * بتتسجل Payment على فاتورة الباقة في Perfex (أول فاتورة فيها باقي)، ولو الفواتير المربوطة مش مكفية سعر الباقة
+     * بتتعمل فاتورة بالباقي لوحدها. بعدها الباقة بتتفعل لو وصلت نسبة التفعيل، وتنبيه "الشغل عدّى المدفوع" بيتحسب تاني.
+     */
+    public function record_payment($package_id, $amount, $date = null, $mode = null, $note = null)
+    {
+        $p      = $this->package($package_id);
+        $amount = round((float) $amount, 2);
+        if (!in_array($p['status'], ['pending', 'active'], true)) {
+            throw new Exception('الباقة دي ' . dse_package_statuses()[$p['status']] . ' — الدفعة بتتسجل على باقة شغالة أو مستنية الدفع');
+        }
+        if ($amount <= 0) {
+            throw new Exception('اكتب المبلغ');
+        }
+        $date = $date ?: $this->today();
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) || $date > $this->today()) {
+            throw new Exception('تاريخ الدفعة غلط (مينفعش يبقى في المستقبل)');
+        }
+        $left = (float) $p['price'] - $this->package_paid_amount($p);
+        if ($amount > $left + 0.5) {
+            throw new Exception('المبلغ أكبر من الباقي على الباقة (' . dse_money(max(0, $left)) . ')');
+        }
+        $modes = $this->payment_modes();
+        $mode  = (int) $mode ?: (int) ($modes[0]['id'] ?? 0);
+
+        // الفواتير اللي فيها مكان، ولو مش مكفية ← فاتورة بالباقي من سعر الباقة
+        $room = [];
+        $cap  = 0.0;
+        foreach ($this->package_invoices($p['id']) as $i) {
+            if ((int) $i['status'] === 5) {
+                continue; // ملغية
+            }
+            $r = (float) $i['total'] - (float) $i['paid'];
+            if ($r > 0.004) {
+                $room[] = [(int) $i['invoice_id'], $r];
+                $cap   += $r;
+            }
+        }
+        if ($cap + 0.004 < $amount) {
+            $billed = array_sum(array_map(function ($i) { return (int) $i['status'] === 5 ? 0 : (float) $i['total']; }, $this->package_invoices($p['id'])));
+            $need   = round(max($amount - $cap, (float) $p['price'] - $billed), 2);
+            $room[] = [$this->create_package_invoice($p, $need, $billed > 0 ? 'باقي الباقة' : 'فاتورة الباقة'), $need];
+        }
+
+        $pay  = $this->perfex_model('payments_model');
+        $left = $amount;
+        $ids  = [];
+        foreach ($room as [$inv, $r]) {
+            if ($left <= 0.004) {
+                break;
+            }
+            $a    = round(min($left, $r), 2);
+            $left = round($left - $a, 2);
+            if ($pay) {
+                $ids[] = $pay->add([
+                    'invoiceid' => $inv, 'amount' => $a, 'paymentmode' => $mode, 'date' => function_exists('_d') ? _d($date) : $date,
+                    'note' => (string) $note, 'transactionid' => '', 'do_not_send_email_template' => 'on',
+                ]);
+            } else { // من غير Perfex (الاختبارات)
+                $this->db->insert($this->tbl('invoicepaymentrecords'), [
+                    'invoiceid' => $inv, 'amount' => $a, 'paymentmode' => (string) $mode, 'date' => $date, 'daterecorded' => $this->now(), 'note' => (string) $note,
+                ]);
+                $ids[] = (int) $this->db->insert_id();
+                $paid  = (float) ($this->row('SELECT SUM(amount) s FROM ' . $this->tbl('invoicepaymentrecords') . ' WHERE invoiceid = ?', [$inv])['s'] ?? 0);
+                $total = (float) $this->row('SELECT total FROM ' . $this->tbl('invoices') . ' WHERE id = ?', [$inv])['total'];
+                $this->db->update($this->tbl('invoices'), ['status' => $paid + 0.004 >= $total ? 2 : 3], ['id' => $inv]);
+            }
+        }
+        $st = $this->sync_package_status($p['id']);
+        $this->check_payment_due($p['id']);
+        return ['status' => $st, 'payments' => $ids, 'left' => round((float) $p['price'] - $this->package_paid_amount($this->package($p['id'])), 2)];
+    }
+
+    /**
+     * جدّد الاشتراك: باقة جديدة بنفس الخدمات والسعر والمدة، بتبدأ اليوم اللي بعد ما القديمة تخلص (أو النهارده لو خلصت).
+     * بتفضل "مستنية الدفع" لحد ما تتسجل دفعة توصل نسبة التفعيل — والقديمة بتكمل لحد آخر يوم فيها.
+     */
+    public function renew_package($package_id, array $over = [])
+    {
+        $p = $this->package($package_id);
+        if ($p['status'] === 'cancelled') {
+            throw new Exception('الباقة دي ملغية — اعمل باقة جديدة بدل التجديد');
+        }
+        $items = [];
+        foreach ($this->rows('SELECT type, qty FROM ' . $this->tbl('dse_package_items') . ' WHERE package_id = ?', [(int) $p['id']]) as $i) {
+            $items[$i['type']] = (float) $i['qty'];
+        }
+        foreach ((array) ($over['items'] ?? []) as $t => $q) {
+            if ($q !== '' && $q !== null) {
+                $items[$t] = (float) $q;
+            }
+        }
+        $days  = (int) ($over['validity_days'] ?? 0) ?: (int) round((strtotime($p['end_date']) - strtotime($p['start_date'])) / 86400) + 1;
+        $start = $over['start_date'] ?? '';
+        if ($start === '') {
+            $start = max($this->today(), date('Y-m-d', strtotime($p['end_date'] . ' +1 day')));
+        }
+        $price = isset($over['price']) && $over['price'] !== '' ? (float) $over['price'] : (float) $p['price'];
+        $name  = trim((string) ($over['name'] ?? '')) ?: $p['name'];
+        $id    = $this->create_package($p['clientid'], $name, $price, $start, $days, $items, null, 'تجديد لباقة ' . $p['name'] . ' (' . dse_day($p['start_date']) . ' ← ' . dse_day($p['end_date']) . ')');
+        $this->db->insert($this->tbl('dse_package_events'), [
+            'package_id' => $id, 'event' => 'renew', 'old_items' => json_encode($items), 'new_items' => json_encode($items),
+            'old_price' => $p['price'], 'new_price' => $price, 'old_end_date' => $p['end_date'], 'new_end_date' => $this->package($id)['end_date'],
+            'note' => 'تجديد من باقة #' . $p['id'], 'staff_id' => $this->staff_id(), 'created_at' => $this->now(),
+        ]);
+        return $id;
+    }
+
     public function sync_all_packages()
     {
         foreach ($this->rows('SELECT id FROM ' . $this->tbl('dse_packages') . " WHERE status IN ('pending','active')") as $p) {

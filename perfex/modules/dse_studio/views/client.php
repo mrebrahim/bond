@@ -80,7 +80,14 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                     <?php } ?>
                   </div>
                 <?php } ?>
-                <?php if (!$pinv) { ?><div class="small text-muted">مفيش فواتير متربطة لسه</div><?php } ?>
+                <?php if (!$pinv) { ?><div class="small text-muted">مفيش دفعات لسه</div><?php } ?>
+                <?php $pays = $pkg_payments[$p['id']] ?? []; if ($pays) { ?>
+                  <div class="small mtop5"><b>الدفعات (<?= count($pays); ?>):</b>
+                    <?php foreach ($pays as $n => $py) { ?>
+                      <div>💵 <?= $n + 1; ?>) <b><?= dse_money($py['amount']); ?></b> · <?= dse_day($py['date']); ?><?= !empty($py['mode_name']) ? ' · ' . html_escape($py['mode_name']) : ''; ?><?= $py['note'] ? ' — ' . html_escape($py['note']) : ''; ?></div>
+                    <?php } ?>
+                  </div>
+                <?php } ?>
               </div>
 
               <?php if ($pkg_events[$p['id']]) { ?>
@@ -90,7 +97,7 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                       $ni = json_decode($e['new_items'], true) ?: [];
                       $ch = [];
                       foreach ($ni as $t => $q) { if (($oi[$t] ?? 0) != $q) { $ch[] = dse_type_name($t) . ' ' . dse_num($oi[$t] ?? 0) . '←' . dse_num($q); } } ?>
-                    <div>⬆️ <?= ['upgrade' => 'ترقية', 'downgrade' => 'تخفيض', 'edit' => 'تعديل'][$e['event']] ?? $e['event']; ?> <?= dse_day($e['created_at']); ?>:
+                    <div><?= $e['event'] === 'renew' ? '' : '⬆️ '; ?><?= ['upgrade' => 'ترقية', 'downgrade' => 'تخفيض', 'edit' => 'تعديل', 'renew' => '🔄 تجديد'][$e['event']] ?? $e['event']; ?> <?= dse_day($e['created_at']); ?>:
                       <?= implode(' · ', $ch); ?><?= $e['old_price'] != $e['new_price'] ? ' · السعر ' . dse_money($e['old_price']) . ' ← ' . dse_money($e['new_price']) : ''; ?>
                       <?= $e['old_end_date'] != $e['new_end_date'] ? ' · لحد ' . dse_day($e['new_end_date']) : ''; ?><?= $e['note'] ? ' — ' . html_escape($e['note']) : ''; ?></div>
                   <?php } ?>
@@ -99,9 +106,24 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
 
               <?php if ($open && $can_pkg) { ?>
                 <div class="dse-pkg-actions">
+                  <?php $left = round((float) $p['price'] - $paidv, 2); if ($left > 0.5) { ?>
+                  <details class="dse-box" open>
+                    <summary>💵 سجّل دفعة (قسط) — الباقي <?= dse_money($left); ?></summary>
+                    <?= form_open(admin_url('dse_studio/record_payment/' . $p['id'])); ?>
+                      <div class="row">
+                        <div class="col-xs-6 col-sm-3 form-group"><label>المبلغ</label><input type="number" name="amount" min="1" max="<?= $left; ?>" step="0.01" value="<?= $left; ?>" class="form-control" required></div>
+                        <div class="col-xs-6 col-sm-3 form-group"><label>التاريخ</label><input type="date" name="date" value="<?= date('Y-m-d'); ?>" max="<?= date('Y-m-d'); ?>" class="form-control"></div>
+                        <div class="col-xs-6 col-sm-3 form-group"><label>طريقة الدفع</label><select name="paymentmode" class="form-control"><?php foreach ($pay_modes as $pm) { ?><option value="<?= (int) $pm['id']; ?>"><?= html_escape($pm['name']); ?></option><?php } ?></select></div>
+                        <div class="col-xs-6 col-sm-3 form-group"><label>ملاحظة</label><input name="note" class="form-control" placeholder="القسط التاني…"></div>
+                      </div>
+                      <button class="btn btn-success btn-sm">سجّل الدفعة</button>
+                      <span class="small text-muted">بتتسجل على فاتورة الباقة في Perfex (ولو مفيش فاتورة بتتعمل لوحدها بالباقي). سجّل كل قسط لوحده وقت ما يتدفع — مفيش حد للعدد.</span>
+                    <?= form_close(); ?>
+                  </details>
+                  <?php } ?>
                   <details class="dse-box">
-                    <summary>💳 سجّل دفعة / قسط على الباقة دي</summary>
-                    <p class="small text-muted">اعمل فاتورة القسط في Perfex وسجّل الدفع عليها هناك، وبعدين اربطها هنا — السيستم بيجمع المدفوع من كل الفواتير.</p>
+                    <summary>🧾 اربط فاتورة عملتها في Perfex (اختياري)</summary>
+                    <p class="small text-muted">لو عامل فاتورة بنفسك في Perfex (قسط أو فرق ترقية) اربطها هنا — السيستم بيجمع المدفوع من كل الفواتير.</p>
                   <?= form_open(admin_url('dse_studio/link_invoice/' . $p['id']), ['class' => 'form-inline']); ?>
                     <select name="invoice_id" class="form-control input-sm" required>
                       <option value="">اربط فاتورة (قسط / دفعة)…</option>
@@ -143,6 +165,23 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                 </div>
               <?php } ?>
 
+              <?php if ($can_pkg && in_array($p['status'], ['active', 'expired', 'pending'], true)) { $days = (int) round((strtotime($p['end_date']) - strtotime($p['start_date'])) / 86400) + 1; ?>
+                <details class="dse-box">
+                  <summary>🔄 جدّد الاشتراك (الشهر الجاي)</summary>
+                  <?= form_open(admin_url('dse_studio/renew_package/' . $p['id'])); ?>
+                    <p class="small text-muted">باقة جديدة بنفس الخدمات والسعر — بتبدأ بعد ما دي تخلص، وبتتفعل لما تسجّل الدفعة عليها. اللي فاضل في الباقة دي بيفضل فيها لحد آخر يوم.</p>
+                    <div class="row">
+                      <div class="col-xs-6 col-sm-3 form-group"><label>تبدأ</label><input type="date" name="start_date" value="<?= max(date('Y-m-d'), date('Y-m-d', strtotime($p['end_date'] . ' +1 day'))); ?>" class="form-control"></div>
+                      <div class="col-xs-6 col-sm-3 form-group"><label>المدة (أيام)</label><input type="number" name="validity_days" min="1" value="<?= $days; ?>" class="form-control"></div>
+                      <div class="col-xs-12 col-sm-6 form-group"><label>السعر (ج.م)</label><input type="number" name="price" min="0" value="<?= (float) $p['price']; ?>" class="form-control"></div>
+                      <?php foreach (dse_types() as $t => $info) { ?>
+                        <div class="col-xs-4 form-group"><label><?= $info['name']; ?></label><input type="number" name="items[<?= $t; ?>]" min="0" step="0.5" value="<?= dse_num($balances[$p['id']][$t]['total'] ?? 0); ?>" class="form-control"></div>
+                      <?php } ?>
+                    </div>
+                    <button class="btn btn-primary btn-sm">جدّد</button>
+                  <?= form_close(); ?>
+                </details>
+              <?php } ?>
               <?php if ($can_pkg) { ?>
                 <!-- تصحيح الغلط: تعديل البيانات / مسح / رجوع -->
                 <details class="dse-box">
@@ -179,7 +218,7 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
           <?php } ?>
           <?php if ($can_pkg) { ?>
           <details class="dse-box" <?= $packages ? '' : 'open'; ?>>
-          <summary>➕ باقة جديدة</summary>
+          <summary>➕ باقة جديدة <span class="small text-muted">(للتجديد استخدم "🔄 جدّد الاشتراك" على الباقة نفسها)</span></summary>
           <?= form_open(admin_url('dse_studio/create_package/' . $cid)); ?>
             <div class="row">
               <div class="col-xs-6 form-group"><label>اسم الباقة</label><input name="name" class="form-control" placeholder="Growth" required></div>
