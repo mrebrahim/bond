@@ -539,7 +539,10 @@ test('العملاء القدام: باقة قديمة (خلصت) ← "مستن�
     throws(function () use ($m, $c) { $m->create_package($c, 'Old', 6000, '2026-10-25', 30, ['reel' => 6], null, null, true); }, 'لازم تكون خلصت');
     $old = $m->create_package($c, 'Growth', 6000, '2026-08-01', 30, ['reel' => 6, 'design' => 4], null, null, true);
     $p = $m->package($old);
-    ok($p['status'] === 'expired' && (int) $p['historic'] === 1 && $m->balance($old)['reel']['remaining'] == 0, json_encode($p));
+    ok($p['status'] === 'expired' && (int) $p['historic'] === 1 && $m->balance($old)['reel']['remaining'] == 0 && $m->balance($old)['design']['remaining'] == 0, json_encode($p));
+    $noitems = $m->create_package($c, 'من غير عدد', 3000, '2026-07-01', 30, [], null, null, true);
+    ok($m->package($noitems)['status'] === 'expired' && $m->balance($noitems) === [], 'القديمة من غير عدد ريلز');
+    $db->query('DELETE FROM tbldse_packages WHERE id = ?', [$noitems]);
     $m->sync_client_packages($c);
     ok($m->package($old)['status'] === 'expired' && !$m->active_package($c), 'مبترجعش بفترة السماح');
     $r = array_values(array_filter($m->renewals(), function ($x) use ($c) { return $x['clientid'] === $c; }));

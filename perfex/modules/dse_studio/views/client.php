@@ -62,9 +62,11 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                 <?php if ($p['status'] === 'active' && $p['end_date'] < date('Y-m-d')) { ?><span class="label label-warning">⏳ فترة سماح لحد <?= dse_day(date('Y-m-d', strtotime($p['end_date'] . ' +' . (int) (get_option('dse_grace_days') !== '' ? get_option('dse_grace_days') : 15) . ' days'))); ?> علشان الرصيد اللي فاضل</span><?php } ?>
               </div>
               <div class="small mtop5">
-                <?php foreach ($balances[$p['id']] as $t => $b) { ?>
+                <?php if (!empty($p['historic'])) { ?>
+                  <span class="dse-chip">الرصيد الباقي: 0 — اتصرفت كلها<?= $balances[$p['id']] ? ' (' . implode(' · ', array_map(function ($t, $b) { return dse_num($b['total']) . ' ' . dse_unit($t); }, array_keys($balances[$p['id']]), $balances[$p['id']])) . ')' : ''; ?></span>
+                <?php } else { foreach ($balances[$p['id']] as $t => $b) { ?>
                   <span class="dse-chip"><?= dse_type_name($t); ?>: <?= dse_num($b['used']); ?>/<?= dse_num($b['total']); ?></span>
-                <?php } ?>
+                <?php } } ?>
               </div>
 
               <!-- الفلوس: كل الفواتير (أقساط / فرق ترقية) -->
@@ -244,7 +246,7 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                 <option value="0">باقة جديدة (بتتفعل لما تسجّل الدفعة)</option>
                 <option value="1">باقة قديمة — خلصت قبل السيستم (اتدفعت واتصرفت برا)</option>
               </select>
-              <p class="small text-muted dse-hist-hint" style="display:none;margin:4px 0 0">اكتب تاريخ بداية آخر باقة كانت معاه ومدتها — العميل هيظهر في "🔄 مستنيين تجديد" علشان نطالبه يجدد.</p>
+              <p class="small text-muted dse-hist-hint" style="display:none;margin:4px 0 0">اكتب تاريخ بداية آخر باقة كانت معاه ومدتها — الرصيد الباقي بيتصفّر (الريلز والتصميمات بتتحسب اتعملت كلها)، وعدد الريلز اختياري. العميل هيظهر في "🔄 مستنيين تجديد" علشان نطالبه يجدد.</p>
             </div>
             <button class="btn btn-primary">اعمل الباقة</button>
             <a class="btn btn-default" href="<?= admin_url('invoices/invoice?customer_id=' . $cid); ?>" target="_blank">اعمل فاتورة في Perfex</a>

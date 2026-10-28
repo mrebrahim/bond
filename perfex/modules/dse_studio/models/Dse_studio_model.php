@@ -126,7 +126,7 @@ class Dse_studio_model extends App_Model
         $this->client($clientid);
         $items = array_filter(array_map('floatval', $items), function ($q) { return $q > 0; });
         $items = array_intersect_key($items, dse_types());
-        if (!$items) {
+        if (!$items && !$historic) {
             throw new Exception('ضيف خدمة واحدة على الأقل في الباقة');
         }
         $validity_days = (int) $validity_days;
