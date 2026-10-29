@@ -755,6 +755,40 @@ test('مواعيد التنزيل (الأحد ريل · التلات تصميم 
     $GLOBALS['slot_client'] = $c;
     $m->fixed_time = $save;
 });
+
+test('الأنواع الأربعة: ريل · تصميم · فيديو يوتيوب (بالساعات) · بودكاست (بالعدد — الحلقة ساعتين بالكتير)', function () use ($m, $db) {
+    $save = $m->fixed_time;
+    $m->fixed_time = strtotime('2026-10-29 10:00:00');
+    ok($m->session_minutes('podcast', 2) === 240 && $m->session_minutes('trainer_hours', 1.5) === 90 && $m->session_minutes('reel', 3) === 60);
+    update_option('dse_minutes_per_podcast', '200');
+    ok($m->session_minutes('podcast', 1) === 120, 'أقصاها ساعتين');
+    update_option('dse_minutes_per_podcast', '120');
+    $db->insert('tblclients', ['company' => 'أكاديمية المدرس']); $c = $db->insert_id();
+    $p = $m->create_package($c, 'Edu', 20000, '2026-10-01', 60, ['trainer_hours' => 10, 'podcast' => 4, 'reel' => 4]);
+    $m->record_payment($p, 20000, '2026-10-01');
+    $st = q('SELECT id FROM tbldse_studios LIMIT 1')[0]['id'];
+    $s1 = $m->book_session($c, $st, '2026-11-01 10:00:00', 'podcast', 2);
+    ok(q('SELECT end_at FROM tbldse_sessions WHERE id = ?', [$s1])[0]['end_at'] === '2026-11-01 14:00:00' && $m->balance($p)['podcast']['reserved'] == 2);
+    $s2 = $m->book_session($c, $st, '2026-11-01 15:00:00', 'trainer_hours', 3);
+    ok(q('SELECT end_at FROM tbldse_sessions WHERE id = ?', [$s2])[0]['end_at'] === '2026-11-01 18:00:00');
+    $m->fixed_time = strtotime('2026-11-02 10:00:00');
+    $m->complete_session($s1, 2);
+    $m->complete_session($s2, 3);
+    // التنزيل: يوتيوب وبودكاست مبيتخصموش (اتخصموا في التصوير) · الرسالة بنوعها
+    $m->save_client_wa($c, ['wa_group_jid' => '120363000000000444@g.us']);
+    $m->publish_post($c, 'youtube', 'https://youtube.com/watch?v=1');
+    $m->publish_post($c, 'podcast', 'https://youtube.com/watch?v=2');
+    throws(function () use ($m, $c) { $m->publish_post($c, 'tiktok', 'https://x'); }, 'نوع البوست غلط');
+    ok($m->balance($p)['podcast']['used'] == 2 && $m->balance($p)['trainer_hours']['used'] == 3);
+    $o = array_column(q("SELECT body FROM tbldse_wa_outbox WHERE clientid = ? AND msg_key = 'published' ORDER BY id", [$c]), 'body');
+    ok(strpos($o[0], 'الفيديو بتاعك نزل على اليوتيوب 📺') === 0 && strpos($o[1], 'حلقة البودكاست بتاعتك نزلت 🎙') === 0, json_encode($o, JSON_UNESCAPED_UNICODE));
+    // المخزون: بودكاست اتصوّر 2 ونزل 1 ← جاهز 1 · مواعيد: الاتنين بودكاست (نزلت النهارده) ← الجاهزة تغطي 09/11 وبيخلص 16/11
+    ok($m->save_publish_slots($c, [1 => 'podcast', 3 => 'youtube', 5 => 'reel']) === 3);
+    $rows = []; foreach ($m->content_runway($c) as $r) { $rows[$r['type']] = $r; }
+    ok(isset($rows['podcast'], $rows['reel']) && !isset($rows['trainer_hours']) && $rows['podcast']['ready'] == 1 && $rows['podcast']['runout'] === '2026-11-16' && $rows['podcast']['unit'] === 'حلقة', json_encode($rows['podcast'] ?? null, JSON_UNESCAPED_UNICODE));
+    $db->query("UPDATE tbldse_packages SET status = 'cancelled' WHERE clientid = ?", [$c]);
+    $m->fixed_time = $save;
+});
 echo "\nالتنبيهات:\n";
 test('العميل بقاله فترة مابيصوّرش → تنبيه مرة واحدة، urgent لو مفيش نشر', function () use ($m, $client, $db) {
     ok(count($m->check_inactive_clients()) === 0, 'لسه بادئ');
@@ -851,8 +885,8 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
         'pkg_events' => $one(function ($p) use ($m) { return $m->package_events($p['id']); }), 'pkg_paid' => $one(function ($p) use ($m) { return $m->package_paid_amount($p); }),
         'pkg_busy' => $one(function ($p) use ($m) { return $m->package_has_activity($p['id']); }), 'pkg_payments' => $one(function ($p) use ($m) { return $m->package_payments($p['id']); }),
         'free_invoices' => [['id' => 99, 'prefix' => 'INV-', 'number' => 9, 'total' => 1000, 'status' => 2]], 'pay_modes' => $m->payment_modes(), 'data_counts' => $m->client_data_counts($rc),
-        'slots' => [0 => 'reel', 2 => 'design', 4 => 'reel'], 'runway' => ['ready' => 1, 'filmed' => 2, 'published' => 1, 'runout' => '2026-11-05', 'days_left' => 7, 'from_schedule' => true, 'last_film' => '2026-10-27 12:00:00', 'days_since_film' => 2, 'next_session' => null, 'upcoming' => [['day' => '2026-11-01', 'type' => 'reel']]]]);
-    ok(strpos($hh, 'مواعيد التنزيل ومخزون المحتوى') !== false && strpos($hh, 'المحتوى بيخلص الخميس 05/11') !== false && substr_count($hh, 'name="days[') === 7 && strpos($hh, '<option value="design" selected>') !== false, 'مواعيد التنزيل في البروفايل');
+        'slots' => [0 => 'reel', 2 => 'design', 4 => 'podcast'], 'runways' => [['type' => 'reel', 'type_name' => 'ريلز', 'unit' => 'ريل', 'ready' => 1, 'filmed' => 2, 'published' => 1, 'runout' => '2026-11-05', 'days_left' => 7, 'from_schedule' => true, 'last_film' => '2026-10-27 12:00:00', 'days_since_film' => 2, 'next_session' => null, 'upcoming' => [['day' => '2026-11-01', 'type' => 'reel'], ['day' => '2026-11-05', 'type' => 'podcast']]]]]);
+    ok(strpos($hh, 'مواعيد التنزيل ومخزون المحتوى') !== false && strpos($hh, 'بيخلص الخميس 05/11') !== false && substr_count($hh, 'name="days[') === 7 && strpos($hh, '<option value="design" selected>') !== false && strpos($hh, '<option value="podcast" selected>') !== false && strpos($hh, '🎙 بودكاست الخميس') !== false && strpos($hh, 'value="trainer_hours">فيديو يوتيوب (بالعرض) (ساعة)') !== false && strpos($hh, 'name="items[podcast]"') !== false, 'مواعيد التنزيل في البروفايل');
     file_put_contents(sys_get_temp_dir() . '/dse_client_historic.html', $hh);
     ok(strpos($hh, 'مدفوع <b>2,500') !== false && strpos($hh, 'سجّل دفعة') !== false && strpos($hh, 'اربط فاتورة عملتها في Perfex') !== false && strpos($hh, 'قسط قديم') !== false && strpos($hh, 'name="left[reel]"') !== false && strpos($hh, '<option value="4">4 أسابيع') !== false && strpos($hh, 'امسح العميل من الاستوديو') !== false && strpos($hh, '⏳ مدّ السماح') !== false && strpos($hh, ': · ') === false, 'القديمة: دفعات وفواتير ومدّ السماح');
     $pg = render('pick_group', ['client' => $GLOBALS['pick'][0], 'groups' => $GLOBALS['pick'][1]]);

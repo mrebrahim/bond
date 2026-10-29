@@ -292,13 +292,13 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
               <div class="col-xs-6 form-group"><label>الاستوديو</label>
                 <select name="studio_id" class="form-control" required><?php foreach ($studios as $s) { ?><option value="<?= (int) $s['id']; ?>"><?= html_escape($s['name']); ?></option><?php } ?></select></div>
               <div class="col-xs-6 form-group"><label>النوع</label>
-                <select name="type" class="form-control"><option value="reel">ريلز</option><option value="trainer_hours">ساعات مدرب</option></select></div>
+                <select name="type" class="form-control"><?php foreach (dse_types() as $t => $info) { if ($info['session']) { ?><option value="<?= $t; ?>"><?= $info['name']; ?> (<?= $info['unit']; ?>)</option><?php } } ?></select></div>
               <div class="col-xs-6 form-group"><label>العدد</label><input type="number" name="qty" min="0.5" step="0.5" class="form-control" required></div>
               <div class="col-xs-12 form-group"><label>المصور</label>
                 <select name="photographer_id" class="form-control"><option value="">—</option><?php foreach ($staff as $s) { ?><option value="<?= (int) $s['staffid']; ?>"><?= html_escape($s['firstname'] . ' ' . $s['lastname']); ?></option><?php } ?></select></div>
               <div class="col-xs-12 form-group"><label>ملاحظات</label><input name="notes" class="form-control"></div>
             </div>
-            <p class="text-muted small">المدة واللبسات بتتحسب لوحدها، والعميل بتوصله رسالة "تم الحجز" في الجروب.</p>
+            <p class="text-muted small">المدة واللبسات بتتحسب لوحدها (حلقة البودكاست ساعتين بالكتير · فيديو اليوتيوب بعدد الساعات)، والعميل بتوصله رسالة "تم الحجز" في الجروب.</p>
             <button class="btn btn-primary">احجز</button>
           <?= form_close(); ?>
         </div></div>
@@ -357,18 +357,20 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
         <!-- ===== مواعيد التنزيل + مخزون المحتوى ===== -->
         <div class="panel_s" id="publish-slots"><div class="panel-body">
           <h5 class="bold">📅 مواعيد التنزيل ومخزون المحتوى</h5>
-          <?php if (!empty($runway)) { ?>
+          <?php foreach ((array) ($runways ?? []) as $runway) { ?>
             <div class="mbot10">
-              <span class="dse-chip">🎬 جاهز للنشر: <b><?= dse_num($runway['ready']); ?></b> ريل</span>
+              <span class="dse-chip"><?= $runway['type'] === 'podcast' ? '🎙' : '🎬'; ?> <?= $runway['type_name']; ?> جاهز للنشر: <b><?= dse_num($runway['ready']); ?></b> <?= $runway['unit']; ?></span>
               <span class="dse-chip">اتصوّر <?= dse_num($runway['filmed']); ?> · نزل <?= (int) $runway['published']; ?></span>
               <?php if ($runway['runout']) { ?>
-                <span class="label label-<?= $runway['days_left'] <= 7 ? 'danger' : 'default'; ?>">المحتوى بيخلص <?= dse_day($runway['runout']); ?><?= $runway['days_left'] ? ' (بعد ' . (int) $runway['days_left'] . ' يوم)' : ' (النهارده)'; ?></span>
+                <span class="label label-<?= $runway['days_left'] <= 7 ? 'danger' : 'default'; ?>">بيخلص <?= dse_day($runway['runout']); ?><?= $runway['days_left'] ? ' (بعد ' . (int) $runway['days_left'] . ' يوم)' : ' (النهارده)'; ?></span>
               <?php } elseif ($runway['from_schedule']) { ?>
-                <span class="label label-success">المحتوى مكفّي</span>
+                <span class="label label-success">مكفّي</span>
               <?php } ?>
-              <div class="small text-muted mtop5">آخر تصوير: <?= $runway['last_film'] ? dse_day($runway['last_film']) . ' (من ' . (int) $runway['days_since_film'] . ' يوم)' : 'مصوّرش لسه'; ?><?= $runway['next_session'] ? ' · 📅 جاي يصوّر ' . dse_day($runway['next_session']) : ''; ?></div>
-              <?php if ($runway['upcoming']) { ?><div class="small mtop5">الجاي: <?php foreach ($runway['upcoming'] as $u) { echo ($u['type'] === 'design' ? '🎨 ' : '🎬 ') . dse_day($u['day']) . ' &nbsp; '; } ?></div><?php } ?>
             </div>
+          <?php } ?>
+          <?php if (!empty($runways)) { $runway = $runways[0]; ?>
+            <div class="small text-muted mbot10">آخر تصوير: <?= $runway['last_film'] ? dse_day($runway['last_film']) . ' (من ' . (int) $runway['days_since_film'] . ' يوم)' : 'مصوّرش لسه'; ?><?= $runway['next_session'] ? ' · 📅 جاي يصوّر ' . dse_day($runway['next_session']) : ''; ?>
+              <?php if ($runway['upcoming']) { ?><br>الجاي: <?php foreach ($runway['upcoming'] as $u) { echo (dse_post_types()[$u['type']]['label'] ?? $u['type']) . ' ' . dse_day($u['day']) . ' &nbsp; '; } ?><?php } ?></div>
           <?php } ?>
           <?php if ($can_pkg) { ?>
             <?= form_open(admin_url('dse_studio/publish_slots/' . $cid)); ?>
@@ -377,8 +379,7 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                   <div class="col-xs-6 col-sm-3 form-group" style="margin-bottom:8px"><label class="small"><?= $dname; ?></label>
                     <select name="days[<?= $wd; ?>]" class="form-control input-sm">
                       <option value="">—</option>
-                      <option value="reel" <?= $cur === 'reel' ? 'selected' : ''; ?>>🎬 ريل</option>
-                      <option value="design" <?= $cur === 'design' ? 'selected' : ''; ?>>🎨 تصميم</option>
+                      <?php foreach (dse_post_types() as $t => $pt) { ?><option value="<?= $t; ?>" <?= $cur === $t ? 'selected' : ''; ?>><?= $pt['label']; ?></option><?php } ?>
                     </select></div>
                 <?php } ?>
               </div>
@@ -463,7 +464,7 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
           <?php if ($can_book) { ?>
             <?= form_open(admin_url('dse_studio/publish/' . $cid)); ?>
               <div class="row">
-                <div class="col-xs-4"><select name="type" class="form-control"><option value="reel">ريل</option><option value="design">تصميم</option></select></div>
+                <div class="col-xs-4"><select name="type" class="form-control"><?php foreach (dse_post_types() as $t => $pt) { ?><option value="<?= $t; ?>"><?= $pt['label']; ?></option><?php } ?></select></div>
                 <div class="col-xs-8"><input name="post_url" class="form-control" dir="ltr" placeholder="https://instagram.com/p/..." required></div>
               </div>
               <p class="text-muted small mtop5">العميل بتوصله رسالة فيها لينك البوست ولينك التقييم والرصيد الباقي. التصميم بيتخصم من الرصيد.</p>
@@ -471,7 +472,7 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
             <?= form_close(); ?>
           <?php } ?>
           <?php foreach ($posts as $p) { ?>
-            <div class="small"><?= $p['type'] === 'design' ? '🎨' : '🎬'; ?> <a href="<?= html_escape($p['post_url']); ?>" target="_blank" dir="ltr"><?= html_escape(mb_substr($p['post_url'], 0, 50)); ?></a> <span class="text-muted"><?= dse_day($p['published_at']); ?></span></div>
+            <div class="small"><?= ['design' => '🎨', 'youtube' => '📺', 'podcast' => '🎙'][$p['type']] ?? '🎬'; ?> <a href="<?= html_escape($p['post_url']); ?>" target="_blank" dir="ltr"><?= html_escape(mb_substr($p['post_url'], 0, 50)); ?></a> <span class="text-muted"><?= dse_day($p['published_at']); ?></span></div>
           <?php } ?>
         </div></div>
       </div>

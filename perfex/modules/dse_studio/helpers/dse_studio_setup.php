@@ -238,6 +238,7 @@ function dse_studio_default_options()
         'dse_wa_daily_cap'         => '6',
         'dse_wa_team_numbers'      => '201050858834,201284816199,201224186293,201276530062',
         'dse_minutes_per_reel'     => '20',
+        'dse_minutes_per_podcast'  => '120',   // حلقة البودكاست أقصاها ساعتين في الاستوديو
         'dse_reels_per_outfit'     => '3',
         'dse_late_cancel_hours'    => '24',
         'dse_penalty_units'        => '1',
@@ -259,7 +260,7 @@ function dse_studio_default_options()
 
 if (!defined('DSE_STUDIO_SCHEMA_VERSION')) {
 /** نسخة الجداول — زوّدها مع أي جدول جديد */
-    define('DSE_STUDIO_SCHEMA_VERSION', '9');
+    define('DSE_STUDIO_SCHEMA_VERSION', '10');
 }
 
 if (!function_exists('dse_studio_ensure_schema')) {

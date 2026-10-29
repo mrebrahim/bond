@@ -103,8 +103,7 @@ class Dse_studio extends AdminController
         $data['pay_modes'] = $this->dse_studio_model->payment_modes();
         $data['data_counts'] = $this->dse_studio_model->client_data_counts($id);
         $data['slots']  = $this->dse_studio_model->publish_slots($id);
-        $data['runway'] = null;
-        $data['runway'] = $this->dse_studio_model->content_runway($id)[0] ?? null;
+        $data['runways'] = $this->dse_studio_model->content_runway($id);
         $linked = [];
         foreach ($data['packages'] as $p) {
             $data['balances'][$p['id']]     = $this->dse_studio_model->balance($p['id']);

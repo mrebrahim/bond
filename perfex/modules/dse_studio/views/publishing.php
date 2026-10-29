@@ -22,8 +22,7 @@
             <div class="form-group">
               <label>النوع</label>
               <select name="type" class="form-control">
-                <option value="reel">🎬 ريل</option>
-                <option value="design">🎨 تصميم (بيتخصم من الرصيد)</option>
+                <?php foreach (dse_post_types() as $t => $pt) { ?><option value="<?= $t; ?>"><?= $pt['label']; ?><?= $t === 'design' ? ' (بيتخصم من الرصيد)' : ''; ?></option><?php } ?>
               </select>
             </div>
             <div class="form-group">
@@ -46,7 +45,7 @@
           <table class="table table-condensed"><tbody>
             <?php foreach ($due as $d) { ?>
               <tr class="<?= $d['done'] ? 'success' : ''; ?>">
-                <td><?= $d['type'] === 'design' ? '🎨 تصميم' : '🎬 ريل'; ?></td>
+                <td><?= dse_post_types()[$d['type']]['label'] ?? $d['type']; ?></td>
                 <td><a href="<?= admin_url('dse_studio/publishing?client=' . (int) $d['clientid']); ?>"><b><?= html_escape($d['company']); ?></b></a></td>
                 <td><?= $d['done'] ? '<span class="label label-success">✅ نزل</span>' : '<span class="label label-warning">⏳ لسه</span>'; ?></td>
               </tr>
@@ -61,7 +60,7 @@
             <tbody>
             <?php foreach ($recent as $p) { ?>
               <tr>
-                <td><?= $p['type'] === 'design' ? '🎨' : '🎬'; ?></td>
+                <td><?= ['design' => '🎨', 'youtube' => '📺', 'podcast' => '🎙'][$p['type']] ?? '🎬'; ?></td>
                 <td><b><?= html_escape($p['company']); ?></b><?= $p['title'] ? '<div class="small text-muted">' . html_escape($p['title']) . '</div>' : ''; ?></td>
                 <td><a href="<?= html_escape($p['post_url']); ?>" target="_blank" dir="ltr">اللينك</a></td>
                 <td class="small"><?= dse_day($p['published_at']) . ' ' . dse_time($p['published_at']); ?></td>

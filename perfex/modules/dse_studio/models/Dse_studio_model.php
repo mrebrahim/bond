@@ -656,6 +656,9 @@ class Dse_studio_model extends App_Model
         if ($type === 'trainer_hours') {
             return (int) round($qty * 60);
         }
+        if ($type === 'podcast') { // الحلقة أقصاها ساعتين
+            return (int) round($qty * min(120, max(15, (float) $this->opt('dse_minutes_per_podcast', 120))));
+        }
         return (int) max(30, round($qty * (float) $this->opt('dse_minutes_per_reel', 20)));
     }
 
@@ -1104,7 +1107,7 @@ class Dse_studio_model extends App_Model
         if (!preg_match('~^https?://~i', $post_url)) {
             throw new Exception('حط لينك البوست (https://...)');
         }
-        if (!in_array($type, ['reel', 'design'], true)) {
+        if (!isset(dse_post_types()[$type])) {
             throw new Exception('نوع البوست غلط');
         }
         $pkg = $this->active_package($clientid);
@@ -1455,7 +1458,7 @@ class Dse_studio_model extends App_Model
             }
             $bal  = $this->balance($pkg['id']);
             $left = 0;
-            foreach (['reel', 'trainer_hours'] as $t) {
+            foreach (['reel', 'trainer_hours', 'podcast'] as $t) {
                 $left += isset($bal[$t]) ? $bal[$t]['remaining'] : 0;
             }
             if ($left <= 0) {
@@ -1512,7 +1515,7 @@ class Dse_studio_model extends App_Model
         $n = 0;
         foreach ($days as $wd => $type) {
             $wd = (int) $wd;
-            if ($wd < 0 || $wd > 6 || !in_array($type, ['reel', 'design'], true)) {
+            if ($wd < 0 || $wd > 6 || !isset(dse_post_types()[$type])) {
                 continue;
             }
             $this->db->insert($this->tbl('dse_publish_slots'), ['clientid' => (int) $clientid, 'weekday' => $wd, 'type' => $type]);
@@ -1532,7 +1535,7 @@ class Dse_studio_model extends App_Model
      * بيمشي على مواعيد التنزيل يوم بيوم: الريلز الجاهزة تكفي لحد إمتى؟
      * بيرجّع [runout => أول يوم تنزيل ريل مفيهوش محتوى (أو null), days => كام يوم لحده, upcoming => أقرب 4 مواعيد]
      */
-    public function schedule_runout($clientid, $ready, array $slots)
+    public function schedule_runout($clientid, $ready, array $slots, $stock_type = 'reel')
     {
         $today    = $this->today();
         $upcoming = [];
@@ -1551,7 +1554,7 @@ class Dse_studio_model extends App_Model
             if (count($upcoming) < 4) {
                 $upcoming[] = ['day' => $day, 'type' => $type];
             }
-            if ($type === 'reel' && !$runout) {
+            if ($type === $stock_type && !$runout) {
                 if ($stock <= 0) {
                     $runout = $day;
                 } else {
@@ -1604,31 +1607,35 @@ class Dse_studio_model extends App_Model
             if (!$pkg) {
                 continue;
             }
-            $bal = $this->balance($pkg['id']);
-            if (!isset($bal['reel'])) {
-                continue; // باقة تصميمات بس
+            $bal   = $this->balance($pkg['id']);
+            $slots = $this->publish_slots($cid);
+            $last  = $this->row('SELECT MAX(start_at) d FROM ' . $this->tbl('dse_sessions') . " WHERE clientid = ? AND status = 'done'", [$cid])['d'] ?? null;
+            $next  = $this->row('SELECT MIN(start_at) d FROM ' . $this->tbl('dse_sessions') . " WHERE clientid = ? AND status = 'booked' AND start_at > ?", [$cid, $this->now()])['d'] ?? null;
+            $since = $last ? (int) floor(($this->t() - strtotime($last)) / 86400) : (int) floor(($this->t() - strtotime($pkg['start_date'])) / 86400);
+            $c     = $this->client($cid);
+            // المخزون بيتحسب للأنواع اللي بالعدد وبتتصوّر: الريلز وحلقات البودكاست (اليوتيوب بالساعات فمفيش "عدد جاهز")
+            foreach (['reel' => 'ريل', 'podcast' => 'حلقة'] as $type => $unit) {
+                if (!isset($bal[$type])) {
+                    continue;
+                }
+                $filmed    = (float) ($this->row('SELECT SUM(actual_qty) s FROM ' . $this->tbl('dse_sessions') . " WHERE clientid = ? AND status = 'done' AND type = ?", [$cid, $type])['s'] ?? 0);
+                $published = (int) ($this->row('SELECT COUNT(*) n FROM ' . $this->tbl('dse_posts') . ' WHERE clientid = ? AND type = ?', [$cid, $type])['n'] ?? 0);
+                $recent    = (int) ($this->row('SELECT COUNT(*) n FROM ' . $this->tbl('dse_posts') . ' WHERE clientid = ? AND type = ? AND published_at >= ?', [$cid, $type, $from])['n'] ?? 0);
+                $sched     = count(array_filter($slots, function ($t) use ($type) { return $t === $type; }));
+                // في الأسبوع: من مواعيد التنزيل، وإلا من آخر 4 أسابيع، وإلا الافتراضي (للريلز) / حلقة في الأسبوع (للبودكاست)
+                $rate      = $sched > 0 ? $sched : ($recent > 0 ? $recent / 4 : ($type === 'reel' ? $def : 1));
+                $ready     = max(0, $filmed - $published);
+                $plan      = $sched > 0 ? $this->schedule_runout($cid, $ready, $slots, $type) : ['runout' => null, 'days' => null, 'upcoming' => $slots ? $this->schedule_runout($cid, 0, $slots, $type)['upcoming'] : []];
+                $out[] = [
+                    'clientid' => $cid, 'company' => $c['company'], 'package' => $pkg, 'type' => $type, 'unit' => $unit, 'type_name' => dse_type_name($type),
+                    'filmed' => $filmed, 'published' => $published,
+                    'ready' => $ready, 'rate' => round($rate, 1), 'rate_known' => $sched > 0 || $recent > 0, 'from_schedule' => $sched > 0,
+                    'days_left' => $plan['days'] !== null ? $plan['days'] : (int) floor($ready / $rate * 7), 'runout' => $plan['runout'],
+                    'slots' => $slots, 'upcoming' => $plan['upcoming'],
+                    'last_film' => $last, 'days_since_film' => $since, 'next_session' => $next,
+                    'reels_left' => (float) $bal[$type]['remaining'], 'balance_text' => $this->balance_text($pkg['id']),
+                ];
             }
-            $filmed    = (float) ($this->row('SELECT SUM(actual_qty) s FROM ' . $this->tbl('dse_sessions') . " WHERE clientid = ? AND status = 'done' AND type = 'reel'", [$cid])['s'] ?? 0);
-            $published = (int) ($this->row('SELECT COUNT(*) n FROM ' . $this->tbl('dse_posts') . " WHERE clientid = ? AND type = 'reel'", [$cid])['n'] ?? 0);
-            $recent    = (int) ($this->row('SELECT COUNT(*) n FROM ' . $this->tbl('dse_posts') . " WHERE clientid = ? AND type = 'reel' AND published_at >= ?", [$cid, $from])['n'] ?? 0);
-            $slots     = $this->publish_slots($cid);
-            $sched     = count(array_filter($slots, function ($t) { return $t === 'reel'; }));
-            // ريلز في الأسبوع: من مواعيد التنزيل، وإلا من آخر 4 أسابيع، وإلا الافتراضي
-            $rate      = $sched > 0 ? $sched : ($recent > 0 ? $recent / 4 : $def);
-            $ready     = max(0, $filmed - $published);
-            $plan      = $sched > 0 ? $this->schedule_runout($cid, $ready, $slots) : ['runout' => null, 'days' => null, 'upcoming' => $slots ? $this->schedule_runout($cid, 0, $slots)['upcoming'] : []];
-            $last      = $this->row('SELECT MAX(start_at) d FROM ' . $this->tbl('dse_sessions') . " WHERE clientid = ? AND status = 'done'", [$cid])['d'] ?? null;
-            $next      = $this->row('SELECT MIN(start_at) d FROM ' . $this->tbl('dse_sessions') . " WHERE clientid = ? AND status = 'booked' AND start_at > ?", [$cid, $this->now()])['d'] ?? null;
-            $since     = $last ? (int) floor(($this->t() - strtotime($last)) / 86400) : (int) floor(($this->t() - strtotime($pkg['start_date'])) / 86400);
-            $c         = $this->client($cid);
-            $out[] = [
-                'clientid' => $cid, 'company' => $c['company'], 'package' => $pkg, 'filmed' => $filmed, 'published' => $published,
-                'ready' => $ready, 'rate' => round($rate, 1), 'rate_known' => $sched > 0 || $recent > 0, 'from_schedule' => $sched > 0,
-                'days_left' => $plan['days'] !== null ? $plan['days'] : (int) floor($ready / $rate * 7), 'runout' => $plan['runout'],
-                'slots' => $slots, 'upcoming' => $plan['upcoming'],
-                'last_film' => $last, 'days_since_film' => $since, 'next_session' => $next,
-                'reels_left' => (float) $bal['reel']['remaining'], 'balance_text' => $this->balance_text($pkg['id']),
-            ];
         }
         usort($out, function ($a, $b) { return [$a['next_session'] !== null, $a['days_left'], -$a['days_since_film']] <=> [$b['next_session'] !== null, $b['days_left'], -$b['days_since_film']]; });
         return $out;
@@ -1653,14 +1660,16 @@ class Dse_studio_model extends App_Model
             if (!$empty && !$short && !$idle) {
                 continue;
             }
-            $why = $empty ? '⚠️ مفيش ولا ريل متصوّر جاهز للنشر' . ($r['runout'] ? ' — ميعاد التنزيل الجاي ' . dse_day($r['runout']) . ' هيفوت' : '')
-                : ($short ? 'الريلز الجاهزة (' . dse_num($r['ready']) . ') بتخلص ' . ($r['runout'] ? 'يوم ' . dse_day($r['runout']) : 'بعد ~' . $r['days_left'] . ' يوم') : 'فيه ' . dse_num($r['ready']) . ' ريل جاهز');
+            $u   = $r['unit'];
+            list($plural, $one) = $r['type'] === 'podcast' ? ['حلقات البودكاست الجاهزة', 'حلقة بودكاست'] : ['الريلز الجاهزة', 'ريل'];
+            $why = $empty ? '⚠️ مفيش ولا ' . $one . ' متصوّر جاهز للنشر' . ($r['runout'] ? ' — ميعاد التنزيل الجاي ' . dse_day($r['runout']) . ' هيفوت' : '')
+                : ($short ? $plural . ' (' . dse_num($r['ready']) . ') بتخلص ' . ($r['runout'] ? 'يوم ' . dse_day($r['runout']) : 'بعد ~' . $r['days_left'] . ' يوم') : 'فيه ' . dse_num($r['ready']) . ' ' . $u . ' جاهز');
             $msg = $r['company'] . ' — محتاج ييجي يصوّر 🎬' . "\n"
-                . $why . ' · بينزله ' . dse_num($r['rate']) . ' ريل في الأسبوع' . ($r['from_schedule'] ? ' (حسب مواعيد التنزيل)' : ($r['rate_known'] ? '' : ' (تقديري — حط مواعيد التنزيل في بروفايله)')) . "\n"
+                . $why . ' · بينزله ' . dse_num($r['rate']) . ' ' . $u . ' في الأسبوع' . ($r['from_schedule'] ? ' (حسب مواعيد التنزيل)' : ($r['rate_known'] ? '' : ' (تقديري — حط مواعيد التنزيل في بروفايله)')) . "\n"
                 . ($r['last_film'] ? 'آخر تصوير ' . dse_day($r['last_film']) . ' (من ' . $r['days_since_film'] . ' يوم)' : 'مصوّرش خالص في الباقة دي') . ' · فاضله في الباقة: ' . $r['balance_text'] . "\n"
                 . 'كلّمه واحجزله ميعاد تصوير.' . "\n"
                 . '💡 لو العميل مشغول: ابعتله سكربت يسجّل عليه فويس بصوته، وإحنا نعمل عليه فيديوهات B-roll.';
-            $id = $this->add_alert($r['clientid'], 'no_content', 'content:' . $r['clientid'] . ':' . date('o-W', $this->t()), $msg, $empty ? 'urgent' : 'normal');
+            $id = $this->add_alert($r['clientid'], 'no_content', 'content:' . $r['clientid'] . ':' . ($r['type'] === 'reel' ? '' : $r['type'] . ':') . date('o-W', $this->t()), $msg, $empty ? 'urgent' : 'normal');
             if ($id) {
                 $new[] = $id;
             }

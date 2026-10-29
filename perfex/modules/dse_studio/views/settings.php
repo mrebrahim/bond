@@ -28,6 +28,7 @@
             <h5 class="bold mtop20">الحجز والخصم</h5>
             <div class="row">
               <div class="col-xs-6 form-group"><label>دقايق لكل ريل</label><input type="number" name="dse_minutes_per_reel" value="<?= $o('dse_minutes_per_reel'); ?>" class="form-control"></div>
+              <div class="col-xs-6 form-group"><label>دقايق لكل حلقة بودكاست (أقصى 120)</label><input type="number" min="15" max="120" name="dse_minutes_per_podcast" value="<?= $o('dse_minutes_per_podcast') !== '' ? $o('dse_minutes_per_podcast') : 120; ?>" class="form-control"></div>
               <div class="col-xs-6 form-group"><label>ريلز لكل لبس</label><input type="number" name="dse_reels_per_outfit" value="<?= $o('dse_reels_per_outfit'); ?>" class="form-control"></div>
               <div class="col-xs-6 form-group"><label>الإلغاء المتأخر (ساعات قبل الميعاد)</label><input type="number" name="dse_late_cancel_hours" value="<?= $o('dse_late_cancel_hours'); ?>" class="form-control"></div>
               <div class="col-xs-6 form-group"><label>خصم الغياب / الإلغاء المتأخر (وحدات)</label><input type="number" step="0.5" name="dse_penalty_units" value="<?= $o('dse_penalty_units'); ?>" class="form-control"></div>

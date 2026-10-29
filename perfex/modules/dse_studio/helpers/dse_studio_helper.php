@@ -8,7 +8,9 @@ function dse_types()
     return [
         'reel'          => ['name' => 'ريلز', 'unit' => 'ريل', 'session' => true],
         'design'        => ['name' => 'تصميمات', 'unit' => 'تصميم', 'session' => false],
-        'trainer_hours' => ['name' => 'ساعات مدرب', 'unit' => 'ساعة', 'session' => true],
+        // فيديو بالعرض لليوتيوب (مدربين ومدرسين) — بيتحسب بالساعات. المفتاح القديم trainer_hours علشان الباقات المتسجلة
+        'trainer_hours' => ['name' => 'فيديو يوتيوب (بالعرض)', 'unit' => 'ساعة', 'session' => true],
+        'podcast'       => ['name' => 'بودكاست', 'unit' => 'حلقة', 'session' => true], // بالعدد — الحلقة أقصاها ساعتين
     ];
 }
 
@@ -54,6 +56,17 @@ function dse_day($v)
     $ts   = is_numeric($v) ? (int) $v : strtotime($v);
     $days = ['الأحد', 'الاتنين', 'التلات', 'الأربع', 'الخميس', 'الجمعة', 'السبت'];
     return $days[(int) date('w', $ts)] . ' ' . date('d/m', $ts);
+}
+
+/** أنواع التنزيل (مواعيد التنزيل + "نزل على السوشيال") ← نوع الباقة اللي بيتحسب عليه */
+function dse_post_types()
+{
+    return [
+        'reel'    => ['label' => '🎬 ريل', 'package' => 'reel'],
+        'design'  => ['label' => '🎨 تصميم', 'package' => 'design'],
+        'youtube' => ['label' => '📺 فيديو يوتيوب', 'package' => 'trainer_hours'],
+        'podcast' => ['label' => '🎙 بودكاست', 'package' => 'podcast'],
+    ];
 }
 
 /** أيام الأسبوع بالترتيب المصري (السبت الأول) — المفتاح زي date('w') */
@@ -133,7 +146,7 @@ function dse_wa_vars($key)
         'script_sent'    => ['title' => 'عنوان السكربت', 'body' => 'نص السكربت', 'client_name' => 'اسم العميل'],
         'session_booked' => ['headline' => '"تم حجز ميعاد التصوير" أو "ميعاد التصوير اتغيّر"', 'date' => 'اليوم والتاريخ', 'time' => 'الساعة',
             'studio' => 'الاستوديو', 'count' => 'العدد (3 ريل)', 'outfits' => '"هات 2 لبس" (فاضي لو مفيش)', 'client_name' => 'اسم العميل'],
-        'published'      => ['headline' => '"الريل بتاعك نزل 🎬" أو "التصميم بتاعك نزل 🎨"', 'post_url' => 'لينك البوست', 'feedback_url' => 'لينك التقييم',
+        'published'      => ['headline' => '"الريل بتاعك نزل 🎬" / "التصميم بتاعك نزل 🎨" / "الفيديو بتاعك نزل على اليوتيوب 📺" / "حلقة البودكاست بتاعتك نزلت 🎙"', 'post_url' => 'لينك البوست', 'feedback_url' => 'لينك التقييم',
             'balance' => 'الرصيد الباقي', 'end_date' => 'آخر يوم في الباقة', 'client_name' => 'اسم العميل'],
     ];
     return $map[$key] ?? ['client_name' => 'اسم العميل'];
@@ -183,7 +196,7 @@ function dse_wa_values($key, array $p)
         $v['outfits']  = (int) $s('outfits') > 0 ? 'هات ' . (int) $s('outfits') . ' لبس' : '';
     }
     if ($key === 'published') {
-        $v['headline'] = $s('type') === 'design' ? 'التصميم بتاعك نزل 🎨' : 'الريل بتاعك نزل 🎬';
+        $v['headline'] = ['design' => 'التصميم بتاعك نزل 🎨', 'youtube' => 'الفيديو بتاعك نزل على اليوتيوب 📺', 'podcast' => 'حلقة البودكاست بتاعتك نزلت 🎙'][$s('type')] ?? 'الريل بتاعك نزل 🎬';
         $v['end_date'] = $s('end_date') !== '' && $s('balance') !== '' ? dse_day($s('end_date')) : '';
     }
     return $v;
