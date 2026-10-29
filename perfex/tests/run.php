@@ -678,6 +678,53 @@ test('حط اللينك وبس: لو رقم السيستم مش قادر يدخ�
     ok($o['destination'] === '120363000000000555@g.us' && $o['status'] === 'sent' && count($sent) > $before && $m->client($c)['wa_group_jid'] === '120363000000000555@g.us' && !$m->client($c)['wa_link_error'], json_encode($o));
     $db->query('DELETE FROM tbldse_clients WHERE clientid = ?', [$c]);
 });
+
+test('مين محتاج ييجي يصوّر: الجاهز = اتصوّر − نزل · معدل النشر · بقاله أسبوع · مع ملحوظة السكربت والـ B-roll · مرة في الأسبوع · الباقة اللي هتخلص', function () use ($m, $db) {
+    $save = $m->fixed_time;
+    $m->fixed_time = strtotime('2026-10-29 10:00:00');
+    $st = q('SELECT id FROM tbldse_studios LIMIT 1')[0]['id'];
+    $sess = function ($c, $p, $qty, $day, $status = 'done') use ($db, $st) {
+        $db->insert('tbldse_sessions', ['clientid' => $c, 'package_id' => $p, 'studio_id' => $st, 'type' => 'reel', 'qty' => $qty, 'actual_qty' => $status === 'done' ? $qty : null,
+            'start_at' => $day . ' 12:00:00', 'end_at' => $day . ' 13:00:00', 'status' => $status, 'created_at' => $day . ' 09:00:00']);
+    };
+    $post = function ($c, $n, $day) use ($db) { for ($i = 0; $i < $n; $i++) { $db->insert('tbldse_posts', ['clientid' => $c, 'type' => 'reel', 'post_url' => 'https://x/' . $c . $day . $i, 'published_at' => $day . ' 18:00:00']); } };
+    // (أ) اتصوّر 4 ونزلوا 4 ← مفيش جاهز ← urgent
+    $db->insert('tblclients', ['company' => 'خلص محتواه']); $a = $db->insert_id();
+    $pa = $m->create_package($a, 'G', 8000, '2026-10-01', 60, ['reel' => 10]); $m->record_payment($pa, 8000, '2026-10-01');
+    $sess($a, $pa, 4, '2026-10-26'); $post($a, 4, '2026-10-27');
+    // (ب) اتصوّر 6 ونزل 2 (في 4 أسابيع) وصوّر من 3 أيام ← كفاية ← مفيش تنبيه
+    $db->insert('tblclients', ['company' => 'عنده محتوى']); $b = $db->insert_id();
+    $pb = $m->create_package($b, 'G', 8000, '2026-10-01', 60, ['reel' => 10]); $m->record_payment($pb, 8000, '2026-10-01');
+    $sess($b, $pb, 6, '2026-10-26'); $post($b, 2, '2026-10-20');
+    // (ج) مصوّرش من 10 أيام بس عنده ميعاد جاي ← مفيش تنبيه
+    $db->insert('tblclients', ['company' => 'جاي يصوّر']); $cc = $db->insert_id();
+    $pc = $m->create_package($cc, 'G', 8000, '2026-10-01', 60, ['reel' => 10]); $m->record_payment($pc, 8000, '2026-10-01');
+    $sess($cc, $pc, 2, '2026-10-19'); $sess($cc, $pc, 2, '2026-11-02', 'booked');
+    $rw = []; foreach ($m->content_runway() as $r) { $rw[$r['clientid']] = $r; }
+    ok($rw[$a]['ready'] == 0 && $rw[$b]['ready'] == 4 && $rw[$b]['rate'] == 0.5 && $rw[$b]['days_left'] === 56 && $rw[$cc]['next_session'], json_encode([$rw[$a], $rw[$b]], JSON_UNESCAPED_UNICODE));
+    $new = $m->check_content_runway();
+    $mine = function ($ids, $c) { return array_values(array_filter($ids, function ($id) use ($c) { return q('SELECT clientid FROM tbldse_alerts WHERE id = ?', [$id])[0]['clientid'] == $c; })); };
+    ok(count($mine($new, $a)) === 1 && !$mine($new, $b) && !$mine($new, $cc), 'بس اللي خلص محتواه');
+    $al = q('SELECT * FROM tbldse_alerts WHERE id = ?', [$mine($new, $a)[0]])[0];
+    ok($al['alert_key'] === 'no_content' && $al['priority'] === 'urgent' && strpos($al['message'], 'مفيش ولا ريل متصوّر جاهز') !== false && strpos($al['message'], 'B-roll') !== false && strpos($al['message'], 'يسجّل عليه فويس') !== false, $al['message']);
+    ok(!$mine($m->check_content_runway(), $a), 'مرة في الأسبوع');
+    // بعد أسبوع: (ب) بقاله 10 أيام مصوّرش ← تنبيه عادي، و(أ) بيتفكّر تاني
+    $m->fixed_time = strtotime('2026-11-05 10:00:00');
+    $new = $m->check_content_runway();
+    ok(count($mine($new, $b)) === 1 && count($mine($new, $a)) === 1, 'بقاله أسبوع');
+    ok(q('SELECT priority FROM tbldse_alerts WHERE id = ?', [$mine($new, $b)[0]])[0]['priority'] === 'normal');
+    // الباقة اللي هتخلص خلال 7 أيام ← تنبيه مرة واحدة · لو جدد ← لأ
+    $m->fixed_time = strtotime('2026-11-25 10:00:00');
+    $e = $m->check_packages_ending();
+    ok(count($mine($e, $a)) === 1 && strpos(q('SELECT message FROM tbldse_alerts WHERE id = ?', [$mine($e, $a)[0]])[0]['message'], 'هتخلص') !== false, json_encode($e));
+    ok(!$m->check_packages_ending(), 'مرة واحدة');
+    $m->renew_package($pb);
+    $db->query("DELETE FROM tbldse_alerts WHERE alert_key = 'package_ending'");
+    $e = $m->check_packages_ending();
+    ok(!$mine($e, $b) && count($mine($e, $a)) === 1, 'اللي جدد مبيتنبهش');
+    $db->query("UPDATE tbldse_packages SET status = 'cancelled' WHERE clientid IN (?, ?, ?)", [$a, $b, $cc]);
+    $m->fixed_time = $save;
+});
 echo "\nالتنبيهات:\n";
 test('العميل بقاله فترة مابيصوّرش → تنبيه مرة واحدة، urgent لو مفيش نشر', function () use ($m, $client, $db) {
     ok(count($m->check_inactive_clients()) === 0, 'لسه بادئ');
@@ -750,8 +797,9 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
     ok(strpos($html, 'اربط فاتورة عملتها') !== false && strpos($html, 'ترقية / تعديل الباقة') !== false && strpos($html, 'احفظ الترقية') !== false, 'الزراير على الباقة الشغالة');
     $m->fixed_time = strtotime('2026-11-02 10:00:00');
     ok(strpos($html, 'ترقية') !== false && strpos($html, 'ريلز 8←20') !== false && strpos($html, 'فرق الترقية') !== false, 'تاريخ الترقية');
-    render('index', ['clients' => [['userid' => 1, 'company' => 'x']], 'packages' => $m->clients_with_packages(),
+    $ix = render('index', ['runway' => $m->content_runway(), 'clients' => [['userid' => 1, 'company' => 'x']], 'packages' => $m->clients_with_packages(),
         'today' => $m->sessions_between('2026-11-01', '2026-12-01'), 'alerts' => 2]);
+    ok(strpos($ix, 'مين محتاج ييجي يصوّر') !== false && (strpos($ix, '<td><b>') !== false || strpos($ix, 'مفيش عملاء بباقة ريلز') !== false) && strpos($ix, 'B-roll') !== false || strpos($ix, 'مفيش عملاء بباقة ريلز') !== false, 'جدول التصوير');
     $cal = render('calendar', ['start' => '2026-10-31', 'studio' => 0, 'cancelled' => true, 'studios' => $m->studios(),
         'sessions' => $m->sessions_between('2026-10-31', '2026-11-07')]);
     file_put_contents(sys_get_temp_dir() . '/dse_calendar.html', $cal);

@@ -237,7 +237,10 @@ function dse_studio_default_options()
         'dse_payment_notify_staff_ids' => '5,6',
         'dse_activation_paid_pct'  => '50',
         'dse_grace_days'           => '15',
-        'dse_renewal_days_before'  => '7',     // العميل بيظهر في "مستنيين تجديد" قبل نهاية باقته بالأيام دي    // الباقة اللي فيها رصيد بتفضل شغالة 15 يوم بعد تاريخ نهايتها علشان نخلص الريلز
+        'dse_renewal_days_before'  => '7',
+        'dse_content_notify_staff_ids' => '1,5,6', // تنبيهات التصوير والمحتوى والباقات: إبراهيم وإنجي عماد ومريم ناجي
+        'dse_film_gap_days'        => '7',     // بقاله الأيام دي مصوّرش ← تنبيه
+        'dse_default_posts_per_week' => '2',   // معدل النشر لو العميل لسه مانزلش حاجة     // العميل بيظهر في "مستنيين تجديد" قبل نهاية باقته بالأيام دي    // الباقة اللي فيها رصيد بتفضل شغالة 15 يوم بعد تاريخ نهايتها علشان نخلص الريلز
         'dse_feedback_url'         => 'https://docs.google.com/forms/d/e/1FAIpQLSdqw--gHY0XPOeyGOqTq4QvXeJBBO8arwWN669wtC3KnZmZtA/viewform?usp=pp_url&entry.878760930={client_code}&entry.220082110={post_id}',
         'dse_rules_text'           => "📌 *قواعد التعامل* — من فضلك اقراها كويس\n\n1) مواعيد التصوير بتتحجز مسبقًا.\n2) الإلغاء أو التأجيل قبل الميعاد بأقل من 24 ساعة بيتخصم من رصيد الباقة.\n3) عدم الحضور من غير إبلاغ بيتخصم من الرصيد.\n4) لو هتصور أكتر من ريل هات أكتر من لبس (لبس لكل 3 ريلز تقريبًا).\n5) السكربتات بتتبعت هنا للموافقة قبل التصوير.\n6) كل ريل ليه تعديلين بعد التسليم.\n7) الرصيد اللي ماتستخدمش في مدة الباقة مش بيترحّل للباقة الجاية.\n8) الباقة بتتفعل بعد الدفع.\n9) متبعتش باسوردات في الجروب — الأكسس بيكون بإضافتنا Partner.",
         'dse_last_daily_run'       => '',
@@ -247,7 +250,7 @@ function dse_studio_default_options()
 
 if (!defined('DSE_STUDIO_SCHEMA_VERSION')) {
 /** نسخة الجداول — زوّدها مع أي جدول جديد */
-    define('DSE_STUDIO_SCHEMA_VERSION', '7');
+    define('DSE_STUDIO_SCHEMA_VERSION', '8');
 }
 
 if (!function_exists('dse_studio_ensure_schema')) {

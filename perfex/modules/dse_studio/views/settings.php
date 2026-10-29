@@ -41,11 +41,16 @@
             </div>
             <p class="small text-muted">لو العميل دافع جزء (50% مثلًا) والشغل اللي نزل أو اتصوّر وصل لنفس النسبة من الباقة ← تنبيه في الجرس + إيميل.</p>
 
-            <h5 class="bold mtop20">تنبيه العميل اللي مابيصوّرش</h5>
+            <h5 class="bold mtop20">تنبيهات التصوير والمحتوى والباقات (جرس + إيميل)</h5>
             <div class="row">
-              <div class="col-xs-6 form-group"><label>بعد كام يوم من غير تصوير</label><input type="number" name="dse_inactive_days" value="<?= $o('dse_inactive_days'); ?>" class="form-control"></div>
-              <div class="col-xs-6 form-group"><label>مين يوصله التنبيه (أرقام الموظفين — فاضي = الأدمنز)</label><input name="dse_notify_staff_ids" value="<?= $o('dse_notify_staff_ids'); ?>" class="form-control" dir="ltr"></div>
+              <div class="col-xs-12 form-group"><label>مين يوصله: "محتاج ييجي يصوّر" · "مابيصوّرش" · "باقة هتخلص / خلصت"</label><input name="dse_content_notify_staff_ids" value="<?= $o('dse_content_notify_staff_ids') !== '' ? $o('dse_content_notify_staff_ids') : '1,5,6'; ?>" class="form-control" dir="ltr"></div>
+              <div class="col-xs-4 form-group"><label>بقاله كام يوم مصوّرش ← تنبيه</label><input type="number" min="1" name="dse_film_gap_days" value="<?= $o('dse_film_gap_days') !== '' ? $o('dse_film_gap_days') : 7; ?>" class="form-control"></div>
+              <div class="col-xs-4 form-group"><label>معدل النشر الافتراضي (ريل / أسبوع)</label><input type="number" min="0.5" step="0.5" name="dse_default_posts_per_week" value="<?= $o('dse_default_posts_per_week') !== '' ? $o('dse_default_posts_per_week') : 2; ?>" class="form-control"></div>
+              <div class="col-xs-4 form-group"><label>تنبيه الباقة قبل نهايتها بـ (أيام)</label><input type="number" min="1" name="dse_renewal_days_before" value="<?= $o('dse_renewal_days_before') !== '' ? $o('dse_renewal_days_before') : 7; ?>" class="form-control"></div>
+              <div class="col-xs-6 form-group"><label>"مابيصوّرش خالص" بعد كام يوم</label><input type="number" name="dse_inactive_days" value="<?= $o('dse_inactive_days'); ?>" class="form-control"></div>
+              <div class="col-xs-6 form-group"><label>باقي التنبيهات (مفيش جروب…) — أرقام الموظفين</label><input name="dse_notify_staff_ids" value="<?= $o('dse_notify_staff_ids'); ?>" class="form-control" dir="ltr"></div>
             </div>
+            <p class="small text-muted">"محتاج ييجي يصوّر" = الريلز اللي اتصوّرت ومنزلتش خلصت أو متكفيش أسبوع نشر، أو بقاله الأيام دي مصوّرش — وعنده رصيد ومفيش ميعاد محجوز. مرة في الأسبوع لكل عميل.</p>
             <p class="small text-muted">أرقام الموظفين: <?php foreach ($staff as $s) { echo (int) $s['staffid'] . '=' . html_escape($s['firstname']) . ' · '; } ?></p>
             <button class="btn btn-primary">احفظ</button>
           <?= form_close(); ?>

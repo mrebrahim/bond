@@ -46,6 +46,29 @@
         </div></div>
 
         <div class="panel_s"><div class="panel-body">
+          <h5 class="bold">🎬 مين محتاج ييجي يصوّر <span class="small text-muted">(المحتوى الجاهز = اتصوّر ومنزلش)</span></h5>
+          <?php if (empty($runway)) { ?><p class="text-muted">مفيش عملاء بباقة ريلز شغالة</p><?php } else { ?>
+          <div style="overflow-x:auto"><table class="table table-condensed">
+            <thead><tr><th>العميل</th><th>جاهز</th><th>بينزل / أسبوع</th><th>يكفي</th><th>آخر تصوير</th><th>فاضله</th><th></th></tr></thead>
+            <tbody>
+            <?php foreach ($runway as $r) { $need = !$r['next_session'] && $r['reels_left'] > 0 && ($r['ready'] <= 0 || $r['days_left'] < 7 || $r['days_since_film'] >= (int) (get_option('dse_film_gap_days') ?: 7)); ?>
+              <tr class="<?= $need ? ($r['ready'] <= 0 ? 'danger' : 'warning') : ''; ?>">
+                <td><a href="<?= admin_url('dse_studio/client/' . $r['clientid']); ?>"><?= html_escape($r['company']); ?></a></td>
+                <td><b><?= dse_num($r['ready']); ?></b> ريل</td>
+                <td><?= dse_num($r['rate']); ?><?= $r['rate_known'] ? '' : ' <span class="text-muted small">(تقديري)</span>'; ?></td>
+                <td><?= $r['ready'] > 0 ? '~' . (int) $r['days_left'] . ' يوم' : '—'; ?></td>
+                <td><?= $r['last_film'] ? dse_day($r['last_film']) . ' <span class="text-muted small">(' . (int) $r['days_since_film'] . ' يوم)</span>' : '<span class="text-muted">مصوّرش</span>'; ?></td>
+                <td class="small"><?= html_escape($r['balance_text']); ?></td>
+                <td class="small"><?= $r['next_session'] ? '📅 ' . dse_day($r['next_session']) : ($need ? '<b>كلّمه يحجز</b>' : ''); ?></td>
+              </tr>
+            <?php } ?>
+            </tbody>
+          </table></div>
+          <p class="small text-muted">💡 لو العميل مشغول: ابعتله سكربت يسجّل عليه فويس بصوته، وإحنا نعمل عليه فيديوهات B-roll.</p>
+          <?php } ?>
+        </div></div>
+
+        <div class="panel_s"><div class="panel-body">
           <h5 class="bold">الباقات الشغالة والمستنية الدفع</h5>
           <table class="table table-condensed">
             <thead><tr><th>العميل</th><th>الباقة</th><th>الحالة</th><th>لحد</th><th>الرصيد الباقي</th><th></th></tr></thead>

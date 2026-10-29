@@ -78,6 +78,7 @@ class Dse_studio extends AdminController
         $data['today']    = $this->dse_studio_model->sessions_between(date('Y-m-d 00:00:00'), date('Y-m-d 00:00:00', strtotime('+1 day')));
         $data['alerts']   = count($this->dse_studio_model->alerts(true));
         $data['renewals'] = count($this->dse_studio_model->renewals('open'));
+        $data['runway']   = $this->dse_studio_model->content_runway();
         $this->load->view('index', $data);
     }
 

@@ -1486,6 +1486,103 @@ class Dse_studio_model extends App_Model
         return $new;
     }
 
+    // =================================================================
+    // المحتوى الجاهز (اتصوّر ومنزلش) ومين محتاج ييجي يصوّر
+    // =================================================================
+    /**
+     * لكل عميل باقته شغالة وفيها ريلز: اتصوّر كام · نزل كام · جاهز كام · بينزل كام في الأسبوع ·
+     * الجاهز يكفي كام يوم · آخر تصوير · عنده ميعاد جاي؟ · فاضله ريلز في الباقة؟
+     */
+    public function content_runway()
+    {
+        $this->sync_all_packages();
+        $out  = [];
+        $def  = max(0.5, (float) $this->opt('dse_default_posts_per_week', 2));
+        $from = date('Y-m-d H:i:s', $this->t() - 28 * 86400);
+        foreach ($this->rows('SELECT DISTINCT clientid FROM ' . $this->tbl('dse_packages') . " WHERE status = 'active' AND start_date <= ?", [$this->today()]) as $r) {
+            $cid = (int) $r['clientid'];
+            $pkg = $this->active_package($cid);
+            if (!$pkg) {
+                continue;
+            }
+            $bal = $this->balance($pkg['id']);
+            if (!isset($bal['reel'])) {
+                continue; // باقة تصميمات بس
+            }
+            $filmed    = (float) ($this->row('SELECT SUM(actual_qty) s FROM ' . $this->tbl('dse_sessions') . " WHERE clientid = ? AND status = 'done' AND type = 'reel'", [$cid])['s'] ?? 0);
+            $published = (int) ($this->row('SELECT COUNT(*) n FROM ' . $this->tbl('dse_posts') . " WHERE clientid = ? AND type = 'reel'", [$cid])['n'] ?? 0);
+            $recent    = (int) ($this->row('SELECT COUNT(*) n FROM ' . $this->tbl('dse_posts') . " WHERE clientid = ? AND type = 'reel' AND published_at >= ?", [$cid, $from])['n'] ?? 0);
+            $rate      = $recent > 0 ? $recent / 4 : $def; // ريلز في الأسبوع (آخر 4 أسابيع، أو الافتراضي)
+            $ready     = max(0, $filmed - $published);
+            $last      = $this->row('SELECT MAX(start_at) d FROM ' . $this->tbl('dse_sessions') . " WHERE clientid = ? AND status = 'done'", [$cid])['d'] ?? null;
+            $next      = $this->row('SELECT MIN(start_at) d FROM ' . $this->tbl('dse_sessions') . " WHERE clientid = ? AND status = 'booked' AND start_at > ?", [$cid, $this->now()])['d'] ?? null;
+            $since     = $last ? (int) floor(($this->t() - strtotime($last)) / 86400) : (int) floor(($this->t() - strtotime($pkg['start_date'])) / 86400);
+            $c         = $this->client($cid);
+            $out[] = [
+                'clientid' => $cid, 'company' => $c['company'], 'package' => $pkg, 'filmed' => $filmed, 'published' => $published,
+                'ready' => $ready, 'rate' => round($rate, 1), 'rate_known' => $recent > 0, 'days_left' => (int) floor($ready / $rate * 7),
+                'last_film' => $last, 'days_since_film' => $since, 'next_session' => $next,
+                'reels_left' => (float) $bal['reel']['remaining'], 'balance_text' => $this->balance_text($pkg['id']),
+            ];
+        }
+        usort($out, function ($a, $b) { return [$a['next_session'] !== null, $a['days_left'], -$a['days_since_film']] <=> [$b['next_session'] !== null, $b['days_left'], -$b['days_since_film']]; });
+        return $out;
+    }
+
+    /**
+     * الـ cron (يومي): تنبيه للفريق (مريم وإنجي وإبراهيم) لو العميل محتاج ييجي يصوّر:
+     * مفيش محتوى جاهز، أو الجاهز ميكفيش أسبوع نشر، أو بقاله أسبوع مصوّرش — وعنده ريلز في الباقة ومفيش ميعاد محجوز.
+     * مرة واحدة في الأسبوع لكل عميل.
+     */
+    public function check_content_runway()
+    {
+        $gap = max(1, (int) $this->opt('dse_film_gap_days', 7));
+        $new = [];
+        foreach ($this->content_runway() as $r) {
+            if ($r['next_session'] || $r['reels_left'] <= 0) {
+                continue; // جاي يصوّر خلاص، أو مفيش رصيد تصوير (تنبيه الباقة بيغطيه)
+            }
+            $empty = $r['ready'] <= 0;
+            $short = !$empty && $r['days_left'] < 7;
+            $idle  = $r['days_since_film'] >= $gap;
+            if (!$empty && !$short && !$idle) {
+                continue;
+            }
+            $why = $empty ? '⚠️ مفيش ولا ريل متصوّر جاهز للنشر' : ($short ? 'الريلز الجاهزة (' . dse_num($r['ready']) . ') متكفيش غير ~' . $r['days_left'] . ' يوم نشر' : 'فيه ' . dse_num($r['ready']) . ' ريل جاهز');
+            $msg = $r['company'] . ' — محتاج ييجي يصوّر 🎬' . "\n"
+                . $why . ' · بينزله ~' . dse_num($r['rate']) . ' ريل في الأسبوع' . ($r['rate_known'] ? '' : ' (تقديري)') . "\n"
+                . ($r['last_film'] ? 'آخر تصوير ' . dse_day($r['last_film']) . ' (من ' . $r['days_since_film'] . ' يوم)' : 'مصوّرش خالص في الباقة دي') . ' · فاضله في الباقة: ' . $r['balance_text'] . "\n"
+                . 'كلّمه واحجزله ميعاد تصوير.' . "\n"
+                . '💡 لو العميل مشغول: ابعتله سكربت يسجّل عليه فويس بصوته، وإحنا نعمل عليه فيديوهات B-roll.';
+            $id = $this->add_alert($r['clientid'], 'no_content', 'content:' . $r['clientid'] . ':' . date('o-W', $this->t()), $msg, $empty ? 'urgent' : 'normal');
+            if ($id) {
+                $new[] = $id;
+            }
+        }
+        return $new;
+    }
+
+    /** الـ cron (يومي): الباقات اللي هتخلص خلال dse_renewal_days_before يوم ومفيش تجديد — مرة واحدة لكل باقة */
+    public function check_packages_ending()
+    {
+        $soon = date('Y-m-d', strtotime($this->today() . ' +' . max(1, (int) $this->opt('dse_renewal_days_before', 7)) . ' days'));
+        $new  = [];
+        foreach ($this->rows('SELECT * FROM ' . $this->tbl('dse_packages') . " WHERE status = 'active' AND end_date >= ? AND end_date <= ?", [$this->today(), $soon]) as $p) {
+            if ($this->row('SELECT id FROM ' . $this->tbl('dse_packages') . " WHERE clientid = ? AND id <> ? AND status IN ('pending','active') AND end_date > ? LIMIT 1", [$p['clientid'], $p['id'], $p['end_date']])) {
+                continue; // جدد خلاص
+            }
+            $c    = $this->client($p['clientid']);
+            $days = (int) round((strtotime($p['end_date']) - strtotime($this->today())) / 86400);
+            $id   = $this->add_alert($p['clientid'], 'package_ending', 'ending:' . $p['id'],
+                $c['company'] . ' — باقة "' . $p['name'] . '" هتخلص ' . dse_day($p['end_date']) . ($days ? ' (بعد ' . $days . ' يوم)' : ' (النهارده)')
+                . ' · فاضله: ' . $this->balance_text($p['id']) . "\nكلّمه على التجديد، واحجز اللي فاضل قبل ما تخلص.");
+            if ($id) {
+                $new[] = $id;
+            }
+        }
+        return $new;
+    }
+
     /** كل الباقات الشغالة: هل الشغل سبق الفلوس؟ (مع الـ cron — لو اتسجل دفع أو اتلغى) */
     public function check_all_payments()
     {
