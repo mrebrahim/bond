@@ -1487,19 +1487,118 @@ class Dse_studio_model extends App_Model
     }
 
     // =================================================================
+    // مواعيد التنزيل (الأحد ريل · التلات تصميم …)
+    // =================================================================
+    /** [weekday => type] */
+    public function publish_slots($clientid)
+    {
+        $this->ensure_renewal_columns();
+        if (!$this->db->table_exists($this->tbl('dse_publish_slots'))) {
+            return [];
+        }
+        $out = [];
+        foreach ($this->rows('SELECT weekday, type FROM ' . $this->tbl('dse_publish_slots') . ' WHERE clientid = ? ORDER BY weekday', [(int) $clientid]) as $r) {
+            $out[(int) $r['weekday']] = $r['type'];
+        }
+        return $out;
+    }
+
+    /** $days = [weekday => ''|reel|design] */
+    public function save_publish_slots($clientid, array $days)
+    {
+        $this->ensure_renewal_columns();
+        $this->client($clientid);
+        $this->db->query('DELETE FROM ' . $this->tbl('dse_publish_slots') . ' WHERE clientid = ?', [(int) $clientid]);
+        $n = 0;
+        foreach ($days as $wd => $type) {
+            $wd = (int) $wd;
+            if ($wd < 0 || $wd > 6 || !in_array($type, ['reel', 'design'], true)) {
+                continue;
+            }
+            $this->db->insert($this->tbl('dse_publish_slots'), ['clientid' => (int) $clientid, 'weekday' => $wd, 'type' => $type]);
+            $n++;
+        }
+        return $n;
+    }
+
+    /** نزل النهارده بوست من النوع ده؟ */
+    private function posted_on($clientid, $type, $day)
+    {
+        return (bool) $this->row('SELECT id FROM ' . $this->tbl('dse_posts') . ' WHERE clientid = ? AND type = ? AND published_at >= ? AND published_at < ? LIMIT 1',
+            [(int) $clientid, $type, $day . ' 00:00:00', date('Y-m-d', strtotime($day . ' +1 day')) . ' 00:00:00']);
+    }
+
+    /**
+     * بيمشي على مواعيد التنزيل يوم بيوم: الريلز الجاهزة تكفي لحد إمتى؟
+     * بيرجّع [runout => أول يوم تنزيل ريل مفيهوش محتوى (أو null), days => كام يوم لحده, upcoming => أقرب 4 مواعيد]
+     */
+    public function schedule_runout($clientid, $ready, array $slots)
+    {
+        $today    = $this->today();
+        $upcoming = [];
+        $runout   = null;
+        $stock    = $ready;
+        for ($d = 0; $d < 180 && (!$runout || count($upcoming) < 4); $d++) {
+            $day = date('Y-m-d', strtotime($today . ' +' . $d . ' days'));
+            $wd  = (int) date('w', strtotime($day));
+            if (!isset($slots[$wd])) {
+                continue;
+            }
+            $type = $slots[$wd];
+            if ($d === 0 && $this->posted_on($clientid, $type, $day)) {
+                continue; // ميعاد النهارده نزل خلاص
+            }
+            if (count($upcoming) < 4) {
+                $upcoming[] = ['day' => $day, 'type' => $type];
+            }
+            if ($type === 'reel' && !$runout) {
+                if ($stock <= 0) {
+                    $runout = $day;
+                } else {
+                    $stock--;
+                }
+            }
+        }
+        return ['runout' => $runout, 'days' => $runout ? (int) round((strtotime($runout) - strtotime($today)) / 86400) : null, 'upcoming' => $upcoming];
+    }
+
+    /** مواعيد تنزيل النهارده لكل العملاء (لصفحة "نزل على السوشيال") — ونزل ولا لأ */
+    public function due_today()
+    {
+        $this->ensure_renewal_columns();
+        if (!$this->db->table_exists($this->tbl('dse_publish_slots'))) {
+            return [];
+        }
+        $day = $this->today();
+        $out = [];
+        foreach ($this->rows('SELECT s.clientid, s.type, ' . $this->name_sql('c') . ' AS company FROM ' . $this->tbl('dse_publish_slots') . ' s JOIN ' . $this->tbl('clients') . ' c ON c.userid = s.clientid WHERE s.weekday = ? ORDER BY company', [(int) date('w', $this->t())]) as $r) {
+            if (!$this->active_package($r['clientid'])) {
+                continue;
+            }
+            $r['done'] = $this->posted_on($r['clientid'], $r['type'], $day);
+            $out[]     = $r;
+        }
+        return $out;
+    }
+
+    // =================================================================
     // المحتوى الجاهز (اتصوّر ومنزلش) ومين محتاج ييجي يصوّر
     // =================================================================
     /**
      * لكل عميل باقته شغالة وفيها ريلز: اتصوّر كام · نزل كام · جاهز كام · بينزل كام في الأسبوع ·
      * الجاهز يكفي كام يوم · آخر تصوير · عنده ميعاد جاي؟ · فاضله ريلز في الباقة؟
      */
-    public function content_runway()
+    public function content_runway($only_client = null)
     {
-        $this->sync_all_packages();
+        if ($only_client) {
+            $this->sync_client_packages($only_client);
+        } else {
+            $this->sync_all_packages();
+        }
         $out  = [];
         $def  = max(0.5, (float) $this->opt('dse_default_posts_per_week', 2));
         $from = date('Y-m-d H:i:s', $this->t() - 28 * 86400);
-        foreach ($this->rows('SELECT DISTINCT clientid FROM ' . $this->tbl('dse_packages') . " WHERE status = 'active' AND start_date <= ?", [$this->today()]) as $r) {
+        foreach ($this->rows('SELECT DISTINCT clientid FROM ' . $this->tbl('dse_packages') . " WHERE status = 'active' AND start_date <= ?" . ($only_client ? ' AND clientid = ' . (int) $only_client : ''), [$this->today()]) as $r) {
             $cid = (int) $r['clientid'];
             $pkg = $this->active_package($cid);
             if (!$pkg) {
@@ -1512,15 +1611,21 @@ class Dse_studio_model extends App_Model
             $filmed    = (float) ($this->row('SELECT SUM(actual_qty) s FROM ' . $this->tbl('dse_sessions') . " WHERE clientid = ? AND status = 'done' AND type = 'reel'", [$cid])['s'] ?? 0);
             $published = (int) ($this->row('SELECT COUNT(*) n FROM ' . $this->tbl('dse_posts') . " WHERE clientid = ? AND type = 'reel'", [$cid])['n'] ?? 0);
             $recent    = (int) ($this->row('SELECT COUNT(*) n FROM ' . $this->tbl('dse_posts') . " WHERE clientid = ? AND type = 'reel' AND published_at >= ?", [$cid, $from])['n'] ?? 0);
-            $rate      = $recent > 0 ? $recent / 4 : $def; // ريلز في الأسبوع (آخر 4 أسابيع، أو الافتراضي)
+            $slots     = $this->publish_slots($cid);
+            $sched     = count(array_filter($slots, function ($t) { return $t === 'reel'; }));
+            // ريلز في الأسبوع: من مواعيد التنزيل، وإلا من آخر 4 أسابيع، وإلا الافتراضي
+            $rate      = $sched > 0 ? $sched : ($recent > 0 ? $recent / 4 : $def);
             $ready     = max(0, $filmed - $published);
+            $plan      = $sched > 0 ? $this->schedule_runout($cid, $ready, $slots) : ['runout' => null, 'days' => null, 'upcoming' => $slots ? $this->schedule_runout($cid, 0, $slots)['upcoming'] : []];
             $last      = $this->row('SELECT MAX(start_at) d FROM ' . $this->tbl('dse_sessions') . " WHERE clientid = ? AND status = 'done'", [$cid])['d'] ?? null;
             $next      = $this->row('SELECT MIN(start_at) d FROM ' . $this->tbl('dse_sessions') . " WHERE clientid = ? AND status = 'booked' AND start_at > ?", [$cid, $this->now()])['d'] ?? null;
             $since     = $last ? (int) floor(($this->t() - strtotime($last)) / 86400) : (int) floor(($this->t() - strtotime($pkg['start_date'])) / 86400);
             $c         = $this->client($cid);
             $out[] = [
                 'clientid' => $cid, 'company' => $c['company'], 'package' => $pkg, 'filmed' => $filmed, 'published' => $published,
-                'ready' => $ready, 'rate' => round($rate, 1), 'rate_known' => $recent > 0, 'days_left' => (int) floor($ready / $rate * 7),
+                'ready' => $ready, 'rate' => round($rate, 1), 'rate_known' => $sched > 0 || $recent > 0, 'from_schedule' => $sched > 0,
+                'days_left' => $plan['days'] !== null ? $plan['days'] : (int) floor($ready / $rate * 7), 'runout' => $plan['runout'],
+                'slots' => $slots, 'upcoming' => $plan['upcoming'],
                 'last_film' => $last, 'days_since_film' => $since, 'next_session' => $next,
                 'reels_left' => (float) $bal['reel']['remaining'], 'balance_text' => $this->balance_text($pkg['id']),
             ];
@@ -1543,14 +1648,15 @@ class Dse_studio_model extends App_Model
                 continue; // جاي يصوّر خلاص، أو مفيش رصيد تصوير (تنبيه الباقة بيغطيه)
             }
             $empty = $r['ready'] <= 0;
-            $short = !$empty && $r['days_left'] < 7;
+            $short = !$empty && $r['days_left'] <= 7; // المحتوى بيخلص خلال أسبوع ← لازم يحجز دلوقتي
             $idle  = $r['days_since_film'] >= $gap;
             if (!$empty && !$short && !$idle) {
                 continue;
             }
-            $why = $empty ? '⚠️ مفيش ولا ريل متصوّر جاهز للنشر' : ($short ? 'الريلز الجاهزة (' . dse_num($r['ready']) . ') متكفيش غير ~' . $r['days_left'] . ' يوم نشر' : 'فيه ' . dse_num($r['ready']) . ' ريل جاهز');
+            $why = $empty ? '⚠️ مفيش ولا ريل متصوّر جاهز للنشر' . ($r['runout'] ? ' — ميعاد التنزيل الجاي ' . dse_day($r['runout']) . ' هيفوت' : '')
+                : ($short ? 'الريلز الجاهزة (' . dse_num($r['ready']) . ') بتخلص ' . ($r['runout'] ? 'يوم ' . dse_day($r['runout']) : 'بعد ~' . $r['days_left'] . ' يوم') : 'فيه ' . dse_num($r['ready']) . ' ريل جاهز');
             $msg = $r['company'] . ' — محتاج ييجي يصوّر 🎬' . "\n"
-                . $why . ' · بينزله ~' . dse_num($r['rate']) . ' ريل في الأسبوع' . ($r['rate_known'] ? '' : ' (تقديري)') . "\n"
+                . $why . ' · بينزله ' . dse_num($r['rate']) . ' ريل في الأسبوع' . ($r['from_schedule'] ? ' (حسب مواعيد التنزيل)' : ($r['rate_known'] ? '' : ' (تقديري — حط مواعيد التنزيل في بروفايله)')) . "\n"
                 . ($r['last_film'] ? 'آخر تصوير ' . dse_day($r['last_film']) . ' (من ' . $r['days_since_film'] . ' يوم)' : 'مصوّرش خالص في الباقة دي') . ' · فاضله في الباقة: ' . $r['balance_text'] . "\n"
                 . 'كلّمه واحجزله ميعاد تصوير.' . "\n"
                 . '💡 لو العميل مشغول: ابعتله سكربت يسجّل عليه فويس بصوته، وإحنا نعمل عليه فيديوهات B-roll.';
@@ -1785,6 +1891,13 @@ class Dse_studio_model extends App_Model
     {
         if (!self::$renewal_cols_checked && function_exists('dse_studio_add_missing_columns') && function_exists('get_instance')) {
             dse_studio_add_missing_columns(['dse_clients' => ['renewal_status', 'renewal_note', 'renewal_updated_at', 'wa_link_error'], 'dse_packages' => ['historic', 'grace_days']]);
+            $CI = &get_instance();
+            if (is_object($CI) && isset($CI->db) && !$CI->db->table_exists($this->tbl('dse_publish_slots'))) {
+                $def = dse_studio_schema()['dse_publish_slots'];
+                foreach (dse_studio_create_sql('dse_publish_slots', $def, db_prefix(), ($CI->db->dbdriver ?? 'mysqli') === 'sqlite' ? 'sqlite' : 'mysql', 'utf8mb4') as $sql) {
+                    $CI->db->query($sql);
+                }
+            }
             self::$renewal_cols_checked = true;
         }
     }

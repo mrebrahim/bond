@@ -102,6 +102,9 @@ class Dse_studio extends AdminController
         $data['balances'] = $data['pkg_invoices'] = $data['pkg_events'] = $data['pkg_paid'] = $data['pkg_busy'] = $data['pkg_payments'] = [];
         $data['pay_modes'] = $this->dse_studio_model->payment_modes();
         $data['data_counts'] = $this->dse_studio_model->client_data_counts($id);
+        $data['slots']  = $this->dse_studio_model->publish_slots($id);
+        $data['runway'] = null;
+        $data['runway'] = $this->dse_studio_model->content_runway($id)[0] ?? null;
         $linked = [];
         foreach ($data['packages'] as $p) {
             $data['balances'][$p['id']]     = $this->dse_studio_model->balance($p['id']);
@@ -287,6 +290,16 @@ class Dse_studio extends AdminController
         }
     }
 
+    /** مواعيد التنزيل الأسبوعية للعميل */
+    public function publish_slots($clientid)
+    {
+        $m = $this->dse_studio_model;
+        $this->act('edit', function () use ($m, $clientid) {
+            $n = $m->save_publish_slots($clientid, (array) $this->input->post('days'));
+            return $n ? 'مواعيد التنزيل اتحفظت (' . $n . ' في الأسبوع)' : 'اتشالت مواعيد التنزيل';
+        }, admin_url('dse_studio/client/' . (int) $clientid . '#publish-slots'));
+    }
+
     public function unlink_invoice($package_id, $invoice_id)
     {
         $m = $this->dse_studio_model;
@@ -452,6 +465,7 @@ class Dse_studio extends AdminController
         $data['clients'] = $this->dse_studio_model->clients_for_publishing();
         $data['recent']  = $this->dse_studio_model->recent_posts(40);
         $data['selected'] = (int) $this->input->get('client');
+        $data['due']      = $this->dse_studio_model->due_today();
         $this->load->view('publishing', $data);
     }
 

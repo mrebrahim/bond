@@ -56,6 +56,12 @@ function dse_day($v)
     return $days[(int) date('w', $ts)] . ' ' . date('d/m', $ts);
 }
 
+/** أيام الأسبوع بالترتيب المصري (السبت الأول) — المفتاح زي date('w') */
+function dse_weekdays()
+{
+    return [6 => 'السبت', 0 => 'الأحد', 1 => 'الاتنين', 2 => 'التلات', 3 => 'الأربع', 4 => 'الخميس', 5 => 'الجمعة'];
+}
+
 function dse_time($v)
 {
     if (!$v) {

@@ -725,6 +725,36 @@ test('مين محتاج ييجي يصوّر: الجاهز = اتصوّر − ن�
     $db->query("UPDATE tbldse_packages SET status = 'cancelled' WHERE clientid IN (?, ?, ?)", [$a, $b, $cc]);
     $m->fixed_time = $save;
 });
+
+test('مواعيد التنزيل (الأحد ريل · التلات تصميم · الخميس ريل): المحتوى بيخلص يوم إيه · لازم ينزل النهارده · التنبيه بالتاريخ', function () use ($m, $db) {
+    $save = $m->fixed_time;
+    $m->fixed_time = strtotime('2026-10-29 10:00:00'); // خميس
+    $st = q('SELECT id FROM tbldse_studios LIMIT 1')[0]['id'];
+    $db->insert('tblclients', ['company' => 'مواعيد ثابتة']); $c = $db->insert_id();
+    $p = $m->create_package($c, 'G', 8000, '2026-10-01', 60, ['reel' => 12, 'design' => 4]); $m->record_payment($p, 8000, '2026-10-01');
+    $db->insert('tbldse_sessions', ['clientid' => $c, 'package_id' => $p, 'studio_id' => $st, 'type' => 'reel', 'qty' => 2, 'actual_qty' => 2, 'start_at' => '2026-10-27 12:00:00', 'end_at' => '2026-10-27 13:00:00', 'status' => 'done', 'created_at' => '2026-10-27 09:00:00']);
+    ok($m->save_publish_slots($c, [0 => 'reel', 1 => '', 2 => 'design', 4 => 'reel', 9 => 'reel', 5 => 'video']) === 3, 'التلاتة الصح بس');
+    ok($m->publish_slots($c) === [0 => 'reel', 2 => 'design', 4 => 'reel']);
+    $r = $m->content_runway($c)[0];
+    // جاهز 2: النهارده (الخميس) + الأحد ← الخميس الجاي 05/11 مفيش
+    ok($r['ready'] == 2 && $r['rate'] == 2 && $r['from_schedule'] && $r['runout'] === '2026-11-05' && $r['days_left'] === 7, json_encode($r, JSON_UNESCAPED_UNICODE));
+    ok(array_column($r['upcoming'], 'day') === ['2026-10-29', '2026-11-01', '2026-11-03', '2026-11-05'] && $r['upcoming'][2]['type'] === 'design');
+    $due = array_values(array_filter($m->due_today(), function ($d) use ($c) { return (int) $d['clientid'] === $c; }));
+    ok(count($due) === 1 && $due[0]['type'] === 'reel' && !$due[0]['done']);
+    // نزل ريل النهارده ← الميعاد اتعلّم ✅ والمحتوى بيكفي لحد الأحد 08/11
+    $db->insert('tbldse_posts', ['clientid' => $c, 'type' => 'reel', 'post_url' => 'https://x/today', 'published_at' => '2026-10-29 09:00:00']);
+    $due = array_values(array_filter($m->due_today(), function ($d) use ($c) { return (int) $d['clientid'] === $c; }));
+    ok($due[0]['done'], 'نزل');
+    $r = $m->content_runway($c)[0];
+    ok($r['ready'] == 1 && $r['runout'] === '2026-11-05' && $r['upcoming'][0]['day'] === '2026-11-01', json_encode($r, JSON_UNESCAPED_UNICODE));
+    // التنبيه: بيخلص خلال أسبوع ← "بتخلص يوم الخميس 05/11 … (حسب مواعيد التنزيل)"
+    $ids = $m->check_content_runway();
+    $a = array_values(array_filter($ids, function ($id) use ($c) { return q('SELECT clientid FROM tbldse_alerts WHERE id = ?', [$id])[0]['clientid'] == $c; }));
+    $msg = q('SELECT message FROM tbldse_alerts WHERE id = ?', [$a[0]])[0]['message'];
+    ok(strpos($msg, 'بتخلص يوم الخميس 05/11') !== false && strpos($msg, '(حسب مواعيد التنزيل)') !== false, 'MSG=' . $msg . json_encode($a));
+    $GLOBALS['slot_client'] = $c;
+    $m->fixed_time = $save;
+});
 echo "\nالتنبيهات:\n";
 test('العميل بقاله فترة مابيصوّرش → تنبيه مرة واحدة، urgent لو مفيش نشر', function () use ($m, $client, $db) {
     ok(count($m->check_inactive_clients()) === 0, 'لسه بادئ');
@@ -820,7 +850,9 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
         'balances' => $one(function ($p) use ($m) { return $m->balance($p['id']); }), 'pkg_invoices' => $one(function ($p) use ($m) { return $m->package_invoices($p['id']); }),
         'pkg_events' => $one(function ($p) use ($m) { return $m->package_events($p['id']); }), 'pkg_paid' => $one(function ($p) use ($m) { return $m->package_paid_amount($p); }),
         'pkg_busy' => $one(function ($p) use ($m) { return $m->package_has_activity($p['id']); }), 'pkg_payments' => $one(function ($p) use ($m) { return $m->package_payments($p['id']); }),
-        'free_invoices' => [['id' => 99, 'prefix' => 'INV-', 'number' => 9, 'total' => 1000, 'status' => 2]], 'pay_modes' => $m->payment_modes(), 'data_counts' => $m->client_data_counts($rc)]);
+        'free_invoices' => [['id' => 99, 'prefix' => 'INV-', 'number' => 9, 'total' => 1000, 'status' => 2]], 'pay_modes' => $m->payment_modes(), 'data_counts' => $m->client_data_counts($rc),
+        'slots' => [0 => 'reel', 2 => 'design', 4 => 'reel'], 'runway' => ['ready' => 1, 'filmed' => 2, 'published' => 1, 'runout' => '2026-11-05', 'days_left' => 7, 'from_schedule' => true, 'last_film' => '2026-10-27 12:00:00', 'days_since_film' => 2, 'next_session' => null, 'upcoming' => [['day' => '2026-11-01', 'type' => 'reel']]]]);
+    ok(strpos($hh, 'مواعيد التنزيل ومخزون المحتوى') !== false && strpos($hh, 'المحتوى بيخلص الخميس 05/11') !== false && substr_count($hh, 'name="days[') === 7 && strpos($hh, '<option value="design" selected>') !== false, 'مواعيد التنزيل في البروفايل');
     file_put_contents(sys_get_temp_dir() . '/dse_client_historic.html', $hh);
     ok(strpos($hh, 'مدفوع <b>2,500') !== false && strpos($hh, 'سجّل دفعة') !== false && strpos($hh, 'اربط فاتورة عملتها في Perfex') !== false && strpos($hh, 'قسط قديم') !== false && strpos($hh, 'name="left[reel]"') !== false && strpos($hh, '<option value="4">4 أسابيع') !== false && strpos($hh, 'امسح العميل من الاستوديو') !== false && strpos($hh, '⏳ مدّ السماح') !== false && strpos($hh, ': · ') === false, 'القديمة: دفعات وفواتير ومدّ السماح');
     $pg = render('pick_group', ['client' => $GLOBALS['pick'][0], 'groups' => $GLOBALS['pick'][1]]);
@@ -829,7 +861,8 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
     ok(strpos($rn, 'عيادة د. سامي') !== false && strpos($rn, 'ابعت طلب التجديد') !== false && strpos($rn, 'آخر طلب') !== false && strpos($rn, 'قديمة') !== false, 'صف التجديد');
     file_put_contents(sys_get_temp_dir() . '/dse_renewals.html', $rn);
     render('outbox', ['outbox' => $m->outbox(), 'enabled' => false]);
-    $pub = render('publishing', ['clients' => $m->clients_for_publishing(), 'recent' => $m->recent_posts(), 'selected' => 1]);
+    $pub = render('publishing', ['clients' => $m->clients_for_publishing(), 'recent' => $m->recent_posts(), 'selected' => 1, 'due' => [['clientid' => 1, 'company' => 'مطعم الشيف', 'type' => 'reel', 'done' => false], ['clientid' => 2, 'company' => 'x', 'type' => 'design', 'done' => true]]]);
+    ok(strpos($pub, 'لازم ينزل النهارده') !== false && strpos($pub, '⏳ لسه') !== false && strpos($pub, '✅ نزل') !== false, 'مواعيد النهارده');
     ok(strpos($pub, 'وصل الجروب') !== false || strpos($pub, 'مستني') !== false, 'حالة الرسالة');
     ok(strpos($pub, '⚠️ مفيش جروب') !== false, 'العملاء من غير جروب متعلّمين');
     render('settings', ['studios' => $m->studios(false), 'staff' => [['staffid' => 1, 'firstname' => 'Ibrahim']], 'state' => 'open']);

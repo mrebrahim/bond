@@ -41,6 +41,20 @@
 
       <div class="col-md-7">
         <div class="panel_s"><div class="panel-body">
+          <h5 class="bold">🗓 لازم ينزل النهارده <span class="text-muted small">(من مواعيد التنزيل في بروفايل كل عميل)</span></h5>
+          <?php if (empty($due)) { ?><p class="text-muted">مفيش مواعيد تنزيل النهارده</p><?php } else { ?>
+          <table class="table table-condensed"><tbody>
+            <?php foreach ($due as $d) { ?>
+              <tr class="<?= $d['done'] ? 'success' : ''; ?>">
+                <td><?= $d['type'] === 'design' ? '🎨 تصميم' : '🎬 ريل'; ?></td>
+                <td><a href="<?= admin_url('dse_studio/publishing?client=' . (int) $d['clientid']); ?>"><b><?= html_escape($d['company']); ?></b></a></td>
+                <td><?= $d['done'] ? '<span class="label label-success">✅ نزل</span>' : '<span class="label label-warning">⏳ لسه</span>'; ?></td>
+              </tr>
+            <?php } ?>
+          </tbody></table>
+          <?php } ?>
+        </div></div>
+        <div class="panel_s"><div class="panel-body">
           <h5 class="bold">آخر اللي نزل</h5>
           <?php if (!$recent) { ?><p class="text-muted">لسه مفيش</p><?php } ?>
           <table class="table table-condensed">

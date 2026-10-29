@@ -354,6 +354,40 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
       </div>
 
       <div class="col-md-6">
+        <!-- ===== مواعيد التنزيل + مخزون المحتوى ===== -->
+        <div class="panel_s" id="publish-slots"><div class="panel-body">
+          <h5 class="bold">📅 مواعيد التنزيل ومخزون المحتوى</h5>
+          <?php if (!empty($runway)) { ?>
+            <div class="mbot10">
+              <span class="dse-chip">🎬 جاهز للنشر: <b><?= dse_num($runway['ready']); ?></b> ريل</span>
+              <span class="dse-chip">اتصوّر <?= dse_num($runway['filmed']); ?> · نزل <?= (int) $runway['published']; ?></span>
+              <?php if ($runway['runout']) { ?>
+                <span class="label label-<?= $runway['days_left'] <= 7 ? 'danger' : 'default'; ?>">المحتوى بيخلص <?= dse_day($runway['runout']); ?><?= $runway['days_left'] ? ' (بعد ' . (int) $runway['days_left'] . ' يوم)' : ' (النهارده)'; ?></span>
+              <?php } elseif ($runway['from_schedule']) { ?>
+                <span class="label label-success">المحتوى مكفّي</span>
+              <?php } ?>
+              <div class="small text-muted mtop5">آخر تصوير: <?= $runway['last_film'] ? dse_day($runway['last_film']) . ' (من ' . (int) $runway['days_since_film'] . ' يوم)' : 'مصوّرش لسه'; ?><?= $runway['next_session'] ? ' · 📅 جاي يصوّر ' . dse_day($runway['next_session']) : ''; ?></div>
+              <?php if ($runway['upcoming']) { ?><div class="small mtop5">الجاي: <?php foreach ($runway['upcoming'] as $u) { echo ($u['type'] === 'design' ? '🎨 ' : '🎬 ') . dse_day($u['day']) . ' &nbsp; '; } ?></div><?php } ?>
+            </div>
+          <?php } ?>
+          <?php if ($can_pkg) { ?>
+            <?= form_open(admin_url('dse_studio/publish_slots/' . $cid)); ?>
+              <div class="row">
+                <?php foreach (dse_weekdays() as $wd => $dname) { $cur = $slots[$wd] ?? ''; ?>
+                  <div class="col-xs-6 col-sm-3 form-group" style="margin-bottom:8px"><label class="small"><?= $dname; ?></label>
+                    <select name="days[<?= $wd; ?>]" class="form-control input-sm">
+                      <option value="">—</option>
+                      <option value="reel" <?= $cur === 'reel' ? 'selected' : ''; ?>>🎬 ريل</option>
+                      <option value="design" <?= $cur === 'design' ? 'selected' : ''; ?>>🎨 تصميم</option>
+                    </select></div>
+                <?php } ?>
+              </div>
+              <button class="btn btn-primary btn-sm">احفظ مواعيد التنزيل</button>
+              <span class="small text-muted">التصوير من كالندر الاستوديو، والتنزيل من "نزل على السوشيال" — والسيستم بيحسب المحتوى بيخلص إمتى.</span>
+            <?= form_close(); ?>
+          <?php } elseif (!$slots) { ?><p class="text-muted small">مفيش مواعيد تنزيل لسه</p><?php } ?>
+        </div></div>
+
         <!-- ===== الواتساب ===== -->
         <div class="panel_s"><div class="panel-body">
           <h5 class="bold">💬 واتساب العميل</h5>

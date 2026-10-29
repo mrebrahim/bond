@@ -181,6 +181,15 @@ function dse_studio_schema()
             ],
             'indexes' => ['idx_dse_package_events_pkg' => '(`package_id`)'],
         ],
+        'dse_publish_slots' => [ // مواعيد التنزيل الأسبوعية لكل عميل (الأحد ريل · التلات تصميم …)
+            'cols' => [
+                '{pk}',
+                '`clientid` INT NOT NULL',
+                '`weekday` TINYINT NOT NULL', // 0 الأحد … 6 السبت (زي date('w'))
+                "`type` VARCHAR(20) NOT NULL DEFAULT 'reel'", // reel / design
+            ],
+            'indexes' => ['idx_dse_publish_slots_client' => '(`clientid`, `weekday`)'],
+        ],
         'dse_alerts' => [
             'cols' => [
                 '{pk}',
@@ -250,7 +259,7 @@ function dse_studio_default_options()
 
 if (!defined('DSE_STUDIO_SCHEMA_VERSION')) {
 /** نسخة الجداول — زوّدها مع أي جدول جديد */
-    define('DSE_STUDIO_SCHEMA_VERSION', '8');
+    define('DSE_STUDIO_SCHEMA_VERSION', '9');
 }
 
 if (!function_exists('dse_studio_ensure_schema')) {
