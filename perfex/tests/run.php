@@ -789,6 +789,53 @@ test('الأنواع الأربعة: ريل · تصميم · فيديو يوتي
     $db->query("UPDATE tbldse_packages SET status = 'cancelled' WHERE clientid = ?", [$c]);
     $m->fixed_time = $save;
 });
+
+test('كالندر المحتوى: هدف الشهر + CTA · المواضيع بتواريخ الشهر · املا من مواعيد التنزيل بتوزيع الهدف · السكربت والحالات · النتيجة', function () use ($m, $db) {
+    $save = $m->fixed_time;
+    $m->fixed_time = strtotime('2026-10-31 10:00:00');
+    $db->insert('tblclients', ['company' => 'عيادة د. منى']); $c = $db->insert_id();
+    $pk = $m->create_package($c, 'G', 8000, '2026-11-01', 30, ['reel' => 8, 'design' => 4]);
+    ok($m->content_plan($c, '2026-11') === null);
+    throws(function () use ($m, $c) { $m->content_plan($c, '2026-13', true); }, 'الشهر غلط');
+    $p = $m->content_plan($c, '2026-11', true);
+    ok($p['goal'] === 'sales' && strpos($p['cta'], 'احجز') !== false, 'الافتراضي مبيعات');
+    $m->save_content_plan($c, '2026-11', ['goal' => 'sales', 'target' => '30', 'cta' => 'اكتب "احجز" وهنبعتلك لينك العيادة', 'cta_link' => 'https://wa.me/201000000000', 'notes' => 'عرض تبييض نوفمبر']);
+    $p = $m->content_plan($c, '2026-11');
+    ok((int) $p['target'] === 30 && $p['cta_link'] === 'https://wa.me/201000000000');
+    // الأحد ريل · التلات تصميم · الخميس ريل ← نوفمبر 2026: 5 أحد + 4 تلات + 4 خميس = 13
+    $m->save_publish_slots($c, [0 => 'reel', 2 => 'design', 4 => 'reel']);
+    ok($m->fill_plan_from_schedule($p['id']) === 13);
+    ok($m->fill_plan_from_schedule($p['id']) === 0, 'مبيكررش');
+    $items = $m->content_items($p['id']);
+    ok(count($items) === 13 && $items[0]['publish_date'] === '2026-11-01' && $items[0]['type'] === 'reel' && $items[0]['cta'] === 'اكتب "احجز" وهنبعتلك لينك العيادة', json_encode($items[0], JSON_UNESCAPED_UNICODE));
+    $sum = $m->content_summary($p, $items);
+    ok($sum['total'] === 13 && $sum['no_topic'] === 13 && $sum['mix']['offer']['count'] >= 3 && $sum['mix']['educational']['count'] >= 3, json_encode($sum['mix']));
+    // الحالات: مينفعش "السكربت جاهز" من غير موضوع وسكربت · مينفعش "نزل" من غير لينك · التاريخ جوه الشهر
+    $id = (int) $items[0]['id'];
+    throws(function () use ($m, $p, $id) { $m->save_content_item($p['id'], ['status' => 'script'], $id); }, 'اكتب الموضوع');
+    throws(function () use ($m, $p, $id) { $m->save_content_item($p['id'], ['topic' => '3 غلطات في تنضيف السنان', 'status' => 'script'], $id); }, 'اكتب السكربت');
+    $m->save_content_item($p['id'], ['topic' => '3 غلطات في تنضيف السنان', 'hook' => 'إنت بتغسل سنانك غلط', 'script' => 'الهوك… المشكلة… الحل… اكتب احجز', 'status' => 'script'], $id);
+    throws(function () use ($m, $p, $id) { $m->save_content_item($p['id'], ['status' => 'published'], $id); }, 'لينك البوست');
+    $m->save_content_item($p['id'], ['status' => 'published', 'post_url' => 'https://instagram.com/p/1'], $id);
+    throws(function () use ($m, $p) { $m->save_content_item($p['id'], ['publish_date' => '2026-12-02', 'topic' => 'x']); }, 'جوه شهر 2026-11');
+    $new = $m->save_content_item($p['id'], ['publish_date' => '2026-11-15', 'type' => 'podcast', 'pillar' => 'trust', 'topic' => 'حلقة: قصة حالة']);
+    ok($m->content_item($new)['cta'] === 'اكتب "احجز" وهنبعتلك لينك العيادة', 'الـ CTA الفاضي = CTA الشهر');
+    $m->delete_content_item($new);
+    // النتيجة آخر الشهر
+    $m->save_content_plan($c, '2026-11', ['goal' => 'sales', 'result' => '24', 'result_note' => 'أحسن موضوع: الغلطات']);
+    $p = $m->content_plan($c, '2026-11');
+    ok($m->content_summary($p, $m->content_items($p['id']))['achieved'] === 80);
+    // الشهر الجاي بياخد الهدف والـ CTA من اللي قبله · تغيير الهدف بيغيّر الـ CTA
+    $d = $m->content_plan($c, '2026-12', true);
+    ok($d['goal'] === 'sales' && (int) $d['target'] === 30 && $d['cta'] === 'اكتب "احجز" وهنبعتلك لينك العيادة' && $d['result'] === null);
+    $m->save_content_plan($c, '2026-12', ['goal' => 'followers']);
+    ok(strpos($m->content_plan($c, '2026-12')['cta'], 'تابعني') === 0);
+    ok(count(dse_script_manual('sales')) === 10 && strpos(implode(' ', dse_script_manual('engagement')), 'سؤال') !== false);
+    $ov = array_values(array_filter($m->content_overview('2026-11'), function ($r) use ($c) { return $r['clientid'] === $c; }));
+    ok(count($ov) === 1 && $ov[0]['summary']['published'] === 1 && $ov[0]['slots'] === 3);
+    $GLOBALS['media'] = [$c, $m->client($c), $m->content_plan($c, '2026-11')];
+    $m->fixed_time = $save;
+});
 echo "\nالتنبيهات:\n";
 test('العميل بقاله فترة مابيصوّرش → تنبيه مرة واحدة، urgent لو مفيش نشر', function () use ($m, $client, $db) {
     ok(count($m->check_inactive_clients()) === 0, 'لسه بادئ');
@@ -891,6 +938,14 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
     ok(strpos($hh, 'مدفوع <b>2,500') !== false && strpos($hh, 'سجّل دفعة') !== false && strpos($hh, 'اربط فاتورة عملتها في Perfex') !== false && strpos($hh, 'قسط قديم') !== false && strpos($hh, 'name="left[reel]"') !== false && strpos($hh, '<option value="4">4 أسابيع') !== false && strpos($hh, 'امسح العميل من الاستوديو') !== false && strpos($hh, '⏳ مدّ السماح') !== false && strpos($hh, ': · ') === false, 'القديمة: دفعات وفواتير ومدّ السماح');
     $pg = render('pick_group', ['client' => $GLOBALS['pick'][0], 'groups' => $GLOBALS['pick'][1]]);
     ok(strpos($pg, 'مربوط بالعميل ده') !== false && strpos($pg, 'مربوط بـ جروب قديم') !== false, 'صفحة اختيار الجروب');
+    [$mc, $mcl, $mp] = $GLOBALS['media'];
+    $mi = $m->content_items($mp['id']);
+    $mv = render('media', ['month' => '2026-11', 'rows' => $m->content_overview('2026-11')]);
+    $mpv = render('media_plan', ['client' => $mcl, 'month' => '2026-11', 'plan' => $mp, 'items' => $mi, 'summary' => $m->content_summary($mp, $mi), 'slots' => $m->publish_slots($mc), 'clients' => $m->content_overview('2026-11'), 'open' => (int) $mi[0]['id']]);
+    file_put_contents(sys_get_temp_dir() . '/dse_media_plan.html', $mpv);
+    file_put_contents(sys_get_temp_dir() . '/dse_media.html', $mv);
+    ok(strpos($mv, 'عيادة د. منى') !== false && strpos($mv, 'افتح الكالندر') !== false, 'صفحة الميديا');
+    ok(strpos($mpv, 'هدف الشهر') !== false && strpos($mpv, 'وصلنا 80%') !== false && strpos($mpv, 'مانوال السكربت') !== false && strpos($mpv, '3 غلطات في تنضيف السنان') !== false && strpos($mpv, 'املا الشهر من مواعيد التنزيل') !== false && substr_count($mpv, 'class="panel_s dse-item"') === 13 && strpos($mpv, 'action="/admin/dse_studio/media_plan/' . $mc . '?month=2026-11"') !== false, 'كالندر العميل');
     $rn = render('renewals', ['rows' => $m->renewals(''), 'status' => '']);
     ok(strpos($rn, 'عيادة د. سامي') !== false && strpos($rn, 'ابعت طلب التجديد') !== false && strpos($rn, 'آخر طلب') !== false && strpos($rn, 'قديمة') !== false, 'صف التجديد');
     file_put_contents(sys_get_temp_dir() . '/dse_renewals.html', $rn);

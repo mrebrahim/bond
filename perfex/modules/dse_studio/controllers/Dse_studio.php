@@ -454,6 +454,78 @@ class Dse_studio extends AdminController
         return staff_can('publish', DSE_STUDIO_MODULE_NAME) || staff_can('create', DSE_STUDIO_MODULE_NAME);
     }
 
+    // =================================================================
+    // الميديا: كالندر المحتوى الشهري لكل عميل
+    // =================================================================
+    private function can_media()
+    {
+        return staff_can('view', DSE_STUDIO_MODULE_NAME) || $this->can_publish();
+    }
+
+    private function media_month()
+    {
+        $m = (string) $this->input->get('month');
+        return preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $m) ? $m : date('Y-m');
+    }
+
+    /** كل العملاء + حالة كالندر الشهر */
+    public function media()
+    {
+        if (!$this->can_media()) {
+            access_denied(DSE_STUDIO_MODULE_NAME);
+        }
+        $month = $this->media_month();
+        $this->load->view('media', ['title' => _l('dse_menu_media'), 'month' => $month, 'rows' => $this->dse_studio_model->content_overview($month)]);
+    }
+
+    /** كالندر عميل واحد: الهدف + المواضيع + السكربت + المانوال */
+    public function media_plan($clientid)
+    {
+        if (!$this->can_media()) {
+            access_denied(DSE_STUDIO_MODULE_NAME);
+        }
+        $m     = $this->dse_studio_model;
+        $month = $this->media_month();
+        $back  = admin_url('dse_studio/media_plan/' . (int) $clientid . '?month=' . $month);
+        $action = (string) $this->input->post('action');
+        if ($action !== '') {
+            try {
+                $plan = $m->content_plan($clientid, $month, true);
+                switch ($action) {
+                    case 'plan':
+                        $m->save_content_plan($clientid, $month, $this->input->post(null, false) ?: []);
+                        set_alert('success', 'هدف الشهر اتحفظ');
+                        break;
+                    case 'fill':
+                        $n = $m->fill_plan_from_schedule($plan['id']);
+                        set_alert('success', $n ? 'اتضاف ' . $n . ' ميعاد من مواعيد التنزيل — اكتب المواضيع' : 'كل مواعيد التنزيل موجودة خلاص');
+                        break;
+                    case 'item':
+                        $id = (int) $this->input->post('id');
+                        $id = $m->save_content_item($plan['id'], $this->input->post(null, false) ?: [], $id ?: null);
+                        set_alert('success', 'الموضوع اتحفظ');
+                        $back .= '#item-' . $id;
+                        break;
+                    case 'delete':
+                        $m->delete_content_item((int) $this->input->post('id'));
+                        set_alert('success', 'الموضوع اتمسح');
+                        break;
+                }
+            } catch (Exception $e) {
+                set_alert('danger', $e->getMessage());
+            }
+            redirect($back);
+        }
+        $client = $m->client($clientid);
+        $plan   = $m->content_plan($clientid, $month);
+        $items  = $plan ? $m->content_items($plan['id']) : [];
+        $this->load->view('media_plan', [
+            'title' => 'كالندر ' . $client['company'], 'client' => $client, 'month' => $month, 'plan' => $plan, 'items' => $items,
+            'summary' => $plan ? $m->content_summary($plan, $items) : null, 'slots' => $m->publish_slots($clientid),
+            'clients' => $m->content_overview($month), 'open' => (int) $this->input->get('item'),
+        ]);
+    }
+
     /** صفحة المودريشن: يختار العميل ويحط لينك البوست ← يتبعت لجروب العميل */
     public function publishing()
     {

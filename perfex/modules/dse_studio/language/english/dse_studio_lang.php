@@ -17,3 +17,4 @@ $lang['dse_menu_publish']         = 'نزل على السوشيال';
 $lang['dse_notification_alert']   = 'تنبيه الاستوديو: %s';
 $lang['dse_menu_messages'] = 'رسايل الواتساب';
 $lang['dse_menu_renewals'] = 'مستنيين تجديد';
+$lang['dse_menu_media'] = 'كالندر المحتوى (الميديا)';

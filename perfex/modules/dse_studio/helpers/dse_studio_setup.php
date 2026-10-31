@@ -190,6 +190,45 @@ function dse_studio_schema()
             ],
             'indexes' => ['idx_dse_publish_slots_client' => '(`clientid`, `weekday`)'],
         ],
+        'dse_content_plans' => [ // كالندر المحتوى: هدف شهري لكل عميل
+            'cols' => [
+                '{pk}',
+                '`clientid` INT NOT NULL',
+                '`month` CHAR(7) NOT NULL',            // 2026-11
+                "`goal` VARCHAR(20) NOT NULL DEFAULT 'sales'", // sales / followers / engagement / awareness
+                '`target` INT NULL',                    // الرقم المستهدف (30 حجز …)
+                '`cta` VARCHAR(255) NULL',              // الـ CTA الأساسي للشهر
+                '`cta_link` VARCHAR(255) NULL',         // لينك الحجز / الواتساب
+                '`notes` TEXT NULL',
+                '`result` INT NULL',                    // اللي اتحقق فعلًا آخر الشهر
+                '`result_note` VARCHAR(255) NULL',
+                '`created_by` INT NULL',
+                '`created_at` DATETIME NOT NULL',
+                '`updated_at` DATETIME NULL',
+            ],
+            'indexes' => ['uq_dse_content_plans' => 'UNIQUE (`clientid`, `month`)'],
+        ],
+        'dse_content_items' => [ // مواضيع الشهر (ريل / تصميم / يوتيوب / بودكاست) بتواريخها
+            'cols' => [
+                '{pk}',
+                '`plan_id` INT NOT NULL',
+                '`clientid` INT NOT NULL',
+                '`publish_date` DATE NOT NULL',
+                "`type` VARCHAR(20) NOT NULL DEFAULT 'reel'",
+                "`pillar` VARCHAR(20) NOT NULL DEFAULT 'educational'",
+                "`topic` VARCHAR(255) NOT NULL DEFAULT ''",
+                '`hook` VARCHAR(255) NULL',
+                '`cta` VARCHAR(255) NULL',
+                '`script` TEXT NULL',
+                "`status` VARCHAR(20) NOT NULL DEFAULT 'idea'",
+                '`post_url` VARCHAR(500) NULL',
+                '`notes` VARCHAR(255) NULL',
+                '`created_by` INT NULL',
+                '`created_at` DATETIME NOT NULL',
+                '`updated_at` DATETIME NULL',
+            ],
+            'indexes' => ['idx_dse_content_items_plan' => '(`plan_id`, `publish_date`)'],
+        ],
         'dse_alerts' => [
             'cols' => [
                 '{pk}',
@@ -260,7 +299,7 @@ function dse_studio_default_options()
 
 if (!defined('DSE_STUDIO_SCHEMA_VERSION')) {
 /** نسخة الجداول — زوّدها مع أي جدول جديد */
-    define('DSE_STUDIO_SCHEMA_VERSION', '10');
+    define('DSE_STUDIO_SCHEMA_VERSION', '11');
 }
 
 if (!function_exists('dse_studio_ensure_schema')) {

@@ -1490,6 +1490,208 @@ class Dse_studio_model extends App_Model
     }
 
     // =================================================================
+    // كالندر المحتوى (الميديا): هدف شهري + مواضيع بتواريخ + سكربت + مانوال
+    // =================================================================
+    private function month_ok($month)
+    {
+        if (!preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', (string) $month)) {
+            throw new Exception('الشهر غلط');
+        }
+        return $month;
+    }
+
+    /** خطة الشهر (ولو مش موجودة: null، أو بتتعمل لو $create) */
+    public function content_plan($clientid, $month, $create = false)
+    {
+        $this->ensure_renewal_columns();
+        $this->month_ok($month);
+        $p = $this->row('SELECT * FROM ' . $this->tbl('dse_content_plans') . ' WHERE clientid = ? AND month = ?', [(int) $clientid, $month]);
+        if (!$p && $create) {
+            $this->client($clientid);
+            $prev = $this->row('SELECT * FROM ' . $this->tbl('dse_content_plans') . ' WHERE clientid = ? AND month < ? ORDER BY month DESC LIMIT 1', [(int) $clientid, $month]);
+            $goal = $prev['goal'] ?? 'sales';
+            $this->db->insert($this->tbl('dse_content_plans'), [
+                'clientid' => (int) $clientid, 'month' => $month, 'goal' => $goal, 'target' => $prev['target'] ?? null,
+                'cta' => $prev['cta'] ?? dse_content_goals()[$goal]['cta'], 'cta_link' => $prev['cta_link'] ?? null,
+                'created_by' => $this->staff_id(), 'created_at' => $this->now(),
+            ]);
+            $p = $this->row('SELECT * FROM ' . $this->tbl('dse_content_plans') . ' WHERE id = ?', [(int) $this->db->insert_id()]);
+        }
+        return $p ?: null;
+    }
+
+    public function save_content_plan($clientid, $month, array $d)
+    {
+        $p    = $this->content_plan($clientid, $month, true);
+        $goal = (string) ($d['goal'] ?? $p['goal']);
+        if (!isset(dse_content_goals()[$goal])) {
+            throw new Exception('اختار هدف الشهر');
+        }
+        $row = ['goal' => $goal, 'updated_at' => $this->now()];
+        foreach (['target', 'result'] as $k) {
+            if (array_key_exists($k, $d)) {
+                $row[$k] = $d[$k] === '' || $d[$k] === null ? null : max(0, (int) $d[$k]);
+            }
+        }
+        foreach (['cta' => 255, 'cta_link' => 255, 'result_note' => 255] as $k => $len) {
+            if (array_key_exists($k, $d)) {
+                $row[$k] = trim((string) $d[$k]) === '' ? null : mb_substr(trim($d[$k]), 0, $len);
+            }
+        }
+        if (array_key_exists('notes', $d)) {
+            $row['notes'] = trim((string) $d['notes']) ?: null;
+        }
+        if ($goal !== $p['goal'] && empty($d['cta'])) {
+            $row['cta'] = dse_content_goals()[$goal]['cta']; // الهدف اتغيّر ← CTA الهدف الجديد
+        }
+        $this->db->update($this->tbl('dse_content_plans'), $row, ['id' => (int) $p['id']]);
+        return (int) $p['id'];
+    }
+
+    public function content_items($plan_id)
+    {
+        return $this->rows('SELECT * FROM ' . $this->tbl('dse_content_items') . ' WHERE plan_id = ? ORDER BY publish_date, id', [(int) $plan_id]);
+    }
+
+    public function content_item($id)
+    {
+        $it = $this->row('SELECT * FROM ' . $this->tbl('dse_content_items') . ' WHERE id = ?', [(int) $id]);
+        if (!$it) {
+            throw new Exception('الموضوع مش موجود');
+        }
+        return $it;
+    }
+
+    /** ضيف / عدّل موضوع: التاريخ جوه الشهر · النوع والعمود صح · الـ CTA الفاضي بياخد CTA الشهر */
+    public function save_content_item($plan_id, array $d, $id = null)
+    {
+        $plan = $this->row('SELECT * FROM ' . $this->tbl('dse_content_plans') . ' WHERE id = ?', [(int) $plan_id]);
+        if (!$plan) {
+            throw new Exception('خطة الشهر مش موجودة');
+        }
+        $old  = $id ? $this->content_item($id) : null;
+        $date = (string) ($d['publish_date'] ?? ($old['publish_date'] ?? ''));
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) || substr($date, 0, 7) !== $plan['month']) {
+            throw new Exception('تاريخ النشر لازم يبقى جوه شهر ' . $plan['month']);
+        }
+        $type   = (string) ($d['type'] ?? ($old['type'] ?? 'reel'));
+        $pillar = (string) ($d['pillar'] ?? ($old['pillar'] ?? 'educational'));
+        $status = (string) ($d['status'] ?? ($old['status'] ?? 'idea'));
+        if (!isset(dse_post_types()[$type]) || !isset(dse_content_pillars()[$pillar]) || !isset(dse_content_statuses()[$status])) {
+            throw new Exception('النوع أو العمود أو الحالة غلط');
+        }
+        $row = ['publish_date' => $date, 'type' => $type, 'pillar' => $pillar, 'status' => $status, 'updated_at' => $this->now()];
+        foreach (['topic' => 255, 'hook' => 255, 'cta' => 255, 'post_url' => 500, 'notes' => 255] as $k => $len) {
+            if (array_key_exists($k, $d)) {
+                $row[$k] = mb_substr(trim((string) $d[$k]), 0, $len);
+            }
+        }
+        if (array_key_exists('script', $d)) {
+            $row['script'] = trim((string) $d['script']) ?: null;
+        }
+        if (in_array($status, ['script', 'review', 'approved', 'filmed', 'published'], true) && trim((string) ($row['topic'] ?? $old['topic'] ?? '')) === '') {
+            throw new Exception('اكتب الموضوع الأول');
+        }
+        if ($status === 'script' && trim((string) ($row['script'] ?? $old['script'] ?? '')) === '') {
+            throw new Exception('اكتب السكربت قبل ما تعلّمه "جاهز"');
+        }
+        if ($status === 'published' && !preg_match('~^https?://~i', (string) ($row['post_url'] ?? $old['post_url'] ?? ''))) {
+            throw new Exception('حط لينك البوست علشان تعلّمه "نزل"');
+        }
+        if (($row['cta'] ?? $old['cta'] ?? '') === '') {
+            $row['cta'] = $plan['cta'] ?: dse_content_goals()[$plan['goal']]['cta'];
+        }
+        if ($old) {
+            $this->db->update($this->tbl('dse_content_items'), $row, ['id' => (int) $old['id']]);
+            return (int) $old['id'];
+        }
+        $this->db->insert($this->tbl('dse_content_items'), $row + [
+            'plan_id' => (int) $plan['id'], 'clientid' => (int) $plan['clientid'], 'topic' => $row['topic'] ?? '',
+            'created_by' => $this->staff_id(), 'created_at' => $this->now(),
+        ]);
+        return (int) $this->db->insert_id();
+    }
+
+    public function delete_content_item($id)
+    {
+        $it = $this->content_item($id);
+        $this->db->query('DELETE FROM ' . $this->tbl('dse_content_items') . ' WHERE id = ?', [(int) $it['id']]);
+        return $it;
+    }
+
+    /** املا الشهر من مواعيد التنزيل: خانة فاضية لكل ميعاد (مبيكررش اللي موجود) ← بيرجع كام اتضاف */
+    public function fill_plan_from_schedule($plan_id)
+    {
+        $plan  = $this->row('SELECT * FROM ' . $this->tbl('dse_content_plans') . ' WHERE id = ?', [(int) $plan_id]);
+        $slots = $plan ? $this->publish_slots($plan['clientid']) : [];
+        if (!$slots) {
+            throw new Exception('حط مواعيد التنزيل في بروفايل العميل الأول (الأحد ريل · التلات تصميم …)');
+        }
+        $have = [];
+        foreach ($this->content_items($plan['id']) as $it) {
+            $have[$it['publish_date'] . '|' . $it['type']] = 1;
+        }
+        // بيتوزّع على الأعمدة بنسب هدف الشهر
+        $mix   = dse_content_goals()[$plan['goal']]['mix'];
+        $cycle = [];
+        foreach ($mix as $p => $pct) {
+            for ($i = 0; $i < round($pct / 10); $i++) {
+                $cycle[] = $p;
+            }
+        }
+        $n = 0;
+        $days = (int) date('t', strtotime($plan['month'] . '-01'));
+        for ($d = 1; $d <= $days; $d++) {
+            $date = $plan['month'] . '-' . sprintf('%02d', $d);
+            $wd   = (int) date('w', strtotime($date));
+            if (!isset($slots[$wd]) || isset($have[$date . '|' . $slots[$wd]])) {
+                continue;
+            }
+            $this->save_content_item($plan['id'], ['publish_date' => $date, 'type' => $slots[$wd], 'pillar' => $cycle[$n % count($cycle)], 'topic' => '']);
+            $n++;
+        }
+        return $n;
+    }
+
+    /** ملخص الخطة: بالحالة · بالعمود (والنسبة المقترحة) · بالنوع · فاضي من غير موضوع */
+    public function content_summary(array $plan, array $items)
+    {
+        $by = ['status' => [], 'pillar' => [], 'type' => []];
+        foreach ($items as $it) {
+            foreach (['status', 'pillar', 'type'] as $k) {
+                $by[$k][$it[$k]] = ($by[$k][$it[$k]] ?? 0) + 1;
+            }
+        }
+        $total = count($items);
+        $mix   = [];
+        foreach (dse_content_goals()[$plan['goal']]['mix'] as $p => $want) {
+            $mix[$p] = ['want' => $want, 'have' => $total ? (int) round(100 * ($by['pillar'][$p] ?? 0) / $total) : 0, 'count' => $by['pillar'][$p] ?? 0];
+        }
+        return [
+            'total' => $total, 'by' => $by, 'mix' => $mix,
+            'no_topic' => count(array_filter($items, function ($i) { return trim($i['topic']) === ''; })),
+            'no_script' => count(array_filter($items, function ($i) { return in_array($i['type'], ['reel', 'youtube', 'podcast'], true) && trim((string) $i['script']) === ''; })),
+            'published' => $by['status']['published'] ?? 0,
+            'achieved' => $plan['target'] ? ($plan['result'] !== null ? (int) round(100 * (int) $plan['result'] / max(1, (int) $plan['target'])) : null) : null,
+        ];
+    }
+
+    /** صفحة الميديا: كل العملاء اللي باقتهم شغالة + حالة خطة الشهر */
+    public function content_overview($month)
+    {
+        $this->ensure_renewal_columns();
+        $this->month_ok($month);
+        $out = [];
+        foreach ($this->rows('SELECT DISTINCT p.clientid, ' . $this->name_sql('c') . ' AS company FROM ' . $this->tbl('dse_packages') . ' p JOIN ' . $this->tbl('clients') . " c ON c.userid = p.clientid WHERE p.status IN ('active','pending') ORDER BY company") as $r) {
+            $plan  = $this->content_plan($r['clientid'], $month);
+            $items = $plan ? $this->content_items($plan['id']) : [];
+            $out[] = ['clientid' => (int) $r['clientid'], 'company' => $r['company'], 'plan' => $plan,
+                'summary' => $plan ? $this->content_summary($plan, $items) : null, 'slots' => count($this->publish_slots($r['clientid']))];
+        }
+        return $out;
+    }
+
+    // =================================================================
     // مواعيد التنزيل (الأحد ريل · التلات تصميم …)
     // =================================================================
     /** [weekday => type] */
@@ -1901,10 +2103,11 @@ class Dse_studio_model extends App_Model
         if (!self::$renewal_cols_checked && function_exists('dse_studio_add_missing_columns') && function_exists('get_instance')) {
             dse_studio_add_missing_columns(['dse_clients' => ['renewal_status', 'renewal_note', 'renewal_updated_at', 'wa_link_error'], 'dse_packages' => ['historic', 'grace_days']]);
             $CI = &get_instance();
-            if (is_object($CI) && isset($CI->db) && !$CI->db->table_exists($this->tbl('dse_publish_slots'))) {
-                $def = dse_studio_schema()['dse_publish_slots'];
-                foreach (dse_studio_create_sql('dse_publish_slots', $def, db_prefix(), ($CI->db->dbdriver ?? 'mysqli') === 'sqlite' ? 'sqlite' : 'mysql', 'utf8mb4') as $sql) {
-                    $CI->db->query($sql);
+            foreach (['dse_publish_slots', 'dse_content_plans', 'dse_content_items'] as $t) { // جداول اتضافت بعد كده
+                if (is_object($CI) && isset($CI->db) && !$CI->db->table_exists($this->tbl($t))) {
+                    foreach (dse_studio_create_sql($t, dse_studio_schema()[$t], db_prefix(), ($CI->db->dbdriver ?? 'mysqli') === 'sqlite' ? 'sqlite' : 'mysql', 'utf8mb4') as $sql) {
+                        $CI->db->query($sql);
+                    }
                 }
             }
             self::$renewal_cols_checked = true;
