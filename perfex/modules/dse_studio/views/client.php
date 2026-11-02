@@ -70,6 +70,27 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                 <?php } } ?>
               </div>
 
+              <?php $svcs = $pkg_services[$p['id']] ?? []; if ($svcs) { ?>
+                <div class="mtop5">
+                  <?php foreach ($svcs as $sv) { $sst = dse_service_statuses()[$sv['status']] ?? ['', 'default']; ?>
+                    <div class="dse-row" style="padding:4px 0">
+                      <b><?= dse_services()[$sv['service']]['label'] ?? $sv['service']; ?></b><?= $sv['title'] ? ' — ' . html_escape($sv['title']) : ''; ?>
+                      <?php if ($sv['service'] === 'ads') { ?>
+                        · ميزانية <?= dse_money($sv['ad_budget']); ?> + أتعاب <?= dse_money($sv['amount']); ?><?= $sv['platforms'] ? ' · ' . html_escape(dse_platforms_label($sv['platforms'])) : ''; ?>
+                      <?php } else { ?> · <?= dse_money($sv['amount']); ?><?php } ?>
+                      <span class="label label-<?= $sst[1]; ?>"><?= $sst[0]; ?></span>
+                      <?= $sv['note'] ? '<span class="small text-muted"> — ' . html_escape($sv['note']) . '</span>' : ''; ?>
+                      <?php if ($can_pkg && $p['status'] !== 'cancelled') { ?>
+                        <?= form_open(admin_url('dse_studio/service/' . $sv['id'] . '/status'), ['class' => 'form-inline inline-block']); ?>
+                          <select name="status" class="form-control input-sm" onchange="this.form.submit()"><?php foreach (dse_service_statuses() as $k => $l) { if ($k === 'running' && $sv['service'] !== 'ads') { continue; } ?><option value="<?= $k; ?>" <?= $sv['status'] === $k ? 'selected' : ''; ?>><?= $l[0]; ?></option><?php } ?></select>
+                        <?= form_close(); ?>
+                        <?= form_open(admin_url('dse_studio/service/' . $sv['id'] . '/remove'), ['class' => 'inline-block', 'onsubmit' => "return confirm('تشيل الخدمة دي؟ سعر الباقة هيقل بيها')"]); ?><button class="btn btn-link btn-xs text-danger">شيلها</button><?= form_close(); ?>
+                      <?php } ?>
+                    </div>
+                  <?php } ?>
+                </div>
+              <?php } ?>
+
               <!-- الفلوس: كل الفواتير (أقساط / فرق ترقية) -->
               <div class="dse-money mtop5">
                 <div class="dse-bar"><div style="width:<?= $p['price'] > 0 ? min(100, round($paidv / $p['price'] * 100)) : 100; ?>%"></div></div>
@@ -105,7 +126,7 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                       foreach ($ni as $t => $q) { if (($oi[$t] ?? 0) != $q) { $ch[] = dse_type_name($t) . ' ' . dse_num($oi[$t] ?? 0) . '←' . dse_num($q); } }
                       if ($e['old_price'] != $e['new_price']) { $ch[] = 'السعر ' . dse_money($e['old_price']) . ' ← ' . dse_money($e['new_price']); }
                       if ($e['old_end_date'] != $e['new_end_date']) { $ch[] = ($e['event'] === 'grace' ? 'من ' . dse_day($e['old_end_date']) . ' ' : '') . 'لحد ' . dse_day($e['new_end_date']); } ?>
-                    <div><?= in_array($e['event'], ['renew', 'grace'], true) ? '' : '⬆️ '; ?><?= ['upgrade' => 'ترقية', 'downgrade' => 'تخفيض', 'edit' => 'تعديل', 'renew' => '🔄 تجديد', 'grace' => '⏳ مدّ السماح'][$e['event']] ?? $e['event']; ?> <?= dse_day($e['created_at']); ?>:
+                    <div><?= in_array($e['event'], ['renew', 'grace', 'service'], true) ? '' : '⬆️ '; ?><?= ['upgrade' => 'ترقية', 'downgrade' => 'تخفيض', 'edit' => 'تعديل', 'renew' => '🔄 تجديد', 'grace' => '⏳ مدّ السماح', 'service' => '➕ خدمة'][$e['event']] ?? $e['event']; ?> <?= dse_day($e['created_at']); ?>:
                       <?= implode(' · ', $ch); ?><?= $e['note'] ? ' — ' . html_escape($e['note']) : ''; ?></div>
                   <?php } ?>
                 </div>
@@ -142,6 +163,24 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
               <?php } ?>
               <?php if ($open && $can_pkg) { ?>
                 <div class="dse-pkg-actions">
+                  <details class="dse-box">
+                    <summary>➕ ضيف خدمة (إعلانات ممولة / ويب سايت / أبلكيشن / أوتوميشن)</summary>
+                  <?= form_open(admin_url('dse_studio/add_service/' . $p['id'])); ?>
+                    <div class="row">
+                      <div class="col-xs-12 col-sm-4 form-group"><label>الخدمة</label>
+                        <select name="service" class="form-control" onchange="this.form.querySelectorAll('.dse-ads-only').forEach(function(e){e.style.display=this.value==='ads'?'':'none'},this)">
+                          <?php foreach (dse_services() as $k => $x) { ?><option value="<?= $k; ?>"><?= $x['label']; ?></option><?php } ?>
+                        </select></div>
+                      <div class="col-xs-12 col-sm-8 form-group"><label>الوصف (اختياري)</label><input name="title" class="form-control" placeholder="حملة حجوزات نوفمبر / موقع العيادة / بوت حجز واتساب…"></div>
+                      <div class="col-xs-6 col-sm-4 form-group dse-ads-only"><label>ميزانية الإعلانات للمنصة (ج.م)</label><input type="number" min="0" name="ad_budget" class="form-control" placeholder="10000"></div>
+                      <div class="col-xs-6 col-sm-4 form-group"><label>أتعاب الشركة / سعر الخدمة (ج.م)</label><input type="number" min="0" name="amount" class="form-control" placeholder="2500"></div>
+                      <div class="col-xs-12 col-sm-4 form-group dse-ads-only"><label>المنصات</label><select name="platforms" class="form-control"><?php foreach (dse_ad_platform_sets() as $k => $l) { ?><option value="<?= $k; ?>"><?= $l; ?></option><?php } ?></select></div>
+                      <div class="col-xs-12 col-sm-6 form-group"><label>سعر الباقة</label><select name="raise" class="form-control"><option value="1">يزيد بسعر الخدمة (ترقية — العميل هيدفع الفرق)</option><option value="0">زي ما هو (السعر متفق عليه جوه الباقة)</option></select></div>
+                      <div class="col-xs-12 col-sm-6 form-group"><label>ملاحظة</label><input name="note" class="form-control"></div>
+                    </div>
+                    <button class="btn btn-primary btn-sm">ضيف الخدمة</button>
+                  <?= form_close(); ?>
+                  </details>
                   <details class="dse-box">
                     <summary>⬆️ ترقية / تعديل الباقة</summary>
                   <?= form_open(admin_url('dse_studio/upgrade_package/' . $p['id'])); ?>
@@ -199,11 +238,12 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                 <details class="dse-box">
                   <summary>🔄 جدّد الاشتراك (الشهر الجاي)</summary>
                   <?= form_open(admin_url('dse_studio/renew_package/' . $p['id'])); ?>
-                    <p class="small text-muted">باقة جديدة بنفس الخدمات والسعر — بتبدأ بعد ما دي تخلص، وبتتفعل لما تسجّل الدفعة عليها. اللي فاضل في الباقة دي بيفضل فيها لحد آخر يوم.</p>
+                    <p class="small text-muted">باقة جديدة بنفس الخدمات والسعر (الإعلانات بتتجدد، والويب سايت والأبلكيشن والأوتوميشن لأ) — بتبدأ بعد ما دي تخلص، وبتتفعل لما تسجّل الدفعة عليها. اللي فاضل في الباقة دي بيفضل فيها لحد آخر يوم.</p>
                     <div class="row">
                       <div class="col-xs-6 col-sm-3 form-group"><label>تبدأ</label><input type="date" name="start_date" value="<?= max(date('Y-m-d'), date('Y-m-d', strtotime($p['end_date'] . ' +1 day'))); ?>" class="form-control"></div>
                       <div class="col-xs-6 col-sm-3 form-group"><label>المدة (أيام)</label><input type="number" name="validity_days" min="1" value="<?= $days; ?>" class="form-control"></div>
-                      <div class="col-xs-12 col-sm-6 form-group"><label>السعر (ج.م)</label><input type="number" name="price" min="0" value="<?= (float) $p['price']; ?>" class="form-control"></div>
+                      <?php $oneoff = array_sum(array_map(function ($x) { return empty(dse_services()[$x['service']]['monthly']) ? (float) $x['amount'] + (float) $x['ad_budget'] : 0; }, $pkg_services[$p['id']] ?? [])); ?>
+                      <div class="col-xs-12 col-sm-6 form-group"><label>السعر (ج.م)<?= $oneoff > 0 ? ' <span class="small text-muted">— من غير ' . dse_money($oneoff) . ' خدمات مرة واحدة</span>' : ''; ?></label><input type="number" name="price" min="0" value="<?= max(0, (float) $p['price'] - $oneoff); ?>" class="form-control"></div>
                       <?php foreach (dse_types() as $t => $info) { ?>
                         <div class="col-xs-4 form-group"><label><?= $info['name']; ?></label><input type="number" name="items[<?= $t; ?>]" min="0" step="0.5" value="<?= dse_num($balances[$p['id']][$t]['total'] ?? 0); ?>" class="form-control"></div>
                       <?php } ?>
@@ -252,11 +292,18 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
           <?= form_open(admin_url('dse_studio/create_package/' . $cid)); ?>
             <div class="row">
               <div class="col-xs-6 form-group"><label>اسم الباقة</label><input name="name" class="form-control" placeholder="Growth" required></div>
-              <div class="col-xs-6 form-group"><label>السعر (ج.م)</label><input type="number" name="price" min="0" class="form-control" required></div>
+              <div class="col-xs-6 form-group"><label>السعر الكلي (ج.م)</label><input type="number" name="price" min="0" class="form-control" placeholder="فاضي = مجموع الخدمات تحت"></div>
               <div class="col-xs-6 form-group"><label>تبدأ</label><input type="date" name="start_date" value="<?= date('Y-m-d'); ?>" class="form-control"></div>
               <div class="col-xs-6 form-group"><label>المدة (أيام)</label><input type="number" name="validity_days" value="30" min="1" class="form-control"></div>
               <?php foreach (dse_types() as $t => $info) { ?>
                 <div class="col-xs-4 form-group"><label><?= $info['name']; ?></label><input type="number" name="items[<?= $t; ?>]" min="0" step="0.5" class="form-control"></div>
+              <?php } ?>
+              <div class="col-xs-12"><div class="small bold text-muted" style="margin:4px 0 6px">خدمات تانية (سيبها فاضية لو مش في الباقة)</div></div>
+              <div class="col-xs-6 col-sm-3 form-group"><label>📣 ميزانية إعلانات (ج.م)</label><input type="number" min="0" name="svc[ads][ad_budget]" class="form-control"></div>
+              <div class="col-xs-6 col-sm-3 form-group"><label>📣 أتعاب الإعلانات (ج.م)</label><input type="number" min="0" name="svc[ads][amount]" class="form-control"></div>
+              <div class="col-xs-12 col-sm-6 form-group"><label>📣 المنصات</label><select name="svc[ads][platforms]" class="form-control"><?php foreach (dse_ad_platform_sets() as $k => $l) { ?><option value="<?= $k; ?>"><?= $l; ?></option><?php } ?></select></div>
+              <?php foreach (['website', 'app', 'automation'] as $k) { ?>
+                <div class="col-xs-4 form-group"><label><?= dse_services()[$k]['label']; ?> (ج.م)</label><input type="number" min="0" name="svc[<?= $k; ?>][amount]" class="form-control"></div>
               <?php } ?>
               <div class="col-xs-12 form-group"><label>الفاتورة (اعملها من Perfex الأول)</label>
                 <select name="invoice_id" class="form-control">

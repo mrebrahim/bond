@@ -229,6 +229,24 @@ function dse_studio_schema()
             ],
             'indexes' => ['idx_dse_content_items_plan' => '(`plan_id`, `publish_date`)'],
         ],
+        'dse_package_services' => [ // إعلانات ممولة + برمجة جوه الباقة (مش بالعدد)
+            'cols' => [
+                '{pk}',
+                '`package_id` INT NOT NULL',
+                '`clientid` INT NOT NULL',
+                '`service` VARCHAR(20) NOT NULL',               // ads / website / app / automation
+                '`title` VARCHAR(150) NULL',                     // "موقع العيادة" / "بوت حجز واتساب"
+                '`amount` DECIMAL(12,2) NOT NULL DEFAULT 0',     // سعر الخدمة / أتعاب الشركة على الإعلانات (جنيه)
+                '`ad_budget` DECIMAL(12,2) NULL',                // ميزانية الإعلانات اللي بتروح للمنصة (جنيه)
+                '`platforms` VARCHAR(100) NULL',                 // facebook,instagram
+                "`status` VARCHAR(20) NOT NULL DEFAULT 'pending'",
+                '`note` VARCHAR(255) NULL',
+                '`created_by` INT NULL',
+                '`created_at` DATETIME NOT NULL',
+                '`updated_at` DATETIME NULL',
+            ],
+            'indexes' => ['idx_dse_package_services_pkg' => '(`package_id`)'],
+        ],
         'dse_alerts' => [
             'cols' => [
                 '{pk}',
@@ -299,7 +317,7 @@ function dse_studio_default_options()
 
 if (!defined('DSE_STUDIO_SCHEMA_VERSION')) {
 /** نسخة الجداول — زوّدها مع أي جدول جديد */
-    define('DSE_STUDIO_SCHEMA_VERSION', '11');
+    define('DSE_STUDIO_SCHEMA_VERSION', '12');
 }
 
 if (!function_exists('dse_studio_ensure_schema')) {

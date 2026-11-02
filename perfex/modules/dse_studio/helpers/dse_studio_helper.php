@@ -334,3 +334,53 @@ function dse_script_manual($goal)
         'لو العميل دكتور: ممنوع وعود بنتيجة مضمونة أو مقارنة بدكاترة تانيين أو أسعار مخفّضة — ضوابط النقابة',
     ], $g ? $g['manual'] : []);
 }
+
+// ---------------------------------------------------------------------------
+// خدمات الباقة اللي مش بالعدد: إعلانات ممولة + برمجة (ويب سايت · أبلكيشن · أوتوميشن n8n)
+// ---------------------------------------------------------------------------
+function dse_services()
+{
+    return [
+        'ads'        => ['label' => '📣 إعلانات ممولة', 'monthly' => true],   // ميزانية الإعلانات (للمنصة) + أتعاب الشركة — الاتنين بالجنيه
+        'website'    => ['label' => '🌐 ويب سايت', 'monthly' => false],
+        'app'        => ['label' => '📱 أبلكيشن', 'monthly' => false],
+        'automation' => ['label' => '⚙️ أوتوميشن (n8n)', 'monthly' => false],
+    ];
+}
+
+function dse_service_statuses()
+{
+    return [
+        'pending'     => ['لسه مابدأش', 'default'],
+        'in_progress' => ['شغالين', 'info'],
+        'running'     => ['شغالة (الإعلانات)', 'primary'],
+        'delivered'   => ['اتسلّم', 'success'],
+        'stopped'     => ['اتوقف', 'danger'],
+    ];
+}
+
+/** المنصات المتاحة للإعلانات */
+function dse_ad_platforms()
+{
+    return ['facebook' => 'فيسبوك', 'instagram' => 'إنستجرام', 'tiktok' => 'تيك توك', 'google' => 'جوجل', 'youtube' => 'يوتيوب', 'snapchat' => 'سناب شات'];
+}
+
+/** اختيارات جاهزة للمنصات (select بدل checkboxes علشان CSS بتاع Perfex) */
+function dse_ad_platform_sets()
+{
+    return [
+        'facebook,instagram'                => 'فيسبوك + إنستجرام (Meta)',
+        'facebook,instagram,tiktok'         => 'Meta + تيك توك',
+        'tiktok'                            => 'تيك توك',
+        'google,youtube'                    => 'جوجل + يوتيوب',
+        'facebook,instagram,tiktok,google'  => 'كله (Meta + تيك توك + جوجل)',
+        'snapchat'                          => 'سناب شات',
+    ];
+}
+
+function dse_platforms_label($csv)
+{
+    $all = dse_ad_platforms();
+    return implode(' + ', array_map(function ($k) use ($all) { return $all[$k] ?? $k; }, array_filter(explode(',', (string) $csv))));
+}
+

@@ -836,6 +836,41 @@ test('كالندر المحتوى: هدف الشهر + CTA · المواضيع �
     $GLOBALS['media'] = [$c, $m->client($c), $m->content_plan($c, '2026-11')];
     $m->fixed_time = $save;
 });
+
+test('خدمات الباقة: إعلانات ممولة (ميزانية + أتعاب بالجنيه) · ويب سايت / أبلكيشن / أوتوميشن · باقة خدمات بس · ترقية · التجديد بياخد الإعلانات بس', function () use ($m, $db) {
+    $save = $m->fixed_time;
+    $m->fixed_time = strtotime('2026-11-02 10:00:00');
+    $db->insert('tblclients', ['company' => 'شركة البرمجة']); $c = $db->insert_id();
+    // ويب سايت بس — السعر الفاضي = مجموع الخدمات
+    throws(function () use ($m, $c) { $m->create_package($c, 'x', '', '2026-11-01', 30, []); }, 'ضيف خدمة واحدة');
+    $w = $m->create_package($c, 'موقع', '', '2026-11-01', 60, [], null, null, false, [['service' => 'website', 'title' => 'موقع الشركة', 'amount' => 15000], ['service' => 'app', 'amount' => '']]);
+    ok((float) $m->package($w)['price'] === 15000.0 && count($m->package_services($w)) === 1 && $m->package_services($w)[0]['status'] === 'pending' && $m->balance($w) === [], json_encode($m->package_services($w), JSON_UNESCAPED_UNICODE));
+    // ريلز + إعلانات: ميزانية 10,000 للمنصة + أتعاب 2,500 ثابتة
+    $r = $m->create_package($c, 'Growth + Ads', 8000, '2026-11-01', 30, ['reel' => 8], null, null, false, [['service' => 'ads', 'ad_budget' => 10000, 'amount' => 2500, 'platforms' => 'facebook,instagram']]);
+    $ads = $m->package_services($r)[0];
+    ok((float) $m->package($r)['price'] === 8000.0 && (float) $ads['ad_budget'] === 10000.0 && (float) $ads['amount'] === 2500.0 && $ads['status'] === 'running' && dse_platforms_label($ads['platforms']) === 'فيسبوك + إنستجرام', 'السعر الكلي اللي اتكتب بيفضل');
+    ok(strpos($m->services_text($r), '📣 إعلانات ممولة 10,000') !== false, $m->services_text($r));
+    // ترقية: ضيف أوتوميشن ← السعر بيزيد ويتسجل
+    throws(function () use ($m, $r) { $m->add_package_service($r, ['service' => 'automation', 'amount' => 0]); }, 'سعر الخدمة');
+    $sid = $m->add_package_service($r, ['service' => 'automation', 'title' => 'بوت حجز واتساب n8n', 'amount' => 6000]);
+    ok((float) $m->package($r)['price'] === 14000.0 && q("SELECT event FROM tbldse_package_events WHERE package_id = ? AND event = 'service'", [$r]));
+    $m->update_service($sid, ['status' => 'delivered']);
+    ok($m->package_services($r)[1]['status'] === 'delivered');
+    throws(function () use ($m, $sid) { $m->update_service($sid, ['status' => 'x']); }, 'حالة غلط');
+    // التجديد: الإعلانات بتتجدد · الأوتوميشن (مرة واحدة) لأ وسعره بيتشال
+    $m->record_payment($r, 14000);
+    $n = $m->renew_package($r);
+    $ns = $m->package_services($n);
+    ok(count($ns) === 1 && $ns[0]['service'] === 'ads' && (float) $m->package($n)['price'] === 8000.0, json_encode([$ns, $m->package($n)['price']], JSON_UNESCAPED_UNICODE));
+    // شيل خدمة ← السعر بيقل
+    $m->remove_service($sid);
+    ok((float) $m->package($r)['price'] === 8000.0 && count($m->package_services($r)) === 1);
+    // مسح الباقة بيمسح خدماتها
+    $m->delete_package($w);
+    ok(!q('SELECT id FROM tbldse_package_services WHERE package_id = ?', [$w]));
+    $GLOBALS['svc_pkg'] = [$c, $r];
+    $m->fixed_time = $save;
+});
 echo "\nالتنبيهات:\n";
 test('العميل بقاله فترة مابيصوّرش → تنبيه مرة واحدة، urgent لو مفيش نشر', function () use ($m, $client, $db) {
     ok(count($m->check_inactive_clients()) === 0, 'لسه بادئ');
@@ -938,6 +973,17 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
     ok(strpos($hh, 'مدفوع <b>2,500') !== false && strpos($hh, 'سجّل دفعة') !== false && strpos($hh, 'اربط فاتورة عملتها في Perfex') !== false && strpos($hh, 'قسط قديم') !== false && strpos($hh, 'name="left[reel]"') !== false && strpos($hh, '<option value="4">4 أسابيع') !== false && strpos($hh, 'امسح العميل من الاستوديو') !== false && strpos($hh, '⏳ مدّ السماح') !== false && strpos($hh, ': · ') === false, 'القديمة: دفعات وفواتير ومدّ السماح');
     $pg = render('pick_group', ['client' => $GLOBALS['pick'][0], 'groups' => $GLOBALS['pick'][1]]);
     ok(strpos($pg, 'مربوط بالعميل ده') !== false && strpos($pg, 'مربوط بـ جروب قديم') !== false, 'صفحة اختيار الجروب');
+    [$sc, $sp] = $GLOBALS['svc_pkg'];
+    $ss = $m->client_summary($sc);
+    $sone = function ($f) use ($ss) { $o = []; foreach ($ss['packages'] as $p) { $o[$p['id']] = $f($p); } return $o; };
+    $sh = render('client', $ss + ['studios' => $m->studios(), 'staff' => [], 'sessions' => [], 'scripts' => [], 'posts' => [], 'outbox' => [], 'invoices' => [],
+        'balances' => $sone(function ($p) use ($m) { return $m->balance($p['id']); }), 'pkg_invoices' => $sone(function ($p) use ($m) { return $m->package_invoices($p['id']); }),
+        'pkg_events' => $sone(function ($p) use ($m) { return $m->package_events($p['id']); }), 'pkg_paid' => $sone(function ($p) use ($m) { return $m->package_paid_amount($p); }),
+        'pkg_busy' => $sone(function ($p) use ($m) { return $m->package_has_activity($p['id']); }), 'pkg_payments' => $sone(function ($p) use ($m) { return $m->package_payments($p['id']); }),
+        'pkg_services' => $sone(function ($p) use ($m) { return $m->package_services($p['id']); }),
+        'free_invoices' => [], 'pay_modes' => $m->payment_modes(), 'data_counts' => $m->client_data_counts($sc), 'slots' => [], 'runways' => []]);
+    file_put_contents(sys_get_temp_dir() . '/dse_client_services.html', $sh);
+    ok(strpos($sh, 'ميزانية 10,000') !== false && strpos($sh, 'أتعاب 2,500') !== false && strpos($sh, 'فيسبوك + إنستجرام') !== false && strpos($sh, 'ضيف خدمة (إعلانات ممولة') !== false && strpos($sh, 'name="svc[ads][ad_budget]"') !== false && strpos($sh, '➕ خدمة') !== false, 'الخدمات في صفحة العميل');
     [$mc, $mcl, $mp] = $GLOBALS['media'];
     $mi = $m->content_items($mp['id']);
     $mv = render('media', ['month' => '2026-11', 'rows' => $m->content_overview('2026-11')]);

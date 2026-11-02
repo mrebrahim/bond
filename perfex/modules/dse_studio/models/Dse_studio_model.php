@@ -122,13 +122,19 @@ class Dse_studio_model extends App_Model
     /**
      * @param array $items ['reel' => 10, 'design' => 8]
      */
-    public function create_package($clientid, $name, $price, $start_date, $validity_days, array $items, $invoice_id = null, $notes = null, $historic = false)
+    public function create_package($clientid, $name, $price, $start_date, $validity_days, array $items, $invoice_id = null, $notes = null, $historic = false, array $services = [])
     {
         $this->client($clientid);
         $items = array_filter(array_map('floatval', $items), function ($q) { return $q > 0; });
         $items = array_intersect_key($items, dse_types());
-        if (!$items && !$historic) {
-            throw new Exception('ضيف خدمة واحدة على الأقل في الباقة');
+        $services = array_values(array_filter($services, function ($sv) {
+            return isset(dse_services()[$sv['service'] ?? '']) && ((float) ($sv['amount'] ?? 0) > 0 || (float) ($sv['ad_budget'] ?? 0) > 0 || trim((string) ($sv['title'] ?? '')) !== '');
+        }));
+        if (!$items && !$services && !$historic) {
+            throw new Exception('ضيف خدمة واحدة على الأقل في الباقة (ريلز / تصميمات / إعلانات / ويب سايت …)');
+        }
+        if ($services && ($price === '' || $price === null || (float) $price <= 0)) {
+            $price = array_sum(array_map(function ($sv) { return (float) ($sv['amount'] ?? 0) + (float) ($sv['ad_budget'] ?? 0); }, $services));
         }
         $validity_days = (int) $validity_days;
         if ($validity_days < 1) {
@@ -160,6 +166,9 @@ class Dse_studio_model extends App_Model
         $id = (int) $this->db->insert_id();
         foreach ($items as $type => $qty) {
             $this->db->insert($this->tbl('dse_package_items'), ['package_id' => $id, 'type' => $type, 'qty' => $qty]);
+        }
+        foreach ($services as $sv) {
+            $this->add_package_service($id, $sv, false);
         }
         if ($historic) { // اتدفعت واتصرفت قبل السيستم ← خلصت ومفيهاش رصيد (علشان متتفتحش تاني بفترة السماح)
             $this->db->update($this->tbl('dse_packages'), ['status' => 'expired', 'historic' => 1, 'activated_at' => $start . ' 00:00:00'], ['id' => $id]);
@@ -609,6 +618,9 @@ class Dse_studio_model extends App_Model
         foreach (['dse_package_items', 'dse_package_invoices', 'dse_package_events', 'dse_sessions', 'dse_usage'] as $t) {
             $this->db->query('DELETE FROM ' . $this->tbl($t) . ' WHERE package_id = ?', [$p['id']]);
         }
+        if ($this->db->table_exists($this->tbl('dse_package_services'))) {
+            $this->db->query('DELETE FROM ' . $this->tbl('dse_package_services') . ' WHERE package_id = ?', [$p['id']]);
+        }
         $this->db->query('DELETE FROM ' . $this->tbl('dse_packages') . ' WHERE id = ?', [$p['id']]);
         return $p['clientid'];
     }
@@ -640,6 +652,11 @@ class Dse_studio_model extends App_Model
         foreach ($pk as $id) {
             foreach (['dse_package_items', 'dse_package_invoices', 'dse_package_events', 'dse_usage'] as $t) {
                 $this->db->query('DELETE FROM ' . $this->tbl($t) . ' WHERE package_id = ?', [(int) $id]);
+            }
+        }
+        foreach (['dse_package_services', 'dse_content_items', 'dse_content_plans', 'dse_publish_slots'] as $t) {
+            if ($this->db->table_exists($this->tbl($t))) {
+                $this->db->query('DELETE FROM ' . $this->tbl($t) . ' WHERE clientid = ?', [(int) $clientid]);
             }
         }
         foreach (['dse_packages', 'dse_sessions', 'dse_scripts', 'dse_posts', 'dse_wa_outbox', 'dse_alerts', 'dse_clients'] as $t) {
@@ -1490,6 +1507,114 @@ class Dse_studio_model extends App_Model
     }
 
     // =================================================================
+    // خدمات الباقة: إعلانات ممولة + برمجة
+    // =================================================================
+    public function package_services($package_id)
+    {
+        $this->ensure_renewal_columns();
+        if (!$this->db->table_exists($this->tbl('dse_package_services'))) {
+            return [];
+        }
+        return $this->rows('SELECT * FROM ' . $this->tbl('dse_package_services') . ' WHERE package_id = ? ORDER BY id', [(int) $package_id]);
+    }
+
+    /**
+     * ضيف خدمة للباقة (ترقية أو جوه باقة جديدة). الإعلانات: ميزانية للمنصة + أتعاب الشركة (رقم ثابت بالجنيه).
+     * $raise_price: سعر الباقة بيزيد بسعر الخدمة (+ الميزانية لو بتتدفع عن طريقنا) — وبيتسجل في تاريخ الباقة
+     */
+    public function add_package_service($package_id, array $d, $raise_price = true)
+    {
+        $this->ensure_renewal_columns();
+        $p       = $this->package($package_id);
+        $service = (string) ($d['service'] ?? '');
+        if (!isset(dse_services()[$service])) {
+            throw new Exception('اختار الخدمة');
+        }
+        if ($p['status'] === 'cancelled') {
+            throw new Exception('الباقة دي اتلغت');
+        }
+        $amount = round(max(0, (float) ($d['amount'] ?? 0)), 2);
+        $budget = $service === 'ads' ? round(max(0, (float) ($d['ad_budget'] ?? 0)), 2) : null;
+        if ($amount <= 0 && !$budget) {
+            throw new Exception($service === 'ads' ? 'اكتب ميزانية الإعلانات أو أتعاب الشركة بالجنيه' : 'اكتب سعر الخدمة بالجنيه');
+        }
+        $plat = $service === 'ads' ? implode(',', array_intersect(array_map('strval', (array) ($d['platforms'] ?? [])), array_keys(dse_ad_platforms()))) : null;
+        if ($service === 'ads' && is_string($d['platforms'] ?? null)) {
+            $plat = implode(',', array_intersect(explode(',', $d['platforms']), array_keys(dse_ad_platforms())));
+        }
+        $this->db->insert($this->tbl('dse_package_services'), [
+            'package_id' => $p['id'], 'clientid' => $p['clientid'], 'service' => $service,
+            'title' => trim((string) ($d['title'] ?? '')) !== '' ? mb_substr(trim($d['title']), 0, 150) : null,
+            'amount' => $amount, 'ad_budget' => $budget, 'platforms' => $plat ?: null,
+            'status' => $service === 'ads' ? 'running' : 'pending', 'note' => trim((string) ($d['note'] ?? '')) ?: null,
+            'created_by' => $this->staff_id(), 'created_at' => $this->now(),
+        ]);
+        $sid = (int) $this->db->insert_id();
+        if ($raise_price) {
+            $add = $amount + (float) $budget;
+            $this->db->update($this->tbl('dse_packages'), ['price' => (float) $p['price'] + $add], ['id' => $p['id']]);
+            $this->db->insert($this->tbl('dse_package_events'), [
+                'package_id' => $p['id'], 'event' => 'service', 'old_price' => $p['price'], 'new_price' => (float) $p['price'] + $add,
+                'old_end_date' => $p['end_date'], 'new_end_date' => $p['end_date'],
+                'note' => 'ضاف ' . dse_services()[$service]['label'] . ($budget ? ' (ميزانية ' . dse_money($budget) . ' + أتعاب ' . dse_money($amount) . ')' : ''),
+                'staff_id' => $this->staff_id(), 'created_at' => $this->now(),
+            ]);
+            $this->check_payment_due($p['id']);
+        }
+        return $sid;
+    }
+
+    public function update_service($service_id, array $d)
+    {
+        $sv = $this->row('SELECT * FROM ' . $this->tbl('dse_package_services') . ' WHERE id = ?', [(int) $service_id]);
+        if (!$sv) {
+            throw new Exception('الخدمة مش موجودة');
+        }
+        $row = ['updated_at' => $this->now()];
+        if (isset($d['status'])) {
+            if (!isset(dse_service_statuses()[$d['status']])) {
+                throw new Exception('حالة غلط');
+            }
+            $row['status'] = $d['status'];
+        }
+        if (array_key_exists('note', $d)) {
+            $row['note'] = trim((string) $d['note']) ?: null;
+        }
+        $this->db->update($this->tbl('dse_package_services'), $row, ['id' => (int) $sv['id']]);
+        return $sv;
+    }
+
+    /** شيل خدمة اتضافت بالغلط — وسعر الباقة بيقل بيها لو $lower_price */
+    public function remove_service($service_id, $lower_price = true)
+    {
+        $sv = $this->row('SELECT * FROM ' . $this->tbl('dse_package_services') . ' WHERE id = ?', [(int) $service_id]);
+        if (!$sv) {
+            throw new Exception('الخدمة مش موجودة');
+        }
+        $p = $this->package($sv['package_id']);
+        $this->db->query('DELETE FROM ' . $this->tbl('dse_package_services') . ' WHERE id = ?', [(int) $sv['id']]);
+        if ($lower_price) {
+            $new = max(0, (float) $p['price'] - (float) $sv['amount'] - (float) $sv['ad_budget']);
+            $this->db->update($this->tbl('dse_packages'), ['price' => $new], ['id' => $p['id']]);
+            $this->db->insert($this->tbl('dse_package_events'), [
+                'package_id' => $p['id'], 'event' => 'service', 'old_price' => $p['price'], 'new_price' => $new,
+                'old_end_date' => $p['end_date'], 'new_end_date' => $p['end_date'], 'note' => 'شال ' . dse_services()[$sv['service']]['label'],
+                'staff_id' => $this->staff_id(), 'created_at' => $this->now(),
+            ]);
+        }
+        return $sv;
+    }
+
+    /** "📣 إعلانات 5,000 + أتعاب 1,250 · 🌐 ويب سايت" */
+    public function services_text($package_id)
+    {
+        return implode(' · ', array_map(function ($x) {
+            $l = dse_services()[$x['service']]['label'] ?? $x['service'];
+            return $l . ($x['title'] ? ' (' . $x['title'] . ')' : '') . ($x['service'] === 'ads' && $x['ad_budget'] ? ' ' . dse_money($x['ad_budget']) . ' + أتعاب ' . dse_money($x['amount']) : '');
+        }, $this->package_services($package_id)));
+    }
+
+    // =================================================================
     // كالندر المحتوى (الميديا): هدف شهري + مواضيع بتواريخ + سكربت + مانوال
     // =================================================================
     private function month_ok($month)
@@ -2080,9 +2205,14 @@ class Dse_studio_model extends App_Model
         if ($start === '') {
             $start = max($this->today(), date('Y-m-d', strtotime($p['end_date'] . ' +1 day')));
         }
-        $price = isset($over['price']) && $over['price'] !== '' ? (float) $over['price'] : (float) $p['price'];
+        // الإعلانات شهرية ← بتتجدد · الويب سايت والأبلكيشن والأوتوميشن مرة واحدة ← سعرهم بيتشال من سعر التجديد
+        $svc     = $this->package_services($p['id']);
+        $monthly = array_values(array_filter($svc, function ($x) { return !empty(dse_services()[$x['service']]['monthly']) && $x['status'] !== 'stopped'; }));
+        $oneoff  = array_sum(array_map(function ($x) { return empty(dse_services()[$x['service']]['monthly']) ? (float) $x['amount'] + (float) $x['ad_budget'] : 0; }, $svc));
+        $price = isset($over['price']) && $over['price'] !== '' ? (float) $over['price'] : max(0, (float) $p['price'] - $oneoff);
         $name  = trim((string) ($over['name'] ?? '')) ?: $p['name'];
-        $id    = $this->create_package($p['clientid'], $name, $price, $start, $days, $items, null, 'تجديد لباقة ' . $p['name'] . ' (' . dse_day($p['start_date']) . ' ← ' . dse_day($p['end_date']) . ')');
+        $copy  = array_map(function ($x) { return ['service' => $x['service'], 'title' => $x['title'], 'amount' => $x['amount'], 'ad_budget' => $x['ad_budget'], 'platforms' => $x['platforms']]; }, $monthly);
+        $id    = $this->create_package($p['clientid'], $name, $price, $start, $days, $items, null, 'تجديد لباقة ' . $p['name'] . ' (' . dse_day($p['start_date']) . ' ← ' . dse_day($p['end_date']) . ')', false, $copy);
         $this->db->insert($this->tbl('dse_package_events'), [
             'package_id' => $id, 'event' => 'renew', 'old_items' => json_encode($items), 'new_items' => json_encode($items),
             'old_price' => $p['price'], 'new_price' => $price, 'old_end_date' => $p['end_date'], 'new_end_date' => $this->package($id)['end_date'],
@@ -2103,7 +2233,7 @@ class Dse_studio_model extends App_Model
         if (!self::$renewal_cols_checked && function_exists('dse_studio_add_missing_columns') && function_exists('get_instance')) {
             dse_studio_add_missing_columns(['dse_clients' => ['renewal_status', 'renewal_note', 'renewal_updated_at', 'wa_link_error'], 'dse_packages' => ['historic', 'grace_days']]);
             $CI = &get_instance();
-            foreach (['dse_publish_slots', 'dse_content_plans', 'dse_content_items'] as $t) { // جداول اتضافت بعد كده
+            foreach (['dse_publish_slots', 'dse_content_plans', 'dse_content_items', 'dse_package_services'] as $t) { // جداول اتضافت بعد كده
                 if (is_object($CI) && isset($CI->db) && !$CI->db->table_exists($this->tbl($t))) {
                     foreach (dse_studio_create_sql($t, dse_studio_schema()[$t], db_prefix(), ($CI->db->dbdriver ?? 'mysqli') === 'sqlite' ? 'sqlite' : 'mysql', 'utf8mb4') as $sql) {
                         $CI->db->query($sql);
@@ -2217,7 +2347,7 @@ class Dse_studio_model extends App_Model
         $this->sync_all_packages();
         $out = [];
         foreach ($this->rows('SELECT p.*, ' . $this->name_sql('c') . ' AS company FROM ' . $this->tbl('dse_packages') . ' p JOIN ' . $this->tbl('clients') . " c ON c.userid = p.clientid WHERE p.status IN ('pending','active') ORDER BY company") as $p) {
-            $p['balance_text'] = $this->balance_text($p['id'], false);
+            $p['balance_text'] = trim($this->balance_text($p['id'], false) . ' · ' . $this->services_text($p['id']), ' ·');
             $p['busy']         = $this->package_has_activity($p['id']);
             $p['activity']     = $p['busy'] ? $this->package_activity_text($p['id']) : '';
             $out[]             = $p;

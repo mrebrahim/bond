@@ -99,7 +99,7 @@ class Dse_studio extends AdminController
         $data['posts']    = $this->dse_studio_model->client_posts($id);
         $data['outbox']   = $this->dse_studio_model->outbox(20, $id);
         $data['invoices'] = $this->db->query('SELECT id, prefix, number, total, status, date FROM ' . db_prefix() . 'invoices WHERE clientid = ? ORDER BY id DESC LIMIT 30', [(int) $id])->result_array();
-        $data['balances'] = $data['pkg_invoices'] = $data['pkg_events'] = $data['pkg_paid'] = $data['pkg_busy'] = $data['pkg_payments'] = [];
+        $data['balances'] = $data['pkg_invoices'] = $data['pkg_events'] = $data['pkg_paid'] = $data['pkg_busy'] = $data['pkg_payments'] = $data['pkg_services'] = [];
         $data['pay_modes'] = $this->dse_studio_model->payment_modes();
         $data['data_counts'] = $this->dse_studio_model->client_data_counts($id);
         $data['slots']  = $this->dse_studio_model->publish_slots($id);
@@ -112,6 +112,7 @@ class Dse_studio extends AdminController
             $data['pkg_paid'][$p['id']]     = $this->dse_studio_model->package_paid_amount($p);
             $data['pkg_busy'][$p['id']]     = $this->dse_studio_model->package_has_activity($p['id']);
             $data['pkg_payments'][$p['id']] = $this->dse_studio_model->package_payments($p['id']);
+            $data['pkg_services'][$p['id']] = $this->dse_studio_model->package_services($p['id']);
             $linked = array_merge($linked, array_column($data['pkg_invoices'][$p['id']], 'invoice_id'));
         }
         // الفواتير اللي لسه مش متربطة بباقة
@@ -222,8 +223,12 @@ class Dse_studio extends AdminController
         $m = $this->dse_studio_model;
         $this->act('edit', function () use ($m, $clientid) {
             $old = $this->post('historic') === '1';
-            $m->create_package($clientid, $this->post('name'), $this->post('price', 0), $this->post('start_date'),
-                $this->post('validity_days', 30), (array) $this->input->post('items'), $old ? null : $this->post('invoice_id'), $this->post('notes'), $old);
+            $svc = [];
+            foreach ((array) $this->input->post('svc') as $key => $x) {
+                $svc[] = ['service' => $key] + (array) $x;
+            }
+            $m->create_package($clientid, $this->post('name'), $this->post('price', ''), $this->post('start_date'),
+                $this->post('validity_days', 30), (array) $this->input->post('items'), $old ? null : $this->post('invoice_id'), $this->post('notes'), $old, $old ? [] : $svc);
             return $old ? 'الباقة القديمة اتسجلت — العميل هيظهر في "مستنيين تجديد"' : 'الباقة اتعملت — بتتفعل لوحدها أول ما تسجّل الدفعة';
         }, admin_url('dse_studio/client/' . (int) $clientid));
     }
@@ -297,6 +302,35 @@ class Dse_studio extends AdminController
             $n = $m->save_publish_slots($clientid, (array) $this->input->post('days'));
             return $n ? 'مواعيد التنزيل اتحفظت (' . $n . ' في الأسبوع)' : 'اتشالت مواعيد التنزيل';
         }, admin_url('dse_studio/client/' . (int) $clientid . '#publish-slots'));
+    }
+
+    /** ترقية بخدمة: إعلانات ممولة / ويب سايت / أبلكيشن / أوتوميشن */
+    public function add_service($package_id)
+    {
+        $m = $this->dse_studio_model;
+        $p = $m->package($package_id);
+        $this->act('edit', function () use ($m, $package_id) {
+            $m->add_package_service($package_id, [
+                'service' => $this->post('service'), 'title' => $this->post('title'), 'amount' => $this->post('amount'),
+                'ad_budget' => $this->post('ad_budget'), 'platforms' => (string) $this->post('platforms'), 'note' => $this->post('note'),
+            ], $this->post('raise', '1') === '1');
+            return 'الخدمة اتضافت للباقة ✅' . ($this->post('raise', '1') === '1' ? ' — وسعر الباقة زاد بيها (سجّل الدفعة)' : '');
+        }, admin_url('dse_studio/client/' . $p['clientid']));
+    }
+
+    public function service($service_id, $action = 'status')
+    {
+        $m  = $this->dse_studio_model;
+        $sv = $this->db->query('SELECT package_id FROM ' . db_prefix() . 'dse_package_services WHERE id = ?', [(int) $service_id])->row_array();
+        $p  = $sv ? $m->package($sv['package_id']) : null;
+        $this->act('edit', function () use ($m, $service_id, $action) {
+            if ($action === 'remove') {
+                $m->remove_service($service_id, $this->post('lower', '1') === '1');
+                return 'الخدمة اتشالت';
+            }
+            $m->update_service($service_id, ['status' => $this->post('status'), 'note' => $this->post('note')]);
+            return 'اتحفظ';
+        }, admin_url('dse_studio/client/' . ($p ? $p['clientid'] : '')));
     }
 
     public function unlink_invoice($package_id, $invoice_id)
