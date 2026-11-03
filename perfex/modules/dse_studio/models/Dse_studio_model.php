@@ -1663,6 +1663,183 @@ class Dse_studio_model extends App_Model
         return array_map(function ($r) { return ['clientid' => (int) $r['clientid'], 'company' => $this->client($r['clientid'])['company'], 'paid' => (float) $r['s']]; }, $rows);
     }
 
+    // ---------------------------------------------------------------- تفاصيل شهر واحد
+    /** مصادر الإيراد وكلماتها (بالترتيب — أول مصدر كلمته موجودة في البند بياخده: الكورسات ← البرمجة ← الإعلانات ← الميديا آخر حاجة لأن كلماتها عامة). بتتعدل من صفحة الشهر */
+    public function revenue_streams()
+    {
+        $saved = json_decode((string) get_option('dse_revenue_streams'), true);
+        if (is_array($saved) && $saved) {
+            return $saved;
+        }
+        return [
+            'course_n8n'   => ['label' => '🎓 كورس n8n / أوتوميشن', 'keywords' => ['كورس n8n', 'course n8n', 'n8n course', 'دبلومة n8n', 'كورس اوتوميشن', 'كورس أوتوميشن']],
+            'course_vibe'  => ['label' => '🎓 كورس Vibe Coding', 'keywords' => ['vibe', 'فايب']],
+            'course_ai'    => ['label' => '🎓 كورس AI Video', 'keywords' => ['ai video', 'فيديو ai', 'فيديو بالذكاء', 'ذكاء اصطناعي']],
+            'website'      => ['label' => '🌐 ويب سايت / أبلكيشن', 'keywords' => ['website', 'web site', 'موقع', 'ويب', 'app', 'ابلكيشن', 'أبلكيشن', 'تطبيق', 'برمجة']],
+            'automation'   => ['label' => '⚙️ أوتوميشن (خدمة)', 'keywords' => ['n8n', 'automation', 'اوتوميشن', 'أوتوميشن', 'بوت', 'bot', 'chatbot']],
+            'ads'          => ['label' => '📣 إعلانات ممولة', 'keywords' => ['إعلان', 'اعلان', 'ads', 'ممول', 'campaign', 'حملة']],
+            'reels'        => ['label' => '🎬 ريلز / ميديا برودكشن', 'keywords' => ['ريل', 'reel', 'تصوير', 'media', 'ميديا', 'محتوى', 'content', 'تصميم', 'design', 'بودكاست', 'podcast', 'يوتيوب', 'youtube', 'مونتاج', 'باقة']],
+        ];
+    }
+
+    public function save_revenue_streams(array $streams)
+    {
+        $out = [];
+        foreach ($streams as $k => $x) {
+            $label = trim((string) ($x['label'] ?? ''));
+            $kw    = array_values(array_filter(array_map('trim', preg_split('/[,،\n]+/u', (string) ($x['keywords'] ?? '')))));
+            if ($label === '' || !$kw) {
+                continue;
+            }
+            $key       = preg_match('/^[a-z0-9_]+$/', (string) $k) ? $k : 's' . substr(md5($label), 0, 6);
+            $out[$key] = ['label' => mb_substr($label, 0, 60), 'keywords' => $kw];
+        }
+        if (!$out) {
+            throw new Exception('لازم مصدر واحد على الأقل بكلماته');
+        }
+        update_option('dse_revenue_streams', json_encode($out, JSON_UNESCAPED_UNICODE));
+        return count($out);
+    }
+
+    /** البند ده تبع أنهي مصدر؟ (null = مش متصنف) */
+    public function classify_line($text, array $streams = null)
+    {
+        $t = mb_strtolower((string) $text);
+        foreach ($streams ?: $this->revenue_streams() as $k => $x) {
+            foreach ($x['keywords'] as $kw) {
+                if ($kw !== '' && mb_strpos($t, mb_strtolower($kw)) !== false) {
+                    return $k;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** بنود فاتورة (tblitemable) بقيمة كل بند */
+    private function invoice_lines($invoice_id)
+    {
+        if (!$this->db->table_exists($this->tbl('itemable'))) {
+            return [];
+        }
+        return array_map(function ($l) { return $l + ['amount' => (float) $l['qty'] * (float) $l['rate']]; },
+            $this->rows('SELECT description, long_description, qty, rate FROM ' . $this->tbl('itemable') . " WHERE rel_type = 'invoice' AND rel_id = ? ORDER BY item_order, id", [(int) $invoice_id]));
+    }
+
+    /**
+     * الإيراد حسب المصدر في الشهر:
+     *  cash = الدفعات اللي دخلت في الشهر متوزعة على بنود فاتورتها بنسبة قيمة كل بند
+     *  invoiced = بنود الفواتير اللي اتعملت في الشهر
+     */
+    private function revenue_by_stream($from, $to)
+    {
+        $streams = $this->revenue_streams();
+        $cash    = array_fill_keys(array_keys($streams), 0.0) + ['other' => 0.0];
+        $inv     = $cash;
+        $unclass = [];
+        $classify = function ($l) use ($streams) { return $this->classify_line($l['description'] . ' ' . $l['long_description'], $streams) ?: 'other'; };
+        if ($this->db->table_exists($this->tbl('invoicepaymentrecords'))) {
+            foreach ($this->rows('SELECT invoiceid, SUM(amount) s FROM ' . $this->tbl('invoicepaymentrecords') . ' WHERE date >= ? AND date <= ? GROUP BY invoiceid', [$from, $to . ' 23:59:59']) as $p) {
+                $lines = $this->invoice_lines($p['invoiceid']);
+                $sum   = array_sum(array_column($lines, 'amount'));
+                if (!$lines || $sum <= 0) {
+                    $cash['other'] += (float) $p['s'];
+                    $unclass[] = ['text' => 'فاتورة #' . (int) $p['invoiceid'] . ' من غير بنود', 'amount' => (float) $p['s']];
+                    continue;
+                }
+                foreach ($lines as $l) {
+                    $share = (float) $p['s'] * $l['amount'] / $sum;
+                    $k     = $classify($l);
+                    $cash[$k] += $share;
+                    if ($k === 'other') {
+                        $unclass[] = ['text' => trim($l['description']), 'amount' => $share];
+                    }
+                }
+            }
+        }
+        if ($this->db->table_exists($this->tbl('invoices'))) {
+            foreach ($this->rows('SELECT id FROM ' . $this->tbl('invoices') . ' WHERE date >= ? AND date <= ? AND status <> 5', [$from, $to]) as $i) {
+                foreach ($this->invoice_lines($i['id']) as $l) {
+                    $inv[$classify($l)] += $l['amount'];
+                }
+            }
+        }
+        // البنود اللي مش متصنفة: متجمعة بالاسم، الأكبر الأول
+        $u = [];
+        foreach ($unclass as $x) {
+            $u[$x['text']] = ($u[$x['text']] ?? 0) + $x['amount'];
+        }
+        arsort($u);
+        arsort($cash);
+        return ['streams' => $streams, 'cash' => $cash, 'invoiced' => $inv, 'unclassified' => array_slice($u, 0, 15, true)];
+    }
+
+    /** أكبر المصروفات في الشهر */
+    private function top_expenses($from, $to, $limit = 15)
+    {
+        if (!$this->db->table_exists($this->tbl('expenses'))) {
+            return [];
+        }
+        $cats = $this->db->table_exists($this->tbl('expenses_categories'));
+        return $this->rows('SELECT e.amount, e.date, e.expense_name' . ($cats ? ', c.name AS cat' : '') . ' FROM ' . $this->tbl('expenses') . ' e'
+            . ($cats ? ' LEFT JOIN ' . $this->tbl('expenses_categories') . ' c ON c.id = e.category' : '') . ' WHERE e.date >= ? AND e.date <= ? ORDER BY e.amount DESC LIMIT ' . (int) $limit, [$from, $to]);
+    }
+
+    /** الفواتير اللي اتعملت في الشهر: عددها وقيمتها واتحصّل منها كام */
+    private function invoices_summary($from, $to)
+    {
+        $out = ['count' => 0, 'total' => 0.0, 'paid' => 0.0, 'unpaid' => 0.0];
+        if (!$this->db->table_exists($this->tbl('invoices'))) {
+            return $out;
+        }
+        foreach ($this->rows('SELECT id, total FROM ' . $this->tbl('invoices') . ' WHERE date >= ? AND date <= ? AND status <> 5', [$from, $to]) as $i) {
+            $paid = $this->invoice_paid_amount($i['id']);
+            $out['count']++;
+            $out['total'] += (float) $i['total'];
+            $out['paid']  += $paid;
+        }
+        $out['unpaid'] = max(0, $out['total'] - $out['paid']);
+        return $out;
+    }
+
+    /** لوحة شهر واحد بالتفصيل (مقارنة بالشهر اللي قبله) */
+    public function finance_month($month)
+    {
+        $this->month_ok($month);
+        [$from, $to]   = $this->month_range($month);
+        $pm            = date('Y-m', strtotime($from . ' -1 month'));
+        [$pf, $pt]     = $this->month_range($pm);
+        $cash          = $this->cash_in($from, $to);
+        $pcash         = $this->cash_in($pf, $pt);
+        $exp           = $this->expenses($from, $to);
+        $pexp          = $this->expenses($pf, $pt);
+        $rev           = $this->revenue_by_stream($from, $to);
+        $prev_rev      = $this->revenue_by_stream($pf, $pt);
+        $change        = function ($now, $before) { return $before > 0 ? (int) round(100 * ($now - $before) / $before) : null; };
+        $cats = [];
+        foreach ($exp['by'] as $k => $v) {
+            $cats[] = ['name' => $k, 'amount' => $v, 'share' => $exp['total'] > 0 ? (int) round(100 * $v / $exp['total']) : 0, 'prev' => $pexp['by'][$k] ?? 0.0, 'change' => $change($v, $pexp['by'][$k] ?? 0)];
+        }
+        $streams = [];
+        foreach ($rev['cash'] as $k => $v) {
+            if ($v <= 0.004 && ($rev['invoiced'][$k] ?? 0) <= 0.004) {
+                continue;
+            }
+            $streams[] = ['key' => $k, 'label' => $k === 'other' ? '❓ مش متصنف' : $rev['streams'][$k]['label'], 'cash' => $v,
+                'share' => $cash['all'] > 0 ? (int) round(100 * $v / $cash['all']) : 0, 'invoiced' => $rev['invoiced'][$k] ?? 0.0,
+                'prev' => $prev_rev['cash'][$k] ?? 0.0, 'change' => $change($v, $prev_rev['cash'][$k] ?? 0)];
+        }
+        return [
+            'month' => $month, 'prev_month' => $pm,
+            'cash' => $cash['all'], 'prev_cash' => $pcash['all'], 'cash_change' => $change($cash['all'], $pcash['all']),
+            'expenses' => $exp['total'], 'prev_expenses' => $pexp['total'], 'expenses_change' => $change($exp['total'], $pexp['total']),
+            'profit' => $cash['all'] - $exp['total'], 'prev_profit' => $pcash['all'] - $pexp['total'],
+            'margin' => $cash['all'] > 0 ? (int) round(100 * ($cash['all'] - $exp['total']) / $cash['all']) : null,
+            'categories' => $cats, 'top_expenses' => $this->top_expenses($from, $to), 'streams' => $streams,
+            'unclassified' => $rev['unclassified'], 'invoices' => $this->invoices_summary($from, $to), 'stream_defs' => $rev['streams'],
+            'booked' => $this->booked($from, $to),
+        ];
+    }
+
     public function finance_dashboard($month)
     {
         $this->month_ok($month);

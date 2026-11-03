@@ -570,6 +570,25 @@ class Dse_studio extends AdminController
         $this->load->view('finance', ['title' => _l('dse_menu_finance'), 'f' => $this->dse_studio_model->finance_dashboard($month)]);
     }
 
+    /** تفاصيل شهر: المصروفات بالتصنيف وأكبرها · الإيراد حسب المصدر (من بنود الفواتير) — للأدمن بس */
+    public function finance_month()
+    {
+        if (!is_admin()) {
+            access_denied(DSE_STUDIO_MODULE_NAME);
+        }
+        $month = $this->media_month();
+        if ($this->input->post('streams') !== null) {
+            try {
+                $n = $this->dse_studio_model->save_revenue_streams((array) $this->input->post('streams', false));
+                set_alert('success', 'تصنيف الإيرادات اتحفظ (' . $n . ' مصدر)');
+            } catch (Exception $e) {
+                set_alert('danger', $e->getMessage());
+            }
+            redirect(admin_url('dse_studio/finance_month?month=' . $month . '#streams'));
+        }
+        $this->load->view('finance_month', ['title' => 'تفاصيل ' . $month, 'f' => $this->dse_studio_model->finance_month($month)]);
+    }
+
     /** صفحة المودريشن: يختار العميل ويحط لينك البوست ← يتبعت لجروب العميل */
     public function publishing()
     {

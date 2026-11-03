@@ -31,7 +31,7 @@ $ren   = $f['renewals'];
   <div class="panel_s"><div class="panel-body">
     <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between">
       <h4 class="tw-font-semibold" style="margin:0">💰 اللوحة المالية — <?= html_escape($m); ?> <span class="label label-default">للأدمن بس</span></h4>
-      <div><a class="btn btn-default btn-sm" href="?month=<?= $prev; ?>">→ <?= $prev; ?></a> <a class="btn btn-default btn-sm" href="?month=<?= date('Y-m'); ?>">الشهر ده</a> <a class="btn btn-default btn-sm" href="?month=<?= $next; ?>"><?= $next; ?> ←</a></div>
+      <div><a class="btn btn-primary btn-sm" href="<?= admin_url('dse_studio/finance_month?month=' . $m); ?>">🔍 تفاصيل الشهر ده</a> <a class="btn btn-default btn-sm" href="?month=<?= $prev; ?>">→ <?= $prev; ?></a> <a class="btn btn-default btn-sm" href="?month=<?= date('Y-m'); ?>">الشهر ده</a> <a class="btn btn-default btn-sm" href="?month=<?= $next; ?>"><?= $next; ?> ←</a></div>
     </div>
   </div></div>
 
@@ -60,7 +60,7 @@ $ren   = $f['renewals'];
         <div class="small"><span class="dot" style="background:#16a34a"></span>كاش داخل <span class="dot" style="background:#dc2626;margin-inline-start:10px"></span>مصروفات <span class="dot" style="background:#2563eb;margin-inline-start:10px"></span>مبيعات (جديد + تجديد)</div>
         <div class="bars">
           <?php foreach ($f['trend'] as $t) { ?>
-            <div class="m" title="<?= html_escape($t['month'] . ' · كاش ' . dse_money($t['cash']) . ' · مصروفات ' . dse_money($t['expenses']) . ' · ربح ' . dse_money($t['profit']) . ' · مبيعات ' . dse_money($t['new'] + $t['renew'])); ?>">
+            <div class="m" style="cursor:pointer" onclick="location.href='<?= admin_url('dse_studio/finance_month?month='); ?><?= $t['month']; ?>'" title="<?= html_escape($t['month'] . ' · كاش ' . dse_money($t['cash']) . ' · مصروفات ' . dse_money($t['expenses']) . ' · ربح ' . dse_money($t['profit']) . ' · مبيعات ' . dse_money($t['new'] + $t['renew'])); ?>">
               <div class="g">
                 <i style="height:<?= round(130 * $t['cash'] / $mx); ?>px;background:#16a34a"></i>
                 <i style="height:<?= round(130 * $t['expenses'] / $mx); ?>px;background:#dc2626"></i>
@@ -74,7 +74,7 @@ $ren   = $f['renewals'];
           <thead><tr><th>الشهر</th><th>كاش</th><th>مصروفات</th><th>ربح</th><th>مبيعات جديدة</th><th>تجديدات</th><th>معدل التجديد</th></tr></thead>
           <tbody>
           <?php foreach (array_reverse($f['trend']) as $t) { ?>
-            <tr><td><a href="?month=<?= $t['month']; ?>"><?= $t['month']; ?></a></td><td><?= dse_money($t['cash']); ?></td><td><?= dse_money($t['expenses']); ?></td>
+            <tr><td><a href="<?= admin_url('dse_studio/finance_month?month=' . $t['month']); ?>" title="تفاصيل الشهر"><?= $t['month']; ?> 🔍</a></td><td><?= dse_money($t['cash']); ?></td><td><?= dse_money($t['expenses']); ?></td>
               <td class="<?= $t['profit'] >= 0 ? 'pos' : 'neg'; ?>"><?= dse_money($t['profit']); ?></td><td><?= dse_money($t['new']); ?></td><td><?= dse_money($t['renew']); ?></td><td><?= $pct($t['renewal_rate']); ?></td></tr>
           <?php } ?>
           <tr class="bold"><td>آخر 12 شهر</td><td><?= dse_money($f['ytd_cash']); ?></td><td><?= dse_money($f['ytd_expenses']); ?></td><td class="<?= $f['ytd_cash'] - $f['ytd_expenses'] >= 0 ? 'pos' : 'neg'; ?>"><?= dse_money($f['ytd_cash'] - $f['ytd_expenses']); ?></td><td colspan="3"></td></tr>

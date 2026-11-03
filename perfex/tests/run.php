@@ -73,6 +73,7 @@ $db->pdo->exec('CREATE TABLE tblcontacts (id INTEGER PRIMARY KEY AUTOINCREMENT, 
 $db->pdo->exec('CREATE TABLE tblstaff (staffid INTEGER PRIMARY KEY, firstname TEXT, lastname TEXT, email TEXT, active INT, admin INT)');
 $db->pdo->exec("INSERT INTO tblstaff VALUES (7, 'أندرو', 'إسحاق', 'a@x.com', 1, 0)");
 $db->pdo->exec('CREATE TABLE tblinvoicepaymentrecords (id INTEGER PRIMARY KEY AUTOINCREMENT, invoiceid INT, amount REAL, paymentmode TEXT, date TEXT, daterecorded TEXT, note TEXT)');
+$db->pdo->exec('CREATE TABLE tblitemable (id INTEGER PRIMARY KEY AUTOINCREMENT, rel_id INT, rel_type TEXT, description TEXT, long_description TEXT, qty REAL, rate REAL, item_order INT)');
 $db->pdo->exec('CREATE TABLE tblexpenses (id INTEGER PRIMARY KEY AUTOINCREMENT, category INT, amount REAL, date TEXT, expense_name TEXT)');
 $db->pdo->exec('CREATE TABLE tblexpenses_categories (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)');
 $db->pdo->exec('CREATE TABLE tblpayment_modes (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, active INT)');
@@ -912,6 +913,45 @@ test('اللوحة المالية (مارس 2027): كاش · مصروفات · �
     $db->query("UPDATE tbldse_packages SET status = 'cancelled' WHERE clientid IN (?, ?, ?)", [$a, $b, $c]);
     $m->fixed_time = $save;
 });
+
+test('تفاصيل الشهر: الإيراد حسب المصدر من بنود الفواتير (الدفعة متوزعة على البنود) · المصروفات بالتصنيف ومقارنة بالشهر اللي قبله · البنود المش متصنفة', function () use ($m, $db) {
+    ok($m->classify_line('دبلومة n8n المستوى الأول') === 'course_n8n' && $m->classify_line('بوت حجز واتساب n8n') === 'automation' && $m->classify_line('Vibe Coding Bootcamp') === 'course_vibe'
+        && $m->classify_line('باقة 8 ريلز') === 'reels' && $m->classify_line('Website design') === 'website' && $m->classify_line('حاجة غريبة') === null);
+    $db->insert('tblclients', ['company' => 'إيراد']); $c = $db->insert_id();
+    $inv = function ($lines, $date) use ($db, $c) {
+        $db->insert('tblinvoices', ['clientid' => $c, 'total' => array_sum(array_map(function ($l) { return $l[1]; }, $lines)), 'status' => 1, 'date' => $date]); $id = $db->insert_id();
+        foreach ($lines as $i => $l) { $db->insert('tblitemable', ['rel_id' => $id, 'rel_type' => 'invoice', 'description' => $l[0], 'long_description' => '', 'qty' => 1, 'rate' => $l[1], 'item_order' => $i]); }
+        return $id;
+    };
+    $pay = function ($id, $amount, $date) use ($db) { $db->insert('tblinvoicepaymentrecords', ['invoiceid' => $id, 'amount' => $amount, 'date' => $date]); };
+    $i1 = $inv([['كورس n8n', 3000], ['باقة 8 ريلز', 5000]], '2027-05-02'); $pay($i1, 4000, '2027-05-03');
+    $i2 = $inv([['Website', 10000]], '2027-05-05'); $pay($i2, 10000, '2027-05-06');
+    $i3 = $inv([['حاجة غريبة', 1000]], '2027-05-07'); $pay($i3, 1000, '2027-05-08');
+    $i4 = $inv([['باقة 8 ريلز', 5000]], '2027-04-02'); $pay($i4, 5000, '2027-04-03');
+    $cat = function ($name) use ($db) { $db->insert('tblexpenses_categories', ['name' => $name]); return $db->insert_id(); };
+    $ads = $cat('إعلانات'); $sal = $cat('مرتبات');
+    $db->insert('tblexpenses', ['category' => $sal, 'amount' => 6000, 'date' => '2027-05-01', 'expense_name' => 'مرتبات مايو']);
+    $db->insert('tblexpenses', ['category' => $ads, 'amount' => 2000, 'date' => '2027-05-10', 'expense_name' => 'فيسبوك']);
+    $db->insert('tblexpenses', ['category' => $sal, 'amount' => 5000, 'date' => '2027-04-01', 'expense_name' => 'مرتبات أبريل']);
+    $f = $m->finance_month('2027-05');
+    $by = []; foreach ($f['streams'] as $x) { $by[$x['key']] = $x; }
+    ok(round($by['website']['cash']) == 10000 && round($by['course_n8n']['cash']) == 1500 && round($by['reels']['cash']) == 2500 && round($by['other']['cash']) == 1000, json_encode($by, JSON_UNESCAPED_UNICODE));
+    ok($f['streams'][0]['key'] === 'website' && $by['website']['share'] === 67 && $by['reels']['invoiced'] == 5000 && $by['reels']['change'] === -50, json_encode($by['reels']));
+    ok(isset($f['unclassified']['حاجة غريبة']) && round($f['unclassified']['حاجة غريبة']) == 1000);
+    ok($f['cash'] == 15000 && $f['expenses'] == 8000 && $f['profit'] == 7000 && $f['prev_cash'] == 5000 && $f['cash_change'] === 200, json_encode([$f['cash'], $f['expenses'], $f['prev_cash']]));
+    ok($f['categories'][0]['name'] === 'مرتبات' && $f['categories'][0]['share'] === 75 && $f['categories'][0]['change'] === 20 && $f['categories'][1]['change'] === null);
+    ok($f['top_expenses'][0]['expense_name'] === 'مرتبات مايو' && $f['invoices']['count'] === 3 && $f['invoices']['total'] == 19000 && $f['invoices']['paid'] == 15000);
+    // تعديل التصنيف: "غريبة" ← مصدر جديد
+    $defs = $m->revenue_streams();
+    $post = []; foreach ($defs as $k => $x) { $post[$k] = ['label' => $x['label'], 'keywords' => implode(', ', $x['keywords'])]; }
+    $post['x9'] = ['label' => '🧪 استشارات', 'keywords' => 'غريبة، استشارة'];
+    ok($m->save_revenue_streams($post) === 8);
+    $f = $m->finance_month('2027-05');
+    ok(!$f['unclassified'] && in_array('🧪 استشارات', array_column($f['streams'], 'label'), true));
+    throws(function () use ($m) { $m->save_revenue_streams(['a' => ['label' => '', 'keywords' => '']]); }, 'مصدر واحد');
+    $GLOBALS['fm'] = $f;
+    update_option('dse_revenue_streams', '');
+});
 echo "\nالتنبيهات:\n";
 test('العميل بقاله فترة مابيصوّرش → تنبيه مرة واحدة، urgent لو مفيش نشر', function () use ($m, $client, $db) {
     ok(count($m->check_inactive_clients()) === 0, 'لسه بادئ');
@@ -1014,6 +1054,9 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
     ok(strpos($hh, 'مدفوع <b>2,500') !== false && strpos($hh, 'سجّل دفعة') !== false && strpos($hh, 'اربط فاتورة عملتها في Perfex') !== false && strpos($hh, 'قسط قديم') !== false && strpos($hh, 'name="left[reel]"') !== false && strpos($hh, '<option value="4">4 أسابيع') !== false && strpos($hh, 'امسح العميل من الاستوديو') !== false && strpos($hh, '⏳ مدّ السماح') !== false && strpos($hh, ': · ') === false, 'القديمة: دفعات وفواتير ومدّ السماح');
     $pg = render('pick_group', ['client' => $GLOBALS['pick'][0], 'groups' => $GLOBALS['pick'][1]]);
     ok(strpos($pg, 'مربوط بالعميل ده') !== false && strpos($pg, 'مربوط بـ جروب قديم') !== false, 'صفحة اختيار الجروب');
+    $fmv = render('finance_month', ['f' => $GLOBALS['fm']]);
+    file_put_contents(sys_get_temp_dir() . '/dse_finance_month.html', $fmv);
+    ok(strpos($fmv, 'الإيرادات جاية منين') !== false && strpos($fmv, '🥇') !== false && strpos($fmv, 'ويب سايت') !== false && strpos($fmv, 'صرفنا في إيه') !== false && strpos($fmv, 'مرتبات مايو') !== false && strpos($fmv, '▲ 20%') !== false, 'تفاصيل الشهر');
     $fv = render('finance', ['f' => $GLOBALS['fin']]);
     file_put_contents(sys_get_temp_dir() . '/dse_finance.html', $fv);
     ok(strpos($fv, 'اللوحة المالية') !== false && strpos($fv, '10,000') !== false && strpos($fv, 'هامش 71%') !== false && strpos($fv, 'بتكسب') !== false && strpos($fv, 'جدد 1 من 2') !== false && strpos($fv, 'إيجار') !== false, 'اللوحة المالية');
