@@ -560,6 +560,16 @@ class Dse_studio extends AdminController
         ]);
     }
 
+    /** اللوحة المالية — للأدمن بس (الموظفين لأ) */
+    public function finance()
+    {
+        if (!is_admin()) {
+            access_denied(DSE_STUDIO_MODULE_NAME);
+        }
+        $month = $this->media_month();
+        $this->load->view('finance', ['title' => _l('dse_menu_finance'), 'f' => $this->dse_studio_model->finance_dashboard($month)]);
+    }
+
     /** صفحة المودريشن: يختار العميل ويحط لينك البوست ← يتبعت لجروب العميل */
     public function publishing()
     {

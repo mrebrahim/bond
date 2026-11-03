@@ -1507,6 +1507,208 @@ class Dse_studio_model extends App_Model
     }
 
     // =================================================================
+    // اللوحة المالية (للأدمن بس) — كاش · مصروفات · ربح · مبيعات متعاقد عليها · فلوس برا · تجديد وفقد
+    // =================================================================
+    private function month_range($month)
+    {
+        $from = $month . '-01';
+        return [$from, date('Y-m-t', strtotime($from))];
+    }
+
+    /** كل الكاش اللي دخل (مدفوعات Perfex) في فترة — والجزء اللي على فواتير الباقات */
+    private function cash_in($from, $to)
+    {
+        if (!$this->db->table_exists($this->tbl('invoicepaymentrecords'))) {
+            return ['all' => 0.0, 'studio' => 0.0];
+        }
+        $b   = [$from, $to . ' 23:59:59'];
+        $all = (float) ($this->row('SELECT SUM(amount) s FROM ' . $this->tbl('invoicepaymentrecords') . ' WHERE date >= ? AND date <= ?', $b)['s'] ?? 0);
+        $std = (float) ($this->row('SELECT SUM(r.amount) s FROM ' . $this->tbl('invoicepaymentrecords') . ' r JOIN ' . $this->tbl('dse_package_invoices') . ' pi ON pi.invoice_id = r.invoiceid WHERE r.date >= ? AND r.date <= ?', $b)['s'] ?? 0);
+        return ['all' => $all, 'studio' => $std];
+    }
+
+    /** المصروفات من Expenses في Perfex (بالتصنيف) */
+    private function expenses($from, $to)
+    {
+        if (!$this->db->table_exists($this->tbl('expenses'))) {
+            return ['total' => 0.0, 'by' => []];
+        }
+        $cats = $this->db->table_exists($this->tbl('expenses_categories'));
+        $rows = $this->rows('SELECT e.amount' . ($cats ? ', c.name AS cat' : '') . ' FROM ' . $this->tbl('expenses') . ' e'
+            . ($cats ? ' LEFT JOIN ' . $this->tbl('expenses_categories') . ' c ON c.id = e.category' : '') . ' WHERE e.date >= ? AND e.date <= ?', [$from, $to]);
+        $by = [];
+        foreach ($rows as $r) {
+            $k      = trim((string) ($r['cat'] ?? '')) ?: 'من غير تصنيف';
+            $by[$k] = ($by[$k] ?? 0) + (float) $r['amount'];
+        }
+        arsort($by);
+        return ['total' => array_sum($by), 'by' => $by];
+    }
+
+    /** الباقات الحقيقية (مش ملغية ومش قديمة قبل السيستم) */
+    private function real_packages()
+    {
+        $this->ensure_renewal_columns();
+        return $this->rows('SELECT * FROM ' . $this->tbl('dse_packages') . " WHERE status <> 'cancelled' AND (historic IS NULL OR historic = 0) ORDER BY clientid, start_date, id");
+    }
+
+    /**
+     * التجديد والفقد للباقات اللي خلصت في الشهر:
+     * جدّد = نفس العميل عمل باقة بتبدأ بعد دي (لحد 30 يوم بعد نهايتها) · لسه = خلصت من أقل من 30 يوم ومجددش · فقدناه = عدّى 30 يوم
+     */
+    private function renewals_for($from, $to)
+    {
+        $by = [];
+        foreach ($this->rows('SELECT * FROM ' . $this->tbl('dse_packages') . " WHERE status <> 'cancelled' ORDER BY clientid, start_date, id") as $p) {
+            $by[(int) $p['clientid']][] = $p;
+        }
+        $out = ['due' => 0, 'renewed' => 0, 'churned' => 0, 'pending' => 0, 'churned_clients' => []];
+        foreach ($by as $cid => $list) {
+            foreach ($list as $p) {
+                if ($p['end_date'] < $from || $p['end_date'] > $to) {
+                    continue;
+                }
+                $out['due']++;
+                $limit = date('Y-m-d', strtotime($p['end_date'] . ' +30 days'));
+                $next  = array_filter($list, function ($x) use ($p, $limit) { return (int) $x['id'] !== (int) $p['id'] && $x['start_date'] > $p['start_date'] && $x['start_date'] <= $limit; });
+                if ($next) {
+                    $out['renewed']++;
+                } elseif ($limit >= $this->today()) {
+                    $out['pending']++;
+                } else {
+                    $out['churned']++;
+                    $out['churned_clients'][] = $cid;
+                }
+            }
+        }
+        $decided              = $out['renewed'] + $out['churned'];
+        $out['renewal_rate']  = $decided ? (int) round(100 * $out['renewed'] / $decided) : null;
+        $out['churn_rate']    = $decided ? (int) round(100 * $out['churned'] / $decided) : null;
+        return $out;
+    }
+
+    /** المبيعات المتعاقد عليها في الشهر (باقات بدأت فيه): جديدة ولا تجديد + توزيعها على الخدمات */
+    private function booked($from, $to)
+    {
+        $first = [];
+        foreach ($this->rows('SELECT clientid, MIN(start_date) d FROM ' . $this->tbl('dse_packages') . " WHERE status <> 'cancelled' GROUP BY clientid") as $r) {
+            $first[(int) $r['clientid']] = $r['d'];
+        }
+        $out = ['total' => 0.0, 'new' => 0.0, 'renew' => 0.0, 'new_count' => 0, 'renew_count' => 0,
+            'mix' => ['content' => 0.0, 'ads_fee' => 0.0, 'ads_budget' => 0.0, 'programming' => 0.0]];
+        foreach ($this->real_packages() as $p) {
+            if ($p['start_date'] < $from || $p['start_date'] > $to) {
+                continue;
+            }
+            $price = (float) $p['price'];
+            $isnew = ($first[(int) $p['clientid']] ?? $p['start_date']) >= $p['start_date'];
+            $out['total'] += $price;
+            $out[$isnew ? 'new' : 'renew'] += $price;
+            $out[$isnew ? 'new_count' : 'renew_count']++;
+            $svc = 0.0;
+            foreach ($this->package_services($p['id']) as $s) {
+                if ($s['service'] === 'ads') {
+                    $out['mix']['ads_fee']    += (float) $s['amount'];
+                    $out['mix']['ads_budget'] += (float) $s['ad_budget'];
+                } else {
+                    $out['mix']['programming'] += (float) $s['amount'];
+                }
+                $svc += (float) $s['amount'] + (float) $s['ad_budget'];
+            }
+            $out['mix']['content'] += max(0, $price - $svc);
+        }
+        return $out;
+    }
+
+    /** الفلوس اللي برا: باقي الباقات (بعمرها) + فواتير Perfex تانية مش متدفعة */
+    private function receivables()
+    {
+        $rows  = [];
+        $aging = ['0-30' => 0.0, '31-60' => 0.0, '61-90' => 0.0, '90+' => 0.0];
+        $waiting = ['count' => 0, 'amount' => 0.0];
+        foreach ($this->real_packages() as $p) {
+            $paid = $this->package_paid_amount($p);
+            $left = round((float) $p['price'] - $paid, 2);
+            if ($left <= 0.5) {
+                continue;
+            }
+            if ($p['status'] === 'pending' && $paid <= 0.004) { // لسه مادفعش ولا جنيه = عرض مستني، مش قسط متأخر
+                $waiting['count']++;
+                $waiting['amount'] += $left;
+                continue;
+            }
+            $age = max(0, (int) floor(($this->t() - strtotime($p['start_date'])) / 86400));
+            $aging[$age <= 30 ? '0-30' : ($age <= 60 ? '31-60' : ($age <= 90 ? '61-90' : '90+'))] += $left;
+            $rows[] = ['clientid' => (int) $p['clientid'], 'company' => $this->client($p['clientid'])['company'], 'package' => $p['name'],
+                'price' => (float) $p['price'], 'left' => $left, 'age' => $age, 'status' => $p['status'], 'package_id' => (int) $p['id']];
+        }
+        usort($rows, function ($a, $b) { return $b['left'] <=> $a['left']; });
+        $other = 0.0;
+        if ($this->db->table_exists($this->tbl('invoices'))) {
+            foreach ($this->rows('SELECT i.id, i.total FROM ' . $this->tbl('invoices') . ' i WHERE i.status IN (1, 3, 4) AND i.id NOT IN (SELECT invoice_id FROM ' . $this->tbl('dse_package_invoices') . ')') as $i) {
+                $other += max(0, (float) $i['total'] - $this->invoice_paid_amount($i['id']));
+            }
+        }
+        return ['packages' => array_sum(array_column($rows, 'left')), 'rows' => $rows, 'aging' => $aging, 'other_invoices' => $other, 'waiting' => $waiting];
+    }
+
+    /** أكتر العملاء دفعوا (آخر 12 شهر — كل مدفوعاتهم في Perfex) */
+    private function top_clients($from, $to, $limit = 10)
+    {
+        if (!$this->db->table_exists($this->tbl('invoicepaymentrecords'))) {
+            return [];
+        }
+        $rows = $this->rows('SELECT i.clientid, SUM(r.amount) s FROM ' . $this->tbl('invoicepaymentrecords') . ' r JOIN ' . $this->tbl('invoices') . ' i ON i.id = r.invoiceid
+            WHERE r.date >= ? AND r.date <= ? GROUP BY i.clientid ORDER BY s DESC LIMIT ' . (int) $limit, [$from, $to . ' 23:59:59']);
+        return array_map(function ($r) { return ['clientid' => (int) $r['clientid'], 'company' => $this->client($r['clientid'])['company'], 'paid' => (float) $r['s']]; }, $rows);
+    }
+
+    public function finance_dashboard($month)
+    {
+        $this->month_ok($month);
+        $this->sync_all_packages();
+        [$from, $to] = $this->month_range($month);
+        $cash    = $this->cash_in($from, $to);
+        $exp     = $this->expenses($from, $to);
+        $booked  = $this->booked($from, $to);
+        $ren     = $this->renewals_for($from, $to);
+        $active  = (int) ($this->row('SELECT COUNT(DISTINCT clientid) n FROM ' . $this->tbl('dse_packages') . " WHERE status = 'active' AND start_date <= ?", [$this->today()])['n'] ?? 0);
+        $profit  = $cash['all'] - $exp['total'];
+
+        // الترند: آخر 12 شهر لحد الشهر المختار
+        $trend = [];
+        for ($i = 11; $i >= 0; $i--) {
+            $m          = date('Y-m', strtotime($from . ' -' . $i . ' months'));
+            [$f, $t]    = $this->month_range($m);
+            $c          = $this->cash_in($f, $t);
+            $e          = $this->expenses($f, $t)['total'];
+            $bk         = $this->booked($f, $t);
+            $rr         = $this->renewals_for($f, $t);
+            $trend[]    = ['month' => $m, 'cash' => $c['all'], 'expenses' => $e, 'profit' => $c['all'] - $e, 'new' => $bk['new'], 'renew' => $bk['renew'], 'renewal_rate' => $rr['renewal_rate'], 'churned' => $rr['churned'], 'renewed' => $rr['renewed']];
+        }
+        // معدل الفقد على 6 شهور (أدق من شهر واحد)
+        $r6 = ['renewed' => 0, 'churned' => 0];
+        foreach (array_slice($trend, -6) as $t) {
+            $r6['renewed'] += $t['renewed'];
+            $r6['churned'] += $t['churned'];
+        }
+        $dec6   = $r6['renewed'] + $r6['churned'];
+        $churn6 = $dec6 ? $r6['churned'] / $dec6 : null;
+        $arpa   = $active ? $cash['studio'] / $active : 0;
+        [$yf]   = $this->month_range(date('Y-m', strtotime($from . ' -11 months')));
+
+        return [
+            'month' => $month, 'from' => $from, 'to' => $to,
+            'cash' => $cash, 'expenses' => $exp, 'profit' => $profit, 'margin' => $cash['all'] > 0 ? (int) round(100 * $profit / $cash['all']) : null,
+            'booked' => $booked, 'renewals' => $ren, 'active' => $active,
+            'churn_6m' => $churn6 !== null ? (int) round(100 * $churn6) : null, 'renewal_6m' => $dec6 ? (int) round(100 * $r6['renewed'] / $dec6) : null,
+            'arpa' => $arpa, 'ltv' => $churn6 ? $arpa / $churn6 : null,
+            'receivables' => $this->receivables(), 'trend' => $trend, 'top' => $this->top_clients($yf, $to),
+            'ytd_cash' => array_sum(array_column($trend, 'cash')), 'ytd_expenses' => array_sum(array_column($trend, 'expenses')),
+        ];
+    }
+
+    // =================================================================
     // خدمات الباقة: إعلانات ممولة + برمجة
     // =================================================================
     public function package_services($package_id)

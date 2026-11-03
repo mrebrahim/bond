@@ -73,6 +73,8 @@ $db->pdo->exec('CREATE TABLE tblcontacts (id INTEGER PRIMARY KEY AUTOINCREMENT, 
 $db->pdo->exec('CREATE TABLE tblstaff (staffid INTEGER PRIMARY KEY, firstname TEXT, lastname TEXT, email TEXT, active INT, admin INT)');
 $db->pdo->exec("INSERT INTO tblstaff VALUES (7, 'أندرو', 'إسحاق', 'a@x.com', 1, 0)");
 $db->pdo->exec('CREATE TABLE tblinvoicepaymentrecords (id INTEGER PRIMARY KEY AUTOINCREMENT, invoiceid INT, amount REAL, paymentmode TEXT, date TEXT, daterecorded TEXT, note TEXT)');
+$db->pdo->exec('CREATE TABLE tblexpenses (id INTEGER PRIMARY KEY AUTOINCREMENT, category INT, amount REAL, date TEXT, expense_name TEXT)');
+$db->pdo->exec('CREATE TABLE tblexpenses_categories (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)');
 $db->pdo->exec('CREATE TABLE tblpayment_modes (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, active INT)');
 $db->pdo->exec("INSERT INTO tblpayment_modes (name, active) VALUES ('كاش', 1), ('فودافون كاش', 1), ('قديمة', 0)");
 $db->pdo->exec('CREATE TABLE tblinvoices (id INTEGER PRIMARY KEY AUTOINCREMENT, clientid INT, total REAL, status INT, prefix TEXT DEFAULT "INV-", number INT DEFAULT 1, date TEXT)');
@@ -871,6 +873,45 @@ test('خدمات الباقة: إعلانات ممولة (ميزانية + أت�
     $GLOBALS['svc_pkg'] = [$c, $r];
     $m->fixed_time = $save;
 });
+
+test('اللوحة المالية (مارس 2027): كاش · مصروفات · ربح وهامش · مبيعات جديد وتجديد · توزيع الخدمات · التجديد والفقد · الفلوس برا بعمرها', function () use ($m, $db) {
+    $save = $m->fixed_time;
+    $snap = q('SELECT id, status FROM tbldse_packages'); // الاختبار بيقدّم الساعة لـ 2027 — نرجّع حالات باقات الاختبارات التانية بعده
+    $pay  = function ($pkg, $amount, $day) use ($m) { $m->fixed_time = strtotime($day . ' 12:00:00'); $m->record_payment($pkg, $amount, $day); };
+    $db->insert('tblclients', ['company' => 'فين A']); $a = $db->insert_id();
+    $db->insert('tblclients', ['company' => 'فين B']); $b = $db->insert_id();
+    $db->insert('tblclients', ['company' => 'فين C']); $c = $db->insert_id();
+    $m->fixed_time = strtotime('2027-02-01 10:00:00');
+    $b1 = $m->create_package($b, 'B1', 8000, '2027-02-01', 30, ['design' => 4]); $pay($b1, 8000, '2027-02-01');
+    $c1 = $m->create_package($c, 'C1', 5000, '2027-02-01', 30, ['design' => 4]); $pay($c1, 5000, '2027-02-02');
+    $m->fixed_time = strtotime('2027-03-01 10:00:00');
+    $a1 = $m->create_package($a, 'A1', 10000, '2027-03-01', 30, ['design' => 4], null, null, false, [['service' => 'ads', 'ad_budget' => 2000, 'amount' => 1000]]);
+    $pay($a1, 6000, '2027-03-05');
+    $m->fixed_time = strtotime('2027-03-03 10:00:00');
+    $b2 = $m->renew_package($b1); $pay($b2, 8000, '2027-03-03');
+    // كل البنود اتصرفت علشان ميبقاش فيه فترة سماح
+    foreach ([$a1, $b1, $b2, $c1] as $pp) { $db->insert('tbldse_usage', ['package_id' => $pp, 'type' => 'design', 'qty' => 4, 'reason' => 'manual', 'created_at' => '2027-03-01 10:00:00']); }
+    $db->insert('tblexpenses_categories', ['name' => 'إيجار']); $rent = $db->insert_id();
+    $db->insert('tblexpenses', ['category' => $rent, 'amount' => 3000, 'date' => '2027-03-10']);
+    $db->insert('tblexpenses', ['category' => null, 'amount' => 1000, 'date' => '2027-03-12']);
+    $m->fixed_time = strtotime('2027-04-15 10:00:00');
+    $f = $m->finance_dashboard('2027-03');
+    ok($f['cash']['all'] == 14000 && $f['cash']['studio'] == 14000, json_encode($f['cash']));
+    ok($f['expenses']['total'] == 4000 && $f['expenses']['by']['إيجار'] == 3000 && $f['expenses']['by']['من غير تصنيف'] == 1000, json_encode($f['expenses'], JSON_UNESCAPED_UNICODE));
+    ok($f['profit'] == 10000 && $f['margin'] === 71, $f['profit'] . ' ' . $f['margin']);
+    ok($f['booked']['new'] == 10000 && $f['booked']['new_count'] === 1 && $f['booked']['renew'] == 8000 && $f['booked']['renew_count'] === 1, json_encode($f['booked']));
+    ok($f['booked']['mix'] == ['content' => 15000.0, 'ads_fee' => 1000.0, 'ads_budget' => 2000.0, 'programming' => 0.0], json_encode($f['booked']['mix']));
+    ok($f['renewals']['due'] === 3 && $f['renewals']['pending'] === 1 && $f['renewals']['renewed'] === 1 && $f['renewals']['churned'] === 1 && $f['renewals']['renewal_rate'] === 50 && $f['renewals']['churn_rate'] === 50, json_encode($f['renewals']));
+    $ra = array_values(array_filter($f['receivables']['rows'], function ($r) use ($a) { return $r['clientid'] === $a; }));
+    ok(count($ra) === 1 && $ra[0]['left'] == 4000 && $ra[0]['age'] === 45 && $f['receivables']['aging']['31-60'] >= 4000, json_encode($ra));
+    ok(count($f['trend']) === 12 && end($f['trend'])['month'] === '2027-03' && end($f['trend'])['profit'] == 10000 && $f['trend'][10]['cash'] == 13000, json_encode(array_slice($f['trend'], -2)));
+    ok(in_array(['clientid' => $b, 'company' => 'فين B', 'paid' => 16000.0], $f['top']), json_encode($f['top'], JSON_UNESCAPED_UNICODE));
+    // الصفحة (أدمن)
+    $GLOBALS['fin'] = $f;
+    foreach ($snap as $r) { $db->query('UPDATE tbldse_packages SET status = ? WHERE id = ?', [$r['status'], $r['id']]); }
+    $db->query("UPDATE tbldse_packages SET status = 'cancelled' WHERE clientid IN (?, ?, ?)", [$a, $b, $c]);
+    $m->fixed_time = $save;
+});
 echo "\nالتنبيهات:\n";
 test('العميل بقاله فترة مابيصوّرش → تنبيه مرة واحدة، urgent لو مفيش نشر', function () use ($m, $client, $db) {
     ok(count($m->check_inactive_clients()) === 0, 'لسه بادئ');
@@ -973,6 +1014,9 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
     ok(strpos($hh, 'مدفوع <b>2,500') !== false && strpos($hh, 'سجّل دفعة') !== false && strpos($hh, 'اربط فاتورة عملتها في Perfex') !== false && strpos($hh, 'قسط قديم') !== false && strpos($hh, 'name="left[reel]"') !== false && strpos($hh, '<option value="4">4 أسابيع') !== false && strpos($hh, 'امسح العميل من الاستوديو') !== false && strpos($hh, '⏳ مدّ السماح') !== false && strpos($hh, ': · ') === false, 'القديمة: دفعات وفواتير ومدّ السماح');
     $pg = render('pick_group', ['client' => $GLOBALS['pick'][0], 'groups' => $GLOBALS['pick'][1]]);
     ok(strpos($pg, 'مربوط بالعميل ده') !== false && strpos($pg, 'مربوط بـ جروب قديم') !== false, 'صفحة اختيار الجروب');
+    $fv = render('finance', ['f' => $GLOBALS['fin']]);
+    file_put_contents(sys_get_temp_dir() . '/dse_finance.html', $fv);
+    ok(strpos($fv, 'اللوحة المالية') !== false && strpos($fv, '10,000') !== false && strpos($fv, 'هامش 71%') !== false && strpos($fv, 'بتكسب') !== false && strpos($fv, 'جدد 1 من 2') !== false && strpos($fv, 'إيجار') !== false, 'اللوحة المالية');
     [$sc, $sp] = $GLOBALS['svc_pkg'];
     $ss = $m->client_summary($sc);
     $sone = function ($f) use ($ss) { $o = []; foreach ($ss['packages'] as $p) { $o[$p['id']] = $f($p); } return $o; };
