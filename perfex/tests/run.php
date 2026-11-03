@@ -78,7 +78,9 @@ $db->pdo->exec('CREATE TABLE tblexpenses (id INTEGER PRIMARY KEY AUTOINCREMENT, 
 $db->pdo->exec('CREATE TABLE tblexpenses_categories (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)');
 $db->pdo->exec('CREATE TABLE tblpayment_modes (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, active INT)');
 $db->pdo->exec("INSERT INTO tblpayment_modes (name, active) VALUES ('كاش', 1), ('فودافون كاش', 1), ('قديمة', 0)");
-$db->pdo->exec('CREATE TABLE tblinvoices (id INTEGER PRIMARY KEY AUTOINCREMENT, clientid INT, total REAL, status INT, prefix TEXT DEFAULT "INV-", number INT DEFAULT 1, date TEXT)');
+$db->pdo->exec('CREATE TABLE tblinvoices (id INTEGER PRIMARY KEY AUTOINCREMENT, clientid INT, total REAL, status INT, prefix TEXT DEFAULT "INV-", number INT DEFAULT 1, date TEXT, currency INT DEFAULT 3)');
+$db->pdo->exec('CREATE TABLE tblcurrencies (id INTEGER PRIMARY KEY, name TEXT, symbol TEXT, isdefault INT)');
+$db->pdo->exec("INSERT INTO tblcurrencies VALUES (1, 'USD', '$', 1), (2, 'EUR', '€', 0), (3, 'EGP', 'LE', 0)");
 
 $sent = [];
 $evo  = new Dse_evolution();
@@ -951,6 +953,40 @@ test('تفاصيل الشهر: الإيراد حسب المصدر من بنود 
     throws(function () use ($m) { $m->save_revenue_streams(['a' => ['label' => '', 'keywords' => '']]); }, 'مصدر واحد');
     $GLOBALS['fm'] = $f;
     update_option('dse_revenue_streams', '');
+});
+
+test('العملات: إيرادات بالجنيه والدولار واليورو بتتحول لجنيه بسعر الصرف · المصروفات جنيه زي ما هي · العملة اللي مالهاش سعر بتتعلّم', function () use ($m, $db) {
+    $db->insert('tblclients', ['company' => 'عميل دولار', 'default_currency' => 1]); $c = $db->insert_id();
+    $inv = function ($total, $cur, $desc) use ($db, $c) {
+        $db->insert('tblinvoices', ['clientid' => $c, 'total' => $total, 'status' => 2, 'date' => '2027-07-02', 'currency' => $cur]); $id = $db->insert_id();
+        $db->insert('tblitemable', ['rel_id' => $id, 'rel_type' => 'invoice', 'description' => $desc, 'long_description' => '', 'qty' => 1, 'rate' => $total, 'item_order' => 0]);
+        $db->insert('tblinvoicepaymentrecords', ['invoiceid' => $id, 'amount' => $total, 'date' => '2027-07-03']);
+    };
+    $inv(100, 1, 'Vibe Coding Bootcamp');   // دولار
+    $inv(50, 2, 'كورس AI Video');            // يورو
+    $inv(3000, 3, 'باقة ريلز');              // جنيه
+    $db->insert('tblexpenses', ['category' => null, 'amount' => 2000, 'date' => '2027-07-05', 'expense_name' => 'إيجار']);
+    update_option('dse_fx_rates', '');
+    $f = $m->finance_dashboard('2027-07');
+    $fx = $f['fx'];
+    ok($fx[1]['missing'] && $fx[2]['missing'] && !$fx[3]['missing'] && $fx[3]['egp'] && $f['cash']['all'] == 3150, 'من غير أسعار: 1 = 1 ومتعلّمة');
+    $m->save_fx_settings(['USD' => 48.5, 'eur' => 52, 'XX' => 0]);
+    ok($m->fx_settings() == ['USD' => 48.5, 'EUR' => 52], json_encode($m->fx_settings()));
+    $f = $m->finance_dashboard('2027-07');
+    ok($f['cash']['all'] == 4850 + 2600 + 3000 && $f['cash']['by_currency'] == ['USD' => 100.0, 'EUR' => 50.0, 'EGP' => 3000.0], json_encode($f['cash']));
+    ok($f['expenses']['total'] == 2000 && $f['profit'] == 8450, 'المصروفات جنيه زي ما هي');
+    $mo = $m->finance_month('2027-07');
+    $by = []; foreach ($mo['streams'] as $x) { $by[$x['key']] = $x['cash']; }
+    ok(round($by['course_vibe']) == 4850 && round($by['course_ai']) == 2600 && round($by['reels']) == 3000 && $mo['invoices']['total'] == 10450, json_encode([$by, $mo['invoices']], JSON_UNESCAPED_UNICODE));
+    ok(in_array(['clientid' => $c, 'company' => 'عميل دولار', 'paid' => 10450.0], $f['top']), json_encode($f['top'], JSON_UNESCAPED_UNICODE));
+    // فاتورة الباقة اللي الموديول بيعملها بالجنيه حتى لو العميل عملته دولار
+    $m->fixed_time = strtotime('2027-07-10 10:00:00');
+    $pk = $m->create_package($c, 'G', 5000, '2027-07-10', 30, ['reel' => 4]);
+    $m->record_payment($pk, 1000);
+    ok((int) q('SELECT i.currency FROM tblinvoices i JOIN tbldse_package_invoices pi ON pi.invoice_id = i.id WHERE pi.package_id = ?', [$pk])[0]['currency'] === 3, 'فاتورة الباقة بالجنيه');
+    $db->query("UPDATE tbldse_packages SET status = 'cancelled' WHERE id = ?", [$pk]);
+    $m->fixed_time = null;
+    update_option('dse_fx_rates', '');
 });
 echo "\nالتنبيهات:\n";
 test('العميل بقاله فترة مابيصوّرش → تنبيه مرة واحدة، urgent لو مفيش نشر', function () use ($m, $client, $db) {

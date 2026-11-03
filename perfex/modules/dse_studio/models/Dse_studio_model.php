@@ -1515,16 +1515,98 @@ class Dse_studio_model extends App_Model
         return [$from, date('Y-m-t', strtotime($from))];
     }
 
-    /** كل الكاش اللي دخل (مدفوعات Perfex) في فترة — والجزء اللي على فواتير الباقات */
+    // ---------------------------------------------------------------- العملات
+    private $fx_cache = null;
+
+    /** أسعار الصرف المتسجلة: ["USD" => 48.5, "EUR" => 52] (الجنيه = 1) */
+    public function fx_settings()
+    {
+        $r = json_decode((string) get_option('dse_fx_rates'), true);
+        return is_array($r) ? $r : [];
+    }
+
+    public function save_fx_settings(array $rates)
+    {
+        $out = [];
+        foreach ($rates as $code => $v) {
+            $code = strtoupper(trim((string) $code));
+            if (preg_match('/^[A-Z0-9]{2,10}$/', $code) && (float) $v > 0) {
+                $out[$code] = round((float) $v, 4);
+            }
+        }
+        update_option('dse_fx_rates', json_encode($out));
+        $this->fx_cache = null;
+        return $out;
+    }
+
+    /** عملات Perfex: [id => [code, rate, missing]] — الجنيه (EGP) = 1، والعملة اللي مالهاش سعر بتتحسب 1 وبتتعلّم ناقصة */
+    public function currencies_fx()
+    {
+        if ($this->fx_cache !== null) {
+            return $this->fx_cache;
+        }
+        $cache = [];
+        if (!$this->db->table_exists($this->tbl('currencies'))) {
+            return $this->fx_cache = $cache;
+        }
+        $rates = $this->fx_settings();
+        foreach ($this->rows('SELECT id, name FROM ' . $this->tbl('currencies')) as $c) {
+            $code = strtoupper(trim($c['name']));
+            $egp  = in_array($code, ['EGP', 'LE', 'جنيه'], true);
+            $cache[(int) $c['id']] = ['code' => $code, 'rate' => $egp ? 1.0 : (float) ($rates[$code] ?? 0), 'egp' => $egp];
+        }
+        foreach ($cache as &$c) {
+            $c['missing'] = !$c['egp'] && $c['rate'] <= 0;
+            if ($c['missing']) {
+                $c['rate'] = 1.0;
+            }
+        }
+        unset($c);
+        return $this->fx_cache = $cache;
+    }
+
+    /** معامل التحويل لجنيه لعملة فاتورة (0/مش معروفة = 1) */
+    private function fx($currency_id)
+    {
+        $all = $this->currencies_fx();
+        return isset($all[(int) $currency_id]) ? $all[(int) $currency_id]['rate'] : 1.0;
+    }
+
+    private function has_invoice_currency()
+    {
+        static $has = null;
+        if ($has === null) {
+            $has = $this->db->table_exists($this->tbl('invoices')) && $this->db->field_exists('currency', $this->tbl('invoices'));
+        }
+        return $has;
+    }
+
+    /**
+     * كل الكاش اللي دخل (مدفوعات Perfex) في فترة — بالجنيه بعد تحويل الدولار واليورو بسعر الصرف المتسجل.
+     * by_currency = المبالغ الأصلية بكل عملة (علشان تبان)
+     */
     private function cash_in($from, $to)
     {
+        $out = ['all' => 0.0, 'studio' => 0.0, 'by_currency' => []];
         if (!$this->db->table_exists($this->tbl('invoicepaymentrecords'))) {
-            return ['all' => 0.0, 'studio' => 0.0];
+            return $out;
         }
         $b   = [$from, $to . ' 23:59:59'];
-        $all = (float) ($this->row('SELECT SUM(amount) s FROM ' . $this->tbl('invoicepaymentrecords') . ' WHERE date >= ? AND date <= ?', $b)['s'] ?? 0);
-        $std = (float) ($this->row('SELECT SUM(r.amount) s FROM ' . $this->tbl('invoicepaymentrecords') . ' r JOIN ' . $this->tbl('dse_package_invoices') . ' pi ON pi.invoice_id = r.invoiceid WHERE r.date >= ? AND r.date <= ?', $b)['s'] ?? 0);
-        return ['all' => $all, 'studio' => $std];
+        $cur = $this->has_invoice_currency() ? 'i.currency' : '0';
+        $fx  = $this->currencies_fx();
+        foreach ($this->rows('SELECT ' . $cur . ' AS cur, SUM(r.amount) s, MAX(CASE WHEN pi.invoice_id IS NULL THEN 0 ELSE 1 END) AS x FROM ' . $this->tbl('invoicepaymentrecords') . ' r
+                LEFT JOIN ' . $this->tbl('invoices') . ' i ON i.id = r.invoiceid
+                LEFT JOIN ' . $this->tbl('dse_package_invoices') . ' pi ON pi.invoice_id = r.invoiceid
+                WHERE r.date >= ? AND r.date <= ? GROUP BY ' . $cur . ', CASE WHEN pi.invoice_id IS NULL THEN 0 ELSE 1 END', $b) as $r) {
+            $egp = (float) $r['s'] * $this->fx($r['cur']);
+            $out['all'] += $egp;
+            if ((int) $r['x'] === 1) {
+                $out['studio'] += $egp;
+            }
+            $code = $fx[(int) $r['cur']]['code'] ?? 'EGP';
+            $out['by_currency'][$code] = ($out['by_currency'][$code] ?? 0) + (float) $r['s'];
+        }
+        return $out;
     }
 
     /** المصروفات من Expenses في Perfex (بالتصنيف) */
@@ -1645,8 +1727,8 @@ class Dse_studio_model extends App_Model
         usort($rows, function ($a, $b) { return $b['left'] <=> $a['left']; });
         $other = 0.0;
         if ($this->db->table_exists($this->tbl('invoices'))) {
-            foreach ($this->rows('SELECT i.id, i.total FROM ' . $this->tbl('invoices') . ' i WHERE i.status IN (1, 3, 4) AND i.id NOT IN (SELECT invoice_id FROM ' . $this->tbl('dse_package_invoices') . ')') as $i) {
-                $other += max(0, (float) $i['total'] - $this->invoice_paid_amount($i['id']));
+            foreach ($this->rows('SELECT i.id, i.total, ' . ($this->has_invoice_currency() ? 'i.currency' : '0') . ' AS cur FROM ' . $this->tbl('invoices') . ' i WHERE i.status IN (1, 3, 4) AND i.id NOT IN (SELECT invoice_id FROM ' . $this->tbl('dse_package_invoices') . ')') as $i) {
+                $other += max(0, (float) $i['total'] - $this->invoice_paid_amount($i['id'])) * $this->fx($i['cur']);
             }
         }
         return ['packages' => array_sum(array_column($rows, 'left')), 'rows' => $rows, 'aging' => $aging, 'other_invoices' => $other, 'waiting' => $waiting];
@@ -1658,9 +1740,18 @@ class Dse_studio_model extends App_Model
         if (!$this->db->table_exists($this->tbl('invoicepaymentrecords'))) {
             return [];
         }
-        $rows = $this->rows('SELECT i.clientid, SUM(r.amount) s FROM ' . $this->tbl('invoicepaymentrecords') . ' r JOIN ' . $this->tbl('invoices') . ' i ON i.id = r.invoiceid
-            WHERE r.date >= ? AND r.date <= ? GROUP BY i.clientid ORDER BY s DESC LIMIT ' . (int) $limit, [$from, $to . ' 23:59:59']);
-        return array_map(function ($r) { return ['clientid' => (int) $r['clientid'], 'company' => $this->client($r['clientid'])['company'], 'paid' => (float) $r['s']]; }, $rows);
+        $cur = $this->has_invoice_currency() ? 'i.currency' : '0';
+        $by  = [];
+        foreach ($this->rows('SELECT i.clientid, ' . $cur . ' AS cur, SUM(r.amount) s FROM ' . $this->tbl('invoicepaymentrecords') . ' r JOIN ' . $this->tbl('invoices') . ' i ON i.id = r.invoiceid
+            WHERE r.date >= ? AND r.date <= ? GROUP BY i.clientid, ' . $cur, [$from, $to . ' 23:59:59']) as $r) {
+            $by[(int) $r['clientid']] = ($by[(int) $r['clientid']] ?? 0) + (float) $r['s'] * $this->fx($r['cur']);
+        }
+        arsort($by);
+        $out = [];
+        foreach (array_slice($by, 0, (int) $limit, true) as $cid => $v) {
+            $out[] = ['clientid' => (int) $cid, 'company' => $this->client($cid)['company'], 'paid' => round($v, 2)];
+        }
+        return $out;
     }
 
     // ---------------------------------------------------------------- تفاصيل شهر واحد
@@ -1738,7 +1829,8 @@ class Dse_studio_model extends App_Model
         $unclass = [];
         $classify = function ($l) use ($streams) { return $this->classify_line($l['description'] . ' ' . $l['long_description'], $streams) ?: 'other'; };
         if ($this->db->table_exists($this->tbl('invoicepaymentrecords'))) {
-            foreach ($this->rows('SELECT invoiceid, SUM(amount) s FROM ' . $this->tbl('invoicepaymentrecords') . ' WHERE date >= ? AND date <= ? GROUP BY invoiceid', [$from, $to . ' 23:59:59']) as $p) {
+            foreach ($this->rows('SELECT r.invoiceid, SUM(r.amount) s, ' . ($this->has_invoice_currency() ? 'MAX(i.currency)' : '0') . ' AS cur FROM ' . $this->tbl('invoicepaymentrecords') . ' r LEFT JOIN ' . $this->tbl('invoices') . ' i ON i.id = r.invoiceid WHERE r.date >= ? AND r.date <= ? GROUP BY r.invoiceid', [$from, $to . ' 23:59:59']) as $p) {
+                $p['s'] = (float) $p['s'] * $this->fx($p['cur']); // بالجنيه
                 $lines = $this->invoice_lines($p['invoiceid']);
                 $sum   = array_sum(array_column($lines, 'amount'));
                 if (!$lines || $sum <= 0) {
@@ -1757,9 +1849,9 @@ class Dse_studio_model extends App_Model
             }
         }
         if ($this->db->table_exists($this->tbl('invoices'))) {
-            foreach ($this->rows('SELECT id FROM ' . $this->tbl('invoices') . ' WHERE date >= ? AND date <= ? AND status <> 5', [$from, $to]) as $i) {
+            foreach ($this->rows('SELECT id, ' . ($this->has_invoice_currency() ? 'currency' : '0') . ' AS cur FROM ' . $this->tbl('invoices') . ' WHERE date >= ? AND date <= ? AND status <> 5', [$from, $to]) as $i) {
                 foreach ($this->invoice_lines($i['id']) as $l) {
-                    $inv[$classify($l)] += $l['amount'];
+                    $inv[$classify($l)] += $l['amount'] * $this->fx($i['cur']);
                 }
             }
         }
@@ -1791,11 +1883,11 @@ class Dse_studio_model extends App_Model
         if (!$this->db->table_exists($this->tbl('invoices'))) {
             return $out;
         }
-        foreach ($this->rows('SELECT id, total FROM ' . $this->tbl('invoices') . ' WHERE date >= ? AND date <= ? AND status <> 5', [$from, $to]) as $i) {
-            $paid = $this->invoice_paid_amount($i['id']);
+        foreach ($this->rows('SELECT id, total, ' . ($this->has_invoice_currency() ? 'currency' : '0') . ' AS cur FROM ' . $this->tbl('invoices') . ' WHERE date >= ? AND date <= ? AND status <> 5', [$from, $to]) as $i) {
+            $rate = $this->fx($i['cur']);
             $out['count']++;
-            $out['total'] += (float) $i['total'];
-            $out['paid']  += $paid;
+            $out['total'] += (float) $i['total'] * $rate;
+            $out['paid']  += $this->invoice_paid_amount($i['id']) * $rate;
         }
         $out['unpaid'] = max(0, $out['total'] - $out['paid']);
         return $out;
@@ -1829,7 +1921,7 @@ class Dse_studio_model extends App_Model
                 'prev' => $prev_rev['cash'][$k] ?? 0.0, 'change' => $change($v, $prev_rev['cash'][$k] ?? 0)];
         }
         return [
-            'month' => $month, 'prev_month' => $pm,
+            'month' => $month, 'prev_month' => $pm, 'fx' => $this->currencies_fx(), 'cash_by_currency' => $cash['by_currency'],
             'cash' => $cash['all'], 'prev_cash' => $pcash['all'], 'cash_change' => $change($cash['all'], $pcash['all']),
             'expenses' => $exp['total'], 'prev_expenses' => $pexp['total'], 'expenses_change' => $change($exp['total'], $pexp['total']),
             'profit' => $cash['all'] - $exp['total'], 'prev_profit' => $pcash['all'] - $pexp['total'],
@@ -1875,7 +1967,7 @@ class Dse_studio_model extends App_Model
         [$yf]   = $this->month_range(date('Y-m', strtotime($from . ' -11 months')));
 
         return [
-            'month' => $month, 'from' => $from, 'to' => $to,
+            'month' => $month, 'from' => $from, 'to' => $to, 'fx' => $this->currencies_fx(), 'fx_rates' => $this->fx_settings(),
             'cash' => $cash, 'expenses' => $exp, 'profit' => $profit, 'margin' => $cash['all'] > 0 ? (int) round(100 * $profit / $cash['all']) : null,
             'booked' => $booked, 'renewals' => $ren, 'active' => $active,
             'churn_6m' => $churn6 !== null ? (int) round(100 * $churn6) : null, 'renewal_6m' => $dec6 ? (int) round(100 * $r6['renewed'] / $dec6) : null,
@@ -2457,8 +2549,18 @@ class Dse_studio_model extends App_Model
     /** فاتورة Perfex للباقة بالمبلغ ده (لما مفيش فاتورة مربوطة فيها مكان للدفعة) */
     private function create_package_invoice(array $p, $amount, $label)
     {
-        $c        = $this->row('SELECT default_currency FROM ' . $this->tbl('clients') . ' WHERE userid = ?', [(int) $p['clientid']]);
-        $currency = (int) ($c['default_currency'] ?? 0);
+        // أسعار الباقات بالجنيه ← الفاتورة بالجنيه (EGP) حتى لو العميل عملته الافتراضية دولار / يورو
+        $currency = 0;
+        foreach ($this->currencies_fx() as $cid => $cx) {
+            if ($cx['egp']) {
+                $currency = $cid;
+                break;
+            }
+        }
+        if (!$currency) {
+            $c        = $this->row('SELECT default_currency FROM ' . $this->tbl('clients') . ' WHERE userid = ?', [(int) $p['clientid']]);
+            $currency = (int) ($c['default_currency'] ?? 0);
+        }
         if (!$currency && $this->db->table_exists($this->tbl('currencies'))) {
             $currency = (int) ($this->row('SELECT id FROM ' . $this->tbl('currencies') . ' WHERE isdefault = 1')['id'] ?? 0);
         }

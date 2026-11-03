@@ -35,9 +35,27 @@ $ren   = $f['renewals'];
     </div>
   </div></div>
 
+  <?php $foreign = array_filter($f['fx'], function ($c) { return !$c['egp']; }); $missing = array_filter($foreign, function ($c) { return $c['missing']; }); ?>
+  <?php if ($foreign) { ?>
+  <details class="panel_s" <?= $missing ? 'open' : ''; ?>>
+    <summary class="panel-body" style="cursor:pointer"><b>💱 أسعار الصرف</b> <span class="small text-muted">— الفواتير بالدولار واليورو بتتحول لجنيه بالأسعار دي · المصروفات جنيه زي ما هي</span>
+      <?php if ($missing) { ?><span class="label label-danger">حط سعر <?= html_escape(implode(' و ', array_column($missing, 'code'))); ?> — لحد ما تحطه بيتحسب 1 = 1</span><?php } else { ?><span class="small"><?php foreach ($foreign as $c) { echo '1 ' . html_escape($c['code']) . ' = ' . dse_num($c['rate']) . ' ج.م &nbsp; '; } ?></span><?php } ?></summary>
+    <div class="panel-body" style="border-top:1px solid #eee">
+      <?= form_open(admin_url('dse_studio/finance?month=' . $f['month']), ['class' => 'form-inline']); ?>
+        <?php foreach ($foreign as $c) { ?>
+          <label class="small">1 <?= html_escape($c['code']); ?> =</label>
+          <input type="number" step="0.01" min="0" name="fx[<?= html_escape($c['code']); ?>]" value="<?= $c['missing'] ? '' : html_escape((string) $c['rate']); ?>" class="form-control input-sm" style="width:100px" placeholder="مثلًا 48"> <span class="small">ج.م</span> &nbsp;
+        <?php } ?>
+        <button class="btn btn-primary btn-sm">احفظ</button>
+        <span class="small text-muted">سعر واحد بيتطبق على كل الشهور — غيّره لما السعر يتغير كتير.</span>
+      <?= form_close(); ?>
+    </div>
+  </details>
+  <?php } ?>
+
   <!-- الكاش والربح -->
   <div class="grid">
-    <div class="k"><small>💵 الكاش اللي دخل (فعلي)</small><b><?= dse_money($f['cash']['all']); ?></b><small>منه <?= dse_money($f['cash']['studio']); ?> على الباقات</small></div>
+    <div class="k"><small>💵 الكاش اللي دخل (فعلي)</small><b><?= dse_money($f['cash']['all']); ?></b><small>منه <?= dse_money($f['cash']['studio']); ?> على الباقات<?php $nonegp = array_diff_key($f['cash']['by_currency'], ['EGP' => 1]); if ($nonegp) { echo '<br>جوّاه: '; foreach ($nonegp as $code => $v) { echo html_escape($code) . ' ' . dse_num($v) . ' &nbsp;'; } } ?></small></div>
     <div class="k"><small>🧾 المصروفات</small><b><?= dse_money($f['expenses']['total']); ?></b><small>من Expenses في Perfex</small></div>
     <div class="k"><small>📈 صافي الربح</small><b class="<?= $f['profit'] >= 0 ? 'pos' : 'neg'; ?>"><?= dse_money($f['profit']); ?></b><small>هامش <?= $pct($f['margin']); ?> · <?= $f['profit'] >= 0 ? 'بتكسب ✅' : 'خسران الشهر ده ⚠️'; ?></small></div>
     <div class="k"><small>🤝 مبيعات اتقفلت (متعاقد عليها)</small><b><?= dse_money($f['booked']['total']); ?></b><small>جديد <?= dse_money($f['booked']['new']); ?> (<?= (int) $f['booked']['new_count']; ?>) · تجديد <?= dse_money($f['booked']['renew']); ?> (<?= (int) $f['booked']['renew_count']; ?>)</small></div>
@@ -127,7 +145,8 @@ $ren   = $f['renewals'];
       <div class="panel_s"><div class="panel-body small">
         <h5 class="bold" style="margin-top:0">📘 إزاي الأرقام بتتحسب</h5>
         <ul style="padding-inline-start:16px;margin:0">
-          <li><b>الكاش:</b> كل الدفعات المتسجلة في Perfex في الشهر (اللي في إيدك فعلًا).</li>
+          <li><b>الكاش:</b> كل الدفعات المتسجلة في Perfex في الشهر (اللي في إيدك فعلًا) — اللي بالدولار واليورو بيتحول لجنيه بسعر الصرف اللي فوق.</li>
+          <li><b>المصروفات:</b> بتتحسب جنيه زي ما اتكتبت (حتى لو Perfex كاتب جنبها $).</li>
           <li><b>المبيعات المتعاقد عليها:</b> سعر الباقات اللي بدأت في الشهر — جديد = أول باقة للعميل، تجديد = عنده باقة قبلها.</li>
           <li><b>التجديد / الفقد:</b> الباقات اللي خلصت في الشهر: جدد = عمل باقة خلال 30 يوم من نهايتها · فقدناه = عدّى 30 يوم · لسه بيقرروا = أقل من 30 يوم.</li>
           <li><b>الفلوس برا:</b> سعر كل باقة (مش ملغية) ناقص المدفوع عليها، بعمرها من بداية الباقة. الباقة اللي لسه مادفعش فيها ولا جنيه بتظهر لوحدها "مستنية أول دفعة".</li>

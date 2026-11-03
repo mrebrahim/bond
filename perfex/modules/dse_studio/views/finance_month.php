@@ -36,7 +36,7 @@ $sm = max(1, max(array_merge([1], array_column($f['streams'], 'cash'))));
   </div></div>
 
   <div class="grid">
-    <div class="k"><small>💵 الكاش اللي دخل</small><b><?= dse_money($f['cash']); ?></b><?= $chg($f['cash_change']); ?> <small>عن <?= $f['prev_month']; ?> (<?= dse_money($f['prev_cash']); ?>)</small></div>
+    <div class="k"><small>💵 الكاش اللي دخل (بالجنيه)</small><b><?= dse_money($f['cash']); ?></b><?php $nonegp = array_diff_key($f['cash_by_currency'], ['EGP' => 1]); if ($nonegp) { echo '<small>جوّاه: '; foreach ($nonegp as $code => $v) { echo html_escape($code) . ' ' . dse_num($v) . ' '; } echo '</small><br>'; } ?><?= $chg($f['cash_change']); ?> <small>عن <?= $f['prev_month']; ?> (<?= dse_money($f['prev_cash']); ?>)</small></div>
     <div class="k"><small>🧾 المصروفات</small><b><?= dse_money($f['expenses']); ?></b><?= $chg($f['expenses_change'], false); ?> <small>عن <?= $f['prev_month']; ?> (<?= dse_money($f['prev_expenses']); ?>)</small></div>
     <div class="k"><small>📈 صافي الربح</small><b class="<?= $f['profit'] >= 0 ? 'pos' : 'neg'; ?>"><?= dse_money($f['profit']); ?></b><small>هامش <?= $f['margin'] === null ? '—' : (int) $f['margin'] . '%'; ?> · الشهر اللي قبله <?= dse_money($f['prev_profit']); ?></small></div>
     <div class="k"><small>🧾 فواتير اتعملت الشهر ده</small><b><?= dse_money($f['invoices']['total']); ?></b><small><?= (int) $f['invoices']['count']; ?> فاتورة · اتحصّل <?= dse_money($f['invoices']['paid']); ?> · باقي <span class="neg"><?= dse_money($f['invoices']['unpaid']); ?></span></small></div>

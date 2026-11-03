@@ -567,6 +567,11 @@ class Dse_studio extends AdminController
             access_denied(DSE_STUDIO_MODULE_NAME);
         }
         $month = $this->media_month();
+        if ($this->input->post('fx') !== null) {
+            $saved = $this->dse_studio_model->save_fx_settings((array) $this->input->post('fx'));
+            set_alert('success', 'أسعار الصرف اتحفظت: ' . implode(' · ', array_map(function ($k, $v) { return '1 ' . $k . ' = ' . $v . ' ج.م'; }, array_keys($saved), $saved)));
+            redirect(admin_url('dse_studio/finance?month=' . $month));
+        }
         $this->load->view('finance', ['title' => _l('dse_menu_finance'), 'f' => $this->dse_studio_model->finance_dashboard($month)]);
     }
 
