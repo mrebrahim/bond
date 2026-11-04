@@ -90,6 +90,10 @@ $evo->transport = function ($method, $url, $body) use (&$sent) {
         $sent[] = $body;
         return [201, ['key' => ['id' => 'x']]];
     }
+    if (strpos($url, '/instance/connectionState/') !== false) {
+        if (($GLOBALS['evo_state'] ?? 'open') === 'down') { return [502, ['error' => 'bad gateway']]; }
+        return [200, ['instance' => ['state' => $GLOBALS['evo_state'] ?? 'open']]];
+    }
     if (strpos($url, '/group/create/') !== false) { $GLOBALS['group_members'] = $body['participants']; return [201, ['id' => '120363000000000001@g.us']]; }
     if (strpos($url, '/group/inviteCode/') !== false) { return [200, ['inviteCode' => 'AbCdEfGhIj12']]; }
     if (strpos($url, '/group/fetchAllGroups/') !== false) { return [200, [['id' => '120363000000000888@g.us', 'subject' => 'عيادات الشهيد × DS', 'size' => 6], ['id' => '120363000000000777@g.us', 'subject' => 'جروب تاني', 'size' => 3], ['id' => '2010@s.whatsapp.net', 'subject' => 'مش جروب']]]; }
@@ -1267,6 +1271,70 @@ test('النص الأصلي زي ما كان · التعديل بيمشي على
     restore_error_handler();
     file_put_contents(sys_get_temp_dir() . '/dse_messages.html', $h);
     ok(substr_count($h, '<textarea name="body"') === 10 && strpos($h, 'تم حجز') !== false && strpos($h, 'DSE_SAMPLE') !== false && strpos($h, '{client_name}') !== false);
+});
+
+echo "\nصحة الواتساب:\n";
+test('الرقم خرج: تنبيه urgent للأدمن مرة واحدة + الرسايل مبتتبعتش ومبتفشلش', function () use ($m, $client, $db, &$sent) {
+    update_option('dse_wa_enabled', '1');
+    $db->query("UPDATE tbldse_wa_outbox SET status = 'sent' WHERE status IN ('queued','failed')");
+    $m->fixed_time = strtotime('2026-11-03 09:00:00');
+    ok($m->wa_health_check(true) === [] && $m->wa_health() === null, 'متصل: مفيش حاجة');
+    $GLOBALS['evo_state'] = 'close';
+    $a = $m->wa_health_check(true);
+    ok(count($a) === 1, 'تنبيه');
+    $al = q('SELECT * FROM tbldse_alerts WHERE id = ?', [$a[0]])[0];
+    ok($al['alert_key'] === 'wa_down' && $al['priority'] === 'urgent' && $al['clientid'] === null && strpos($al['message'], 'Scan') !== false, json_encode($al, JSON_UNESCAPED_UNICODE));
+    ok($m->wa_health_check(true) === [], 'مفيش تكرار');
+    $n = count($sent);
+    for ($i = 0; $i < 3; $i++) { $m->queue_wa($client, 'published', 'down:' . $i, ['post_url' => 'https://x/d' . $i, 'type' => 'reel']); }
+    $r = $m->process_outbox(10);
+    ok(count($sent) === $n && $r['sent'] === 0 && count(q("SELECT id FROM tbldse_wa_outbox WHERE status = 'queued'")) === 3, json_encode($r));
+    ok($m->wa_health()['down'] === true);
+    // بعد 6 ساعات تذكير
+    $m->fixed_time = strtotime('2026-11-03 15:05:00');
+    ok(count($m->wa_health_check(true)) === 1, 'تذكير بعد 6 ساعات');
+    // Evolution نفسه مش بيرد
+    $GLOBALS['evo_state'] = 'down';
+    $m->wa_health_check(true);
+    ok(strpos(get_option('dse_wa_last_error'), 'Evolution مش بيرد') === 0, get_option('dse_wa_last_error'));
+});
+test('رجع: تنبيه "رجع" + المتراكم بيتبعت رسالة واحدة كل نص ساعة', function () use ($m, $db, &$sent) {
+    $GLOBALS['evo_state'] = 'open';
+    $m->fixed_time = strtotime('2026-11-03 16:00:00');
+    $a = $m->wa_health_check(true);
+    $al = q('SELECT * FROM tbldse_alerts WHERE id = ?', [$a[0]])[0];
+    ok($al['alert_key'] === 'wa_up' && strpos($al['message'], 'كل 30 دقيقة') !== false, $al['message']);
+    ok(count(q("SELECT id FROM tbldse_alerts WHERE alert_key = 'wa_down' AND handled_at IS NULL")) === 0, 'تنبيهات الوقعة اتقفلت');
+    $n = count($sent);
+    $r = $m->process_outbox(10);
+    ok($r['sent'] === 1 && count($sent) === $n + 1, json_encode($r));
+    $m->fixed_time += 10 * 60;
+    ok($m->process_outbox(10)['sent'] === 0, 'لسه مفاتش نص ساعة');
+    $m->fixed_time += 21 * 60;
+    ok($m->process_outbox(10)['sent'] === 1, 'بعد نص ساعة');
+    ok($m->wa_health()['down'] === false && $m->wa_health()['queued'] === 1);
+    $m->fixed_time += 31 * 60;
+    $m->process_outbox(10);
+    ok($m->wa_health() === null && get_option('dse_wa_paced_before') === '', 'خلص المتراكم ← رجوع للطبيعي');
+});
+test('الرقم متصل بس آخر 3 رسايل فشلت = وقعة · ولما رسالة تتبعت يرجع', function () use ($m, $client, $db) {
+    $m->fixed_time += 3600;
+    for ($i = 0; $i < 3; $i++) { $m->queue_wa($client, 'welcome', 'ff:' . $i, ['client_name' => 'FAIL ' . $i], true); }
+    $m->process_outbox(10);
+    ok(count(q("SELECT id FROM tbldse_wa_outbox WHERE status = 'failed' AND dedupe_key LIKE 'ff:%'")) === 3);
+    $a = $m->wa_health_check(true);
+    ok(count($a) === 1 && get_option('dse_wa_down_state') === 'failing' && strpos(get_option('dse_wa_last_error'), 'آخر 3 رسايل فشلت') !== false, get_option('dse_wa_last_error'));
+    $db->query("UPDATE tbldse_wa_outbox SET body = 'تمام' WHERE dedupe_key LIKE 'ff:%'");
+    $m->fixed_time += 31 * 60;
+    $m->queue_wa($client, 'welcome', 'ff:ok', ['client_name' => 'تمام'], true);
+    ok($m->process_outbox(10)['sent'] === 1, 'بنجرب رسالة واحدة');
+    $a = $m->wa_health_check(true);
+    ok(q('SELECT alert_key FROM tbldse_alerts WHERE id = ?', [$a[0]])[0]['alert_key'] === 'wa_up');
+    ok(count(q("SELECT id FROM tbldse_wa_outbox WHERE status = 'queued' AND dedupe_key LIKE 'ff:%'")) === 3, 'اللي فشلوا رجعوا للطابور');
+    $db->query("UPDATE tbldse_wa_outbox SET status = 'sent' WHERE status = 'queued'");
+    update_option('dse_wa_paced_before', '');
+    update_option('dse_wa_enabled', '0');
+    $m->fixed_time = strtotime('2026-11-02 10:00:00');
 });
 
 test('السيرفر بنسخة قديمة من الداتابيز (من غير renewal_status / historic) والـ version متسجلة: صفحة التجديد بتضيف الأعمدة لوحدها بدل ما تقع', function () use ($m, $db) {

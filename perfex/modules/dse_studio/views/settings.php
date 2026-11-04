@@ -21,6 +21,8 @@
             <div class="form-group"><label>API key <?= get_option('dse_evo_key') ? '(متسجل — سيبه فاضي علشان يفضل زي ما هو)' : ''; ?></label><input type="password" name="dse_evo_key" class="form-control" dir="ltr" autocomplete="new-password"></div>
             <div class="form-group"><label>اسم الـ instance</label><input name="dse_evo_instance" value="<?= $o('dse_evo_instance'); ?>" class="form-control" dir="ltr"></div>
             <div class="form-group"><label>أقصى رسايل أوتوماتيك لنفس العميل في اليوم</label><input type="number" name="dse_wa_daily_cap" value="<?= $o('dse_wa_daily_cap'); ?>" class="form-control"></div>
+            <div class="form-group"><label>لو الواتساب وقف ورجع: أقل وقت بين كل رسالة والتانية (دقايق)</label><input type="number" min="5" name="dse_wa_gap_minutes" value="<?= $o('dse_wa_gap_minutes') !== '' ? $o('dse_wa_gap_minutes') : 30; ?>" class="form-control"></div>
+            <div class="form-group"><label>مين يوصله تنبيه "الواتساب وقف" (أرقام الموظفين — فاضي = كل الأدمنز)</label><input name="dse_wa_alert_staff_ids" value="<?= $o('dse_wa_alert_staff_ids'); ?>" class="form-control" dir="ltr"></div>
             <div class="form-group"><label>أرقام الفريق اللي بتتضاف لأي جروب عميل (مفصولة بفاصلة)</label><input name="dse_wa_team_numbers" value="<?= $o('dse_wa_team_numbers'); ?>" class="form-control" dir="ltr"></div>
             <div class="form-group"><label>لينك التقييم ({client_code} و {post_id} بيتبدلوا)</label><input name="dse_feedback_url" value="<?= $o('dse_feedback_url'); ?>" class="form-control" dir="ltr"></div>
             <div class="form-group"><label>نص قواعد التعامل</label><textarea name="dse_rules_text" rows="8" class="form-control"><?= $o('dse_rules_text'); ?></textarea></div>

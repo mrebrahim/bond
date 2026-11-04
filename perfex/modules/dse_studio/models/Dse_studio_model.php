@@ -1351,6 +1351,22 @@ class Dse_studio_model extends App_Model
         if ($this->opt('dse_wa_enabled', '0') !== '1' || !$this->evo || !$this->evo->configured()) {
             return $res;
         }
+        // الواتساب واقع (الرقم خرج): منبعتش خالص — الرسايل تفضل مستنية بدل ما تفشل
+        $down  = (string) $this->opt('dse_wa_down_since', '');
+        if ($down !== '' && !in_array($this->opt('dse_wa_down_state', ''), ['open', 'failing'], true)) {
+            $res['waiting'] = (int) $this->row('SELECT COUNT(*) AS n FROM ' . $this->tbl('dse_wa_outbox') . " WHERE status = 'queued'")['n'];
+            return $res;
+        }
+        // بعد ما يرجع، أو الرقم متصل والرسايل بتفشل (بنجرّب واحدة): رسالة واحدة كل نص ساعة على الأقل عشان الرقم ميتحظرش
+        if ($down !== '' || $this->opt('dse_wa_paced_before', '') !== '') {
+            $gap  = max(1, (int) $this->opt('dse_wa_gap_minutes', 30));
+            $last = $this->row('SELECT MAX(sent_at) AS t FROM ' . $this->tbl('dse_wa_outbox') . " WHERE status IN ('sent','sending','failed') AND sent_at IS NOT NULL");
+            if ($last && $last['t'] && strtotime($last['t']) > $this->t() - $gap * 60) {
+                $res['waiting'] = (int) $this->row('SELECT COUNT(*) AS n FROM ' . $this->tbl('dse_wa_outbox') . " WHERE status = 'queued'")['n'];
+                return $res;
+            }
+            $limit = 1;
+        }
         $cap   = (int) $this->opt('dse_wa_daily_cap', 6);
         $since = date('Y-m-d H:i:s', $this->t() - 86400);
         $queue = $this->rows('SELECT * FROM ' . $this->tbl('dse_wa_outbox') . " WHERE status = 'queued' ORDER BY manual DESC, id LIMIT " . (int) ($limit * 3));
@@ -1394,7 +1410,104 @@ class Dse_studio_model extends App_Model
                 $res['failed']++;
             }
         }
+        $pb = (string) $this->opt('dse_wa_paced_before', '');
+        if ($pb !== '' && !$this->row('SELECT id FROM ' . $this->tbl('dse_wa_outbox') . " WHERE status = 'queued' AND created_at <= ? LIMIT 1", [$pb])) {
+            update_option('dse_wa_paced_before', ''); // الرسايل اللي اتراكمت وقت الوقعة خلصت ← رجوع للطبيعي
+        }
         return $res;
+    }
+
+    /**
+     * فحص صحة الواتساب (كل 10 دقايق من الكرون):
+     *  - الرقم مش "open" في Evolution (خرج / اتقفل / Evolution نفسه مش بيرد) ← وقعة
+     *  - أو آخر 3 محاولات إرسال كلها فشلت ← وقعة حتى لو الرقم ظاهر متصل
+     * أول ما يقع: تنبيه urgent للأدمن (جرس + إيميل) وتذكير كل 6 ساعات لحد ما يرجع.
+     * لما يرجع: تنبيه "رجع"، والرسايل اللي فشلت وقت الوقعة بترجع للطابور وبتتبعت واحدة كل نص ساعة.
+     * بيرجع أرقام التنبيهات الجديدة.
+     */
+    public function wa_health_check($force = false)
+    {
+        if ($this->opt('dse_wa_enabled', '0') !== '1' || !$this->evo || !$this->evo->configured()) {
+            return [];
+        }
+        $now = $this->t();
+        if (!$force && (int) $this->opt('dse_wa_check_at', 0) > $now - 600) {
+            return [];
+        }
+        update_option('dse_wa_check_at', (string) $now);
+        $inst = (string) $this->opt('dse_evo_instance', '');
+        try {
+            $state = (string) $this->evo->state();
+            $err   = $state === 'open' ? '' : 'حالة الرقم في Evolution: ' . $state;
+        } catch (Exception $e) {
+            $state = 'error';
+            $err   = 'Evolution مش بيرد: ' . mb_substr($e->getMessage(), 0, 200);
+        }
+        if ($state === 'open') {
+            $tries = $this->rows('SELECT status, error FROM ' . $this->tbl('dse_wa_outbox') . " WHERE status IN ('sent','failed') AND sent_at >= ? ORDER BY sent_at DESC, id DESC LIMIT 3",
+                [date('Y-m-d H:i:s', $now - 6 * 3600)]);
+            $fails = array_filter($tries, function ($r) { return $r['status'] === 'failed' && strpos((string) $r['error'], 'مش جروب') === false; });
+            if (count($tries) === 3 && count($fails) === 3) {
+                $state = 'failing';
+                $err   = 'الرقم ظاهر متصل بس آخر 3 رسايل فشلت: ' . mb_substr((string) reset($fails)['error'], 0, 200);
+            }
+        }
+        update_option('dse_wa_down_state', $state);
+        update_option('dse_wa_last_error', $err);
+        $since = (string) $this->opt('dse_wa_down_since', '');
+        $new   = [];
+        if ($state !== 'open') {
+            if ($since === '') {
+                $since = $this->now();
+                update_option('dse_wa_down_since', $since);
+            }
+            $hours  = (int) floor(($now - strtotime($since)) / 3600);
+            $queued = (int) $this->row('SELECT COUNT(*) AS n FROM ' . $this->tbl('dse_wa_outbox') . " WHERE status = 'queued'")['n'];
+            $msg    = '📵 واتساب السيستم (رقم ' . $inst . ') مش بيبعت رسايل' . ($hours >= 1 ? ' — بقاله ' . $hours . ' ساعة' : '') . ".
+" . $err
+                . "
+فيه " . $queued . " رسالة مستنية في الطابور ومش هتتبعت لحد ما يرجع."
+                . ($state === 'failing' ? "
+شوف الرقم على الموبايل (ممكن يكون اتحظر أو اتقفل)." : "
+افتح Evolution واعمل Scan للـ QR من موبايل الرقم.");
+            $id = $this->add_alert(null, 'wa_down', 'wa_down:' . $since . ':' . (int) floor($hours / 6), $msg, 'urgent');
+            if ($id) {
+                $new[] = $id;
+            }
+            return $new;
+        }
+        if ($since !== '') {
+            // رجع: الرسايل اللي فشلت وقت الوقعة (ومن ساعتين قبلها) ترجع للطابور
+            $from = date('Y-m-d H:i:s', strtotime($since) - 7200);
+            $this->db->query('UPDATE ' . $this->tbl('dse_wa_outbox') . " SET status = 'queued', error = NULL WHERE status = 'failed' AND sent_at >= ? AND destination LIKE '%@g.us'", [$from]);
+            $queued = (int) $this->row('SELECT COUNT(*) AS n FROM ' . $this->tbl('dse_wa_outbox') . " WHERE status = 'queued'")['n'];
+            $gap    = max(1, (int) $this->opt('dse_wa_gap_minutes', 30));
+            update_option('dse_wa_down_since', '');
+            update_option('dse_wa_paced_before', $this->now());
+            $mins = (int) round(($now - strtotime($since)) / 60);
+            $id   = $this->add_alert(null, 'wa_up', 'wa_up:' . $since, '✅ واتساب السيستم (رقم ' . $inst . ') رجع يشتغل بعد ' . ($mins >= 60 ? round($mins / 60, 1) . ' ساعة' : $mins . ' دقيقة') . '.'
+                . ($queued ? "
+" . $queued . ' رسالة مستنية هتتبعت لوحدها — واحدة كل ' . $gap . ' دقيقة عشان الرقم ميتحظرش.' : ''));
+            if ($id) {
+                $new[] = $id;
+            }
+            // تنبيهات الوقعة القديمة تتقفل
+            $this->db->query('UPDATE ' . $this->tbl('dse_alerts') . " SET handled_at = ?, resolution = ? WHERE alert_key = 'wa_down' AND handled_at IS NULL", [$this->now(), 'رجع يشتغل لوحده']);
+        }
+        return $new;
+    }
+
+    /** للبانر في صفحات الموديول: null لو كله تمام */
+    public function wa_health()
+    {
+        $since = (string) $this->opt('dse_wa_down_since', '');
+        $paced = (string) $this->opt('dse_wa_paced_before', '');
+        if ($since === '' && $paced === '') {
+            return null;
+        }
+        $queued = (int) $this->row('SELECT COUNT(*) AS n FROM ' . $this->tbl('dse_wa_outbox') . " WHERE status = 'queued'")['n'];
+        return ['down' => $since !== '', 'since' => $since, 'state' => $this->opt('dse_wa_down_state', ''), 'error' => $this->opt('dse_wa_last_error', ''),
+            'queued' => $queued, 'gap' => max(1, (int) $this->opt('dse_wa_gap_minutes', 30))];
     }
 
     public function retry_message($id)

@@ -321,6 +321,8 @@ function dse_studio_default_options()
         'dse_evo_key'              => '',
         'dse_evo_instance'         => '010',
         'dse_wa_daily_cap'         => '6',
+        'dse_wa_gap_minutes'       => '30',  // بعد ما الواتساب يرجع: أقل وقت بين كل رسالة والتانية
+        'dse_wa_alert_staff_ids'   => '',    // مين يوصله "الواتساب وقف" — فاضي = كل الأدمنز
         'dse_wa_team_numbers'      => '201050858834,201284816199,201224186293,201276530062',
         'dse_minutes_per_reel'     => '20',
         'dse_minutes_per_podcast'  => '120',   // حلقة البودكاست أقصاها ساعتين في الاستوديو
@@ -345,7 +347,7 @@ function dse_studio_default_options()
 
 if (!defined('DSE_STUDIO_SCHEMA_VERSION')) {
 /** نسخة الجداول — زوّدها مع أي جدول جديد */
-    define('DSE_STUDIO_SCHEMA_VERSION', '14');
+    define('DSE_STUDIO_SCHEMA_VERSION', '15');
 }
 
 if (!function_exists('dse_studio_ensure_schema')) {

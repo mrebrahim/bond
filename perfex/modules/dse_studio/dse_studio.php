@@ -5,7 +5,7 @@ defined('BASEPATH') or exit('No direct script access allowed');
 /*
 Module Name: Digital Solution — الاستوديو والباقات
 Description: رصيد الباقات، حجز الاستوديو، السكربتات والنشر، جروبات واتساب العملاء (Evolution API)، وتنبيه العميل اللي مابيصوّرش.
-Version: 1.9.2
+Version: 1.9.3
 Requires at least: 3.0.*
 Author: Digital Solution
 */
@@ -22,6 +22,7 @@ register_cron_task('dse_studio_cron');
 
 hooks()->add_action('admin_init', 'dse_studio_admin_init');
 hooks()->add_action('app_admin_footer', 'dse_studio_date_inputs');
+hooks()->add_action('app_admin_footer', 'dse_studio_wa_banner');
 
 function dse_studio_activation_hook()
 {
@@ -102,6 +103,10 @@ function dse_studio_cron()
     $CI->dse_studio_model->evo = $CI->dse_evolution;
 
     try {
+        $wa = $CI->dse_studio_model->wa_health_check(); // الرقم خرج / الرسايل بتفشل ← تنبيه للأدمن
+        if ($wa) {
+            dse_studio_notify_staff($wa);
+        }
         $CI->dse_studio_model->resolve_pending_groups(5); // لينكات جروبات اتحفظت ولسه مااتربطتش
         $CI->dse_studio_model->process_outbox(10);
     } catch (Exception $e) {
@@ -141,6 +146,8 @@ function dse_studio_notify_staff(array $alert_ids)
         'package_ending'  => 'باقة هتخلص قريب',
         'renewal_due'     => 'باقة خلصت ومجددش',
         'installment_due' => 'ميعاد قسط',
+        'wa_down'         => 'واتساب السيستم وقف — الرسايل مش بتتبعت',
+        'wa_up'           => 'واتساب السيستم رجع يشتغل',
     ];
 
     foreach (array_unique($alert_ids) as $aid) {
@@ -148,8 +155,9 @@ function dse_studio_notify_staff(array $alert_ids)
         if (!$a) {
             continue;
         }
-        $opt   = in_array($a['alert_key'], ['payment_due', 'installment_due'], true) ? 'dse_payment_notify_staff_ids'
-            : (in_array($a['alert_key'], ['client_inactive', 'no_content', 'package_ending', 'renewal_due'], true) ? 'dse_content_notify_staff_ids' : 'dse_notify_staff_ids');
+        $opt   = in_array($a['alert_key'], ['wa_down', 'wa_up'], true) ? 'dse_wa_alert_staff_ids'
+            : (in_array($a['alert_key'], ['payment_due', 'installment_due'], true) ? 'dse_payment_notify_staff_ids'
+            : (in_array($a['alert_key'], ['client_inactive', 'no_content', 'package_ending', 'renewal_due'], true) ? 'dse_content_notify_staff_ids' : 'dse_notify_staff_ids'));
         $ids   = array_filter(array_map('intval', preg_split('/[\s,;]+/', (string) get_option($opt))));
         $where = $ids ? 'staffid IN (' . implode(',', $ids) . ')' : 'admin = 1';
         $staff = $CI->db->query('SELECT staffid, email FROM ' . db_prefix() . 'staff WHERE active = 1 AND ' . $where)->result_array();
@@ -240,3 +248,27 @@ function dse_studio_date_inputs()
 JS;
 }
 
+
+
+/** بانر أحمر فوق صفحات الموديول لو الواتساب واقف (أو لسه بيبعت المتراكم بالراحة) */
+function dse_studio_wa_banner()
+{
+    $uri = $_SERVER['REQUEST_URI'] ?? '';
+    if (strpos($uri, '/dse_studio') === false || !is_staff_logged_in()) {
+        return;
+    }
+    $CI = &get_instance();
+    $CI->load->model(DSE_STUDIO_MODULE_NAME . '/dse_studio_model');
+    $h = $CI->dse_studio_model->wa_health();
+    if (!$h) {
+        return;
+    }
+    $html = $h['down']
+        ? '<b>📵 واتساب السيستم مش بيبعت رسايل</b> من ' . html_escape(date('d/m/Y H:i', strtotime($h['since']))) . ' — ' . html_escape($h['error'])
+          . ' · ' . (int) $h['queued'] . ' رسالة مستنية. <a href="' . admin_url('dse_studio/settings') . '">الإعدادات</a>'
+        : '<b>✅ الواتساب رجع</b> — ' . (int) $h['queued'] . ' رسالة مستنية بتتبعت واحدة كل ' . (int) $h['gap'] . ' دقيقة.';
+    $style = $h['down'] ? 'background:#fef2f2;border:1px solid #fca5a5;color:#991b1b' : 'background:#f0fdf4;border:1px solid #86efac;color:#166534';
+    echo '<script>(function(){var c=document.querySelector("#wrapper .content");if(!c){return;}var d=document.createElement("div");d.setAttribute("style",'
+        . json_encode($style . ';border-radius:8px;padding:10px 14px;margin-bottom:12px;direction:rtl') . ');d.innerHTML=' . json_encode($html, JSON_UNESCAPED_UNICODE)
+        . ';c.insertBefore(d,c.firstChild);})();</script>';
+}
