@@ -129,7 +129,7 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
               </div>
 
               <?php $insts = $pkg_installments[$p['id']] ?? []; $ist = ['paid' => ['✅ اتدفع', 'success'], 'partial' => ['جزء اتدفع', 'info'], 'due' => ['💵 النهارده', 'warning'], 'overdue' => ['متأخر', 'danger'], 'upcoming' => ['لسه', 'default']]; ?>
-              <?php if ($insts || ($can_pkg && $p['status'] !== 'cancelled' && empty($p['historic']) && $p['price'] - $paidv > 0.5)) { ?>
+              <?php if ($insts || ($can_pkg && $p['status'] !== 'cancelled' && $p['price'] - $paidv > 0.5)) { ?>
                 <div class="small mtop5"><b>📅 مواعيد الأقساط<?= $insts ? ' (' . count($insts) . ')' : ''; ?>:</b>
                   <?php foreach ($insts as $x) { $sx = $ist[$x['state']]; ?>
                     <div><?= dse_day($x['due_date']); ?> — <b><?= dse_money($x['amount']); ?></b>
@@ -139,7 +139,7 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                       <?php if ($can_pkg) { ?><?= form_open(admin_url('dse_studio/installments/' . $p['id'] . '/delete'), ['class' => 'inline-block', 'onsubmit' => "return confirm('تشيل ميعاد القسط ده؟')"]); ?><input type="hidden" name="id" value="<?= (int) $x['id']; ?>"><button class="btn btn-link btn-xs text-danger">✕</button><?= form_close(); ?><?php } ?>
                     </div>
                   <?php } ?>
-                  <?php if ($can_pkg && $p['status'] !== 'cancelled' && empty($p['historic'])) { ?>
+                  <?php if ($can_pkg && $p['status'] !== 'cancelled') { ?>
                     <details class="dse-box dse-box-sm"><summary>➕ حط ميعاد قسط (هيجيلكم تنبيه يومها)</summary>
                       <?= form_open(admin_url('dse_studio/installments/' . $p['id'] . '/add'), ['class' => 'form-inline']); ?>
                         <input type="date" name="due_date" class="form-control input-sm" required>

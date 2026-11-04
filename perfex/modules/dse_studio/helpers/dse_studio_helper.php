@@ -435,6 +435,8 @@ function dse_churn_select($name = 'reason', $with_mistake = true)
 function dse_specialties()
 {
     return [
+        'clinic'     => 'عيادات / مركز طبي (أكتر من تخصص)',
+        'hospital'   => 'مستشفى',
         'dentist'    => 'دكتور أسنان',
         'gyn'        => 'دكتور نسا وتوليد',
         'derma'      => 'دكتور جلدية وتجميل',
