@@ -429,3 +429,42 @@ function dse_churn_select($name = 'reason', $with_mistake = true)
     return $h . '</select>';
 }
 
+
+
+/** تخصص العميل — المعظم دكاترة + تخصصات تانية + أخرى (بيتكتب) */
+function dse_specialties()
+{
+    return [
+        'dentist'    => 'دكتور أسنان',
+        'gyn'        => 'دكتور نسا وتوليد',
+        'derma'      => 'دكتور جلدية وتجميل',
+        'plastic'    => 'دكتور جراحة تجميل',
+        'pediatric'  => 'دكتور أطفال',
+        'ortho'      => 'دكتور عظام',
+        'physio'     => 'علاج طبيعي',
+        'nutrition'  => 'دكتور تغذية / سمنة',
+        'internal'   => 'دكتور باطنة',
+        'cardio'     => 'دكتور قلب',
+        'ent'        => 'دكتور أنف وأذن',
+        'ophtha'     => 'دكتور رمد',
+        'urology'    => 'دكتور مسالك',
+        'neuro'      => 'دكتور مخ وأعصاب',
+        'psych'      => 'دكتور نفسي',
+        'ivf'        => 'دكتور حقن مجهري',
+        'clothes'    => 'تاجر ملابس',
+        'hair'       => 'Hair stylist',
+        'makeup'     => 'Makeup artist',
+        'other'      => 'أخرى',
+    ];
+}
+
+function dse_specialty_label($key, $other = null)
+{
+    if (!$key) {
+        return '';
+    }
+    if ($key === 'other') {
+        return trim((string) $other) !== '' ? trim((string) $other) : 'أخرى';
+    }
+    return dse_specialties()[$key] ?? $key;
+}

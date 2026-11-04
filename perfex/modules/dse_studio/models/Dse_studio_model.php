@@ -93,6 +93,9 @@ class Dse_studio_model extends App_Model
         $c['wa_group_jid']  = $x['wa_group_jid'] ?? null;
         $c['wa_group_link'] = $x['wa_group_link'] ?? null;
         $c['wa_link_error'] = $x['wa_link_error'] ?? null;
+        $c['specialty']       = $x['specialty'] ?? null;
+        $c['specialty_other'] = $x['specialty_other'] ?? null;
+        $c['specialty_label'] = dse_specialty_label($c['specialty'], $c['specialty_other']);
         return $c;
     }
 
@@ -105,6 +108,22 @@ class Dse_studio_model extends App_Model
         } else {
             $this->db->insert($this->tbl('dse_clients'), array_merge(['clientid' => (int) $clientid], $data));
         }
+    }
+
+    /** تخصص العميل: من القايمة، أو "أخرى" + التخصص مكتوب */
+    public function set_specialty($clientid, $key, $other = null)
+    {
+        $this->ensure_renewal_columns();
+        $this->client($clientid);
+        $key   = trim((string) $key);
+        $other = mb_substr(trim((string) $other), 0, 80);
+        if ($key !== '' && !isset(dse_specialties()[$key])) {
+            throw new Exception('اختار التخصص من القايمة');
+        }
+        if ($key === 'other' && $other === '') {
+            throw new Exception('اكتب التخصص (اخترت "أخرى")');
+        }
+        $this->save_client_wa($clientid, ['specialty' => $key ?: null, 'specialty_other' => $key === 'other' ? $other : null]);
     }
 
     public function set_wa_phone($clientid, $phone)
@@ -2577,6 +2596,16 @@ class Dse_studio_model extends App_Model
         if (array_key_exists('script', $d)) {
             $row['script'] = trim((string) $d['script']) ?: null;
         }
+        if (array_key_exists('viral', $d)) {
+            $row['viral'] = (string) $d['viral'] === '1' ? 1 : 0;
+        }
+        if (array_key_exists('views', $d)) {
+            $v = preg_replace('/[^\d]/', '', (string) $d['views']);
+            $row['views'] = $v === '' ? null : (int) $v;
+        }
+        if (!empty($row['viral']) && trim((string) ($row['topic'] ?? $old['topic'] ?? '')) === '') {
+            throw new Exception('اكتب الموضوع قبل ما تعلّمه Viral');
+        }
         if (in_array($status, ['script', 'review', 'approved', 'filmed', 'published'], true) && trim((string) ($row['topic'] ?? $old['topic'] ?? '')) === '') {
             throw new Exception('اكتب الموضوع الأول');
         }
@@ -2598,6 +2627,68 @@ class Dse_studio_model extends App_Model
             'created_by' => $this->staff_id(), 'created_at' => $this->now(),
         ]);
         return (int) $this->db->insert_id();
+    }
+
+    /**
+     * مكتبة المواضيع والسكربتات اللي عملت viral — بتخصص العميل.
+     * $specialty: مفتاح من dse_specialties ('' = الكل) · $type: reel/… ('' = الكل) · $q: بحث في الموضوع/الهوك/السكربت
+     */
+    public function content_library($specialty = '', $type = '', $q = '', $limit = 200)
+    {
+        $this->ensure_renewal_columns();
+        $sql = 'SELECT i.*, ' . $this->name_sql('c') . ' AS company, x.specialty, x.specialty_other FROM ' . $this->tbl('dse_content_items') . ' i
+                  JOIN ' . $this->tbl('clients') . ' c ON c.userid = i.clientid
+                  LEFT JOIN ' . $this->tbl('dse_clients') . ' x ON x.clientid = i.clientid
+                 WHERE i.viral = 1';
+        $b = [];
+        if ($specialty === 'none') {
+            $sql .= " AND (x.specialty IS NULL OR x.specialty = '')";
+        } elseif ($specialty !== '') {
+            $sql .= ' AND x.specialty = ?';
+            $b[]  = $specialty;
+        }
+        if ($type !== '') {
+            $sql .= ' AND i.type = ?';
+            $b[]  = $type;
+        }
+        if (trim($q) !== '') {
+            $sql .= ' AND (i.topic LIKE ? OR i.hook LIKE ? OR i.script LIKE ?)';
+            $like = '%' . trim($q) . '%';
+            array_push($b, $like, $like, $like);
+        }
+        $rows = $this->rows($sql . ' ORDER BY i.views IS NULL, i.views DESC, i.publish_date DESC, i.id DESC LIMIT ' . (int) $limit, $b);
+        foreach ($rows as &$r) {
+            $r['specialty_label'] = dse_specialty_label($r['specialty'], $r['specialty_other']);
+        }
+        return $rows;
+    }
+
+    /** عدد الـ viral لكل تخصص (لأزرار الفلتر) */
+    public function library_counts()
+    {
+        $this->ensure_renewal_columns();
+        $out = [];
+        foreach ($this->rows('SELECT COALESCE(x.specialty, \'\') AS sp, COUNT(*) AS n FROM ' . $this->tbl('dse_content_items') . ' i LEFT JOIN ' . $this->tbl('dse_clients') . ' x ON x.clientid = i.clientid WHERE i.viral = 1 GROUP BY COALESCE(x.specialty, \'\')') as $r) {
+            $out[$r['sp'] === '' ? 'none' : $r['sp']] = (int) $r['n'];
+        }
+        return $out;
+    }
+
+    /** خد موضوع من المكتبة لخطة عميل (نسخة جديدة "فكرة" — الـ viral مش بيتنسخ لحد ما يثبت نفسه) */
+    public function copy_from_library($item_id, $plan_id, $publish_date)
+    {
+        $src = $this->content_item($item_id);
+        if (!(int) $src['viral']) {
+            throw new Exception('الموضوع ده مش في المكتبة');
+        }
+        $plan = $this->row('SELECT * FROM ' . $this->tbl('dse_content_plans') . ' WHERE id = ?', [(int) $plan_id]);
+        $id   = $this->save_content_item($plan_id, [
+            'publish_date' => $publish_date, 'type' => $src['type'], 'pillar' => $src['pillar'], 'status' => trim((string) $src['script']) !== '' ? 'script' : 'idea',
+            'topic' => $src['topic'], 'hook' => (string) $src['hook'], 'script' => (string) $src['script'],
+            'cta' => $plan && $plan['cta'] ? '' : (string) $src['cta'], // CTA الشهر بتاع العميل الجديد أولى
+            'notes' => 'من المكتبة 🔥 (' . mb_substr((string) $this->client($src['clientid'])['company'], 0, 60) . ')',
+        ]);
+        return $id;
     }
 
     public function delete_content_item($id)
@@ -3104,7 +3195,9 @@ class Dse_studio_model extends App_Model
     private function ensure_renewal_columns()
     {
         if (!self::$renewal_cols_checked && function_exists('dse_studio_add_missing_columns') && function_exists('get_instance')) {
-            dse_studio_add_missing_columns(['dse_clients' => ['renewal_status', 'renewal_note', 'renewal_updated_at', 'wa_link_error'], 'dse_packages' => ['historic', 'grace_days'], 'dse_posts' => ['scheduled']]);
+            dse_studio_add_missing_columns(['dse_clients' => ['renewal_status', 'renewal_note', 'renewal_updated_at', 'wa_link_error'], 'dse_packages' => ['historic', 'grace_days'], 'dse_posts' => ['scheduled'],
+                'dse_content_items' => ['viral', 'views']]);
+            dse_studio_add_missing_columns(['dse_clients' => ['specialty', 'specialty_other']]); // 1.9.5
             $CI = &get_instance();
             foreach (['dse_publish_slots', 'dse_content_plans', 'dse_content_items', 'dse_package_services', 'dse_package_installments', 'dse_churn'] as $t) { // جداول اتضافت بعد كده
                 if (is_object($CI) && isset($CI->db) && !$CI->db->table_exists($this->tbl($t))) {

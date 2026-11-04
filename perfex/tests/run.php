@@ -865,6 +865,39 @@ test('كالندر المحتوى: هدف الشهر + CTA · المواضيع �
     $m->fixed_time = $save;
 });
 
+test('تخصص العميل + علامة Viral + مكتبة الـ viral بالتخصص + خد الموضوع لعميل تاني', function () use ($m, $db) {
+    [$c, , $p] = $GLOBALS['media'];
+    throws(function () use ($m, $c) { $m->set_specialty($c, 'astronaut'); }, 'اختار التخصص');
+    throws(function () use ($m, $c) { $m->set_specialty($c, 'other', ''); }, 'اكتب التخصص');
+    $m->set_specialty($c, 'dentist');
+    ok($m->client($c)['specialty_label'] === 'دكتور أسنان');
+    $items = $m->content_items($p['id']);
+    $v = (int) $items[0]['id'];
+    throws(function () use ($m, $p, $items) { $m->save_content_item($p['id'], ['viral' => '1'], (int) $items[1]['id']); }, 'اكتب الموضوع قبل');
+    $m->save_content_item($p['id'], ['viral' => '1', 'views' => '250,000'], $v);
+    ok((int) $m->content_item($v)['viral'] === 1 && (int) $m->content_item($v)['views'] === 250000);
+    // عميل تاني: أسنان برضه · وعميلة hair stylist بتخصص "أخرى"
+    $db->insert('tblclients', ['company' => 'د. كريم للأسنان']); $c2 = $db->insert_id();
+    $m->set_specialty($c2, 'dentist');
+    $db->insert('tblclients', ['company' => 'سارة ميكب']); $c3 = $db->insert_id();
+    $m->set_specialty($c3, 'other', 'Nail artist');
+    ok($m->client($c3)['specialty_label'] === 'Nail artist');
+    $lib = $m->content_library('dentist');
+    ok(count($lib) === 1 && $lib[0]['topic'] === '3 غلطات في تنضيف السنان' && $lib[0]['specialty_label'] === 'دكتور أسنان', json_encode($lib, JSON_UNESCAPED_UNICODE));
+    ok($m->content_library('gyn') === [] && count($m->content_library('', 'reel', 'سنانك')) === 1 && $m->content_library('', 'design') === []);
+    ok(($m->library_counts()['dentist'] ?? 0) === 1);
+    $p2 = $m->content_plan($c2, '2026-11', true);
+    $nid = $m->copy_from_library($v, $p2['id'], '2026-11-20');
+    $n = $m->content_item($nid);
+    ok($n['topic'] === '3 غلطات في تنضيف السنان' && $n['script'] !== '' && $n['status'] === 'script' && (int) $n['viral'] === 0 && (int) $n['clientid'] === $c2 && strpos($n['notes'], 'من المكتبة') === 0, json_encode($n, JSON_UNESCAPED_UNICODE));
+    throws(function () use ($m, $nid, $p2) { $m->copy_from_library($nid, $p2['id'], '2026-11-21'); }, 'مش في المكتبة');
+    // الإلغاء: بيطلع من المكتبة
+    $m->save_content_item($p['id'], ['viral' => '0'], $v);
+    ok($m->content_library('dentist') === []);
+    $m->save_content_item($p['id'], ['viral' => '1'], $v);
+    $GLOBALS['viral'] = [$c2, $p2];
+});
+
 test('خدمات الباقة: إعلانات ممولة (ميزانية + أتعاب بالجنيه) · ويب سايت / أبلكيشن / أوتوميشن · باقة خدمات بس · ترقية · التجديد بياخد الإعلانات بس', function () use ($m, $db) {
     $save = $m->fixed_time;
     $m->fixed_time = strtotime('2026-11-02 10:00:00');
@@ -1236,6 +1269,15 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
     $mv = render('media', ['month' => '2026-11', 'rows' => $m->content_overview('2026-11')]);
     $mpv = render('media_plan', ['client' => $mcl, 'month' => '2026-11', 'plan' => $mp, 'items' => $mi, 'summary' => $m->content_summary($mp, $mi), 'slots' => $m->publish_slots($mc), 'clients' => $m->content_overview('2026-11'), 'open' => (int) $mi[0]['id']]);
     file_put_contents(sys_get_temp_dir() . '/dse_media_plan.html', $mpv);
+    [$vc2, $vp2] = $GLOBALS['viral'];
+    $vcl = $m->client($vc2); $vi = $m->content_items($vp2['id']);
+    $lp = render('media_plan', ['client' => $vcl, 'month' => '2026-11', 'plan' => $vp2, 'items' => $vi, 'summary' => $m->content_summary($vp2, $vi), 'slots' => [], 'clients' => [], 'open' => 0,
+        'library' => $m->content_library('dentist')]);
+    ok(strpos($lp, 'مواضيع عملت viral لنفس التخصص (دكتور أسنان) · 1') !== false && strpos($lp, 'خده للشهر ده') !== false && strpos($lp, 'name="viral"') !== false, 'اقتراحات الـ viral في الكالندر');
+    ok(strpos($mpv, '🔥 Viral · 250,000') !== false, 'علامة الـ viral');
+    $lv = render('library', ['specialty' => 'dentist', 'type' => '', 'q' => '', 'rows' => $m->content_library('dentist'), 'counts' => $m->library_counts()]);
+    file_put_contents(sys_get_temp_dir() . '/dse_library.html', $lv);
+    ok(strpos($lv, 'دكتور أسنان (1)') !== false && strpos($lv, '250,000 مشاهدة') !== false && strpos($lv, 'انسخ السكربت') !== false, 'صفحة المكتبة');
     file_put_contents(sys_get_temp_dir() . '/dse_media.html', $mv);
     ok(strpos($mv, 'عيادة د. منى') !== false && strpos($mv, 'افتح الكالندر') !== false, 'صفحة الميديا');
     ok(strpos($mpv, 'هدف الشهر') !== false && strpos($mpv, 'وصلنا 80%') !== false && strpos($mpv, 'مانوال السكربت') !== false && strpos($mpv, '3 غلطات في تنضيف السنان') !== false && strpos($mpv, 'املا الشهر من مواعيد التنزيل') !== false && substr_count($mpv, 'class="panel_s dse-item"') === 13 && strpos($mpv, 'action="/admin/dse_studio/media_plan/' . $mc . '?month=2026-11"') !== false, 'كالندر العميل');
@@ -1373,7 +1415,7 @@ test('السيرفر بنسخة قديمة من الداتابيز (من غير 
     Dse_studio_model::$renewal_cols_checked = false; // طلب جديد
     $rows = $m->renewals('');
     ok($db->field_exists('renewal_status', 'tbldse_clients') && $db->field_exists('renewal_updated_at', 'tbldse_clients') && is_array($rows), 'اتضافت');
-    ok(dse_studio_add_missing_columns() === [], 'مفيش حاجة ناقصة تاني');
+    $miss = dse_studio_add_missing_columns(); ok($miss === [], json_encode($miss));
 });
 echo "\n$passed passed · $failed failed\n";
 exit($failed ? 1 : 0);

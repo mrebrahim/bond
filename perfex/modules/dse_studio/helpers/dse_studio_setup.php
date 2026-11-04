@@ -24,6 +24,8 @@ function dse_studio_schema()
                 '`renewal_status` VARCHAR(20) NULL',
                 '`renewal_note` VARCHAR(255) NULL',
                 '`renewal_updated_at` DATETIME NULL',
+                '`specialty` VARCHAR(30) NULL',        // dentist / gyn / … / other (dse_specialties)
+                '`specialty_other` VARCHAR(80) NULL',  // لو "أخرى": التخصص مكتوب
                 '`updated_at` DATETIME NULL',
             ],
             'indexes' => [],
@@ -224,6 +226,8 @@ function dse_studio_schema()
                 "`status` VARCHAR(20) NOT NULL DEFAULT 'idea'",
                 '`post_url` VARCHAR(500) NULL',
                 '`notes` VARCHAR(255) NULL',
+                '`viral` TINYINT NOT NULL DEFAULT 0',  // 🔥 الموضوع/السكربت ده عمل viral ← بيدخل المكتبة
+                '`views` INT NULL',                     // كام مشاهدة (اختياري)
                 '`created_by` INT NULL',
                 '`created_at` DATETIME NOT NULL',
                 '`updated_at` DATETIME NULL',
@@ -347,7 +351,7 @@ function dse_studio_default_options()
 
 if (!defined('DSE_STUDIO_SCHEMA_VERSION')) {
 /** نسخة الجداول — زوّدها مع أي جدول جديد */
-    define('DSE_STUDIO_SCHEMA_VERSION', '16');
+    define('DSE_STUDIO_SCHEMA_VERSION', '17');
 }
 
 if (!function_exists('dse_studio_ensure_schema')) {

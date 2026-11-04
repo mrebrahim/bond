@@ -4,7 +4,7 @@
 <div id="wrapper"><div class="content">
   <div class="panel_s"><div class="panel-body">
     <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between">
-      <h4 class="tw-font-semibold" style="margin:0">📅 كالندر المحتوى — <?= html_escape($month); ?></h4>
+      <h4 class="tw-font-semibold" style="margin:0">📅 كالندر المحتوى — <?= html_escape($month); ?> <a class="btn btn-danger btn-xs" href="<?= admin_url('dse_studio/library'); ?>">🔥 مكتبة الـ Viral</a></h4>
       <div><a class="btn btn-default btn-sm" href="?month=<?= $prev; ?>">→ <?= $prev; ?></a> <a class="btn btn-default btn-sm" href="?month=<?= date('Y-m'); ?>">الشهر ده</a> <a class="btn btn-default btn-sm" href="?month=<?= $next; ?>"><?= $next; ?> ←</a></div>
     </div>
     <p class="text-muted" style="margin:8px 0 0">لكل عميل: هدف واحد للشهر برقم نقيسه ← المواضيع بتواريخها (من مواعيد التنزيل) ← السكربت لكل موضوع بالـ CTA اللي بيخدم الهدف ← آخر الشهر نكتب النتيجة ونشوف وصلنا ولا لأ.</p>

@@ -15,6 +15,17 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
           <?= html_escape($client['company']); ?> <small><?= $client['code']; ?></small>
           <a class="btn btn-default btn-sm pull-left" href="<?= admin_url('clients/client/' . $cid); ?>">ملف العميل في Perfex</a>
         </h4>
+        <?php $spx = $client['specialty'] ?? ''; ?>
+        <?= form_open(admin_url('dse_studio/specialty/' . $cid), ['class' => 'form-inline mbot10']); ?>
+          <label class="small">التخصص:</label>
+          <select name="specialty" class="form-control input-sm" onchange="var o=this.form.querySelector('[name=specialty_other]');o.style.display=this.value==='other'?'':'none';o.required=this.value==='other'" <?= $can_book ? '' : 'disabled'; ?>>
+            <option value="">— اختار —</option>
+            <?php foreach (dse_specialties() as $k => $l) { ?><option value="<?= $k; ?>" <?= $spx === $k ? 'selected' : ''; ?>><?= html_escape($l); ?></option><?php } ?>
+          </select>
+          <input name="specialty_other" value="<?= html_escape((string) ($client['specialty_other'] ?? '')); ?>" placeholder="اكتب التخصص" class="form-control input-sm" style="<?= $spx === 'other' ? '' : 'display:none'; ?>" <?= $spx === 'other' ? 'required' : ''; ?>>
+          <?php if ($can_book) { ?><button class="btn btn-default btn-sm">احفظ</button><?php } ?>
+          <?php if ($spx) { ?><a class="small" href="<?= admin_url('dse_studio/library?specialty=' . $spx); ?>">🔥 مواضيع viral لـ <?= html_escape($client['specialty_label']); ?></a><?php } else { ?><span class="small text-warning">حط التخصص عشان مكتبة الـ viral تشتغل</span><?php } ?>
+        <?= form_close(); ?>
       </div>
 
       <!-- ===== الرصيد ===== -->

@@ -13,7 +13,7 @@ $cid      = (int) $client['userid'];
 $self     = $base . '?month=' . $month; // form_open($self) في CI بيروح للصفحة الرئيسية — لازم الـ URL كامل
 $item_form = function ($it) use ($plan, $pillars, $statuses, $ptypes, $month, $self) {
     $new = !$it;
-    $it  = $it ?: ['id' => '', 'publish_date' => date('Y-m') === $month ? date('Y-m-d') : $month . '-01', 'type' => 'reel', 'pillar' => 'educational', 'status' => 'idea', 'topic' => '', 'hook' => '', 'cta' => '', 'script' => '', 'post_url' => '', 'notes' => ''];
+    $it  = $it ?: ['id' => '', 'publish_date' => date('Y-m') === $month ? date('Y-m-d') : $month . '-01', 'type' => 'reel', 'pillar' => 'educational', 'status' => 'idea', 'topic' => '', 'hook' => '', 'cta' => '', 'script' => '', 'post_url' => '', 'notes' => '', 'viral' => 0, 'views' => null];
     ob_start(); ?>
     <?= form_open($self, ['class' => 'dse-item-form']); ?>
       <input type="hidden" name="action" value="item"><input type="hidden" name="id" value="<?= html_escape((string) $it['id']); ?>">
@@ -29,6 +29,8 @@ $item_form = function ($it) use ($plan, $pillars, $statuses, $ptypes, $month, $s
         <div class="col-xs-12 form-group"><label>السكربت <span class="small text-muted dse-wc"></span></label><textarea name="script" class="form-control dse-script" rows="8" placeholder="الهوك ← المشكلة ← المعلومة / الحل ← الدليل ← الـ CTA"><?= html_escape((string) $it['script']); ?></textarea></div>
         <div class="col-xs-12 col-sm-8 form-group"><label>لينك البوست (لما ينزل)</label><input name="post_url" value="<?= html_escape((string) $it['post_url']); ?>" class="form-control" dir="ltr" placeholder="https://..."></div>
         <div class="col-xs-12 col-sm-4 form-group"><label>ملاحظات</label><input name="notes" value="<?= html_escape((string) $it['notes']); ?>" class="form-control"></div>
+        <div class="col-xs-6 col-sm-4 form-group"><label>عمل Viral؟</label><select name="viral" class="form-control"><option value="0">لأ</option><option value="1" <?= !empty($it['viral']) ? 'selected' : ''; ?>>🔥 أيوه Viral — يدخل المكتبة</option></select></div>
+        <div class="col-xs-6 col-sm-4 form-group"><label>عدد المشاهدات (اختياري)</label><input type="number" min="0" name="views" value="<?= html_escape((string) ($it['views'] ?? '')); ?>" class="form-control" dir="ltr" placeholder="250000"></div>
         <?php } ?>
       </div>
       <button class="btn btn-primary btn-sm"><?= $new ? '➕ ضيف الموضوع' : 'احفظ'; ?></button>
@@ -119,6 +121,7 @@ $item_form = function ($it) use ($plan, $pillars, $statuses, $ptypes, $month, $s
             <span><?= $ptypes[$it['type']]['label'] ?? $it['type']; ?></span>
             <span class="small text-muted"><?= $pillars[$it['pillar']] ?? ''; ?></span>
             <span style="flex:1 1 200px"><?= trim($it['topic']) !== '' ? html_escape($it['topic']) : '<span class="text-danger">✏️ اكتب الموضوع</span>'; ?></span>
+            <?= !empty($it['viral']) ? '<span class="label label-danger">🔥 Viral' . ($it['views'] ? ' · ' . number_format((int) $it['views']) : '') . '</span>' : ''; ?>
             <span class="label label-<?= $st[1]; ?>"><?= $st[0]; ?></span>
           </summary>
           <div class="panel-body" style="border-top:1px solid #eee">
@@ -137,6 +140,30 @@ $item_form = function ($it) use ($plan, $pillars, $statuses, $ptypes, $month, $s
           </div>
         </details>
       <?php } ?>
+
+      <details class="panel_s" id="viral-lib">
+        <summary class="panel-body bold" style="cursor:pointer">🔥 مواضيع عملت viral لنفس التخصص<?= !empty($client['specialty']) ? ' (' . html_escape($client['specialty_label']) . ') · ' . count($library ?? []) : ''; ?></summary>
+        <div class="panel-body" style="border-top:1px solid #eee">
+          <?php if (empty($client['specialty'])) { ?>
+            <p class="text-warning">العميل مالوش تخصص — حطه من <a href="<?= admin_url('dse_studio/client/' . $cid); ?>">بروفايله</a> (دكتور أسنان / نسا وتوليد / …) وهتظهر هنا المواضيع اللي عملت viral لعملاء نفس التخصص.</p>
+          <?php } elseif (empty($library)) { ?>
+            <p class="text-muted">لسه مفيش مواضيع viral لـ <?= html_escape($client['specialty_label']); ?> عند عملاء تانيين. لما موضوع يكسّر علّمه "🔥 Viral" وهيظهر هنا للباقي.</p>
+          <?php } else { foreach ($library as $lb) { ?>
+            <div style="border-bottom:1px solid #f1f1f1;padding:8px 0">
+              <b><?= html_escape($lb['topic']); ?></b>
+              <span class="small text-muted">· <?= $ptypes[$lb['type']]['label'] ?? $lb['type']; ?> · <?= html_escape($lb['company']); ?><?= $lb['views'] ? ' · 👁 ' . number_format((int) $lb['views']) : ''; ?></span>
+              <?php if ($lb['hook']) { ?><div class="small">🎣 <?= html_escape($lb['hook']); ?></div><?php } ?>
+              <?php if ($lb['script']) { ?><details class="small"><summary>السكربت</summary><div style="white-space:pre-wrap"><?= html_escape($lb['script']); ?></div></details><?php } ?>
+              <?= form_open($self, ['class' => 'form-inline mtop5']); ?>
+                <input type="hidden" name="action" value="from_library"><input type="hidden" name="item_id" value="<?= (int) $lb['id']; ?>">
+                <input type="date" name="publish_date" value="<?= date('Y-m') === $month ? date('Y-m-d') : $month . '-01'; ?>" min="<?= $month; ?>-01" max="<?= date('Y-m-t', strtotime($month . '-01')); ?>" class="form-control input-sm" required>
+                <button class="btn btn-default btn-xs">➕ خده للشهر ده</button>
+              <?= form_close(); ?>
+            </div>
+          <?php } } ?>
+          <a class="small" href="<?= admin_url('dse_studio/library' . (!empty($client['specialty']) ? '?specialty=' . $client['specialty'] : '')); ?>">افتح المكتبة كلها ←</a>
+        </div>
+      </details>
 
       <details class="panel_s" <?= $items ? '' : 'open'; ?>>
         <summary class="panel-body bold" style="cursor:pointer">➕ ضيف موضوع</summary>

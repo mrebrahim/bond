@@ -5,7 +5,7 @@ defined('BASEPATH') or exit('No direct script access allowed');
 /*
 Module Name: Digital Solution — الاستوديو والباقات
 Description: رصيد الباقات، حجز الاستوديو، السكربتات والنشر، جروبات واتساب العملاء (Evolution API)، وتنبيه العميل اللي مابيصوّرش.
-Version: 1.9.4
+Version: 1.9.5
 Requires at least: 3.0.*
 Author: Digital Solution
 */
@@ -53,6 +53,9 @@ function dse_studio_admin_init()
         $CI->app_menu->add_sidebar_menu_item('dse-studio-media', [
             'name' => _l('dse_menu_media'), 'href' => admin_url('dse_studio/media'), 'position' => 6, 'icon' => 'fa fa-calendar',
         ]);
+        $CI->app_menu->add_sidebar_menu_item('dse-studio-library', [
+            'name' => _l('dse_menu_library'), 'href' => admin_url('dse_studio/library'), 'position' => 6, 'icon' => 'fa fa-fire',
+        ]);
     }
     if (staff_can('view', DSE_STUDIO_MODULE_NAME)) {
         $CI->app_menu->add_sidebar_menu_item('dse-studio', [
@@ -65,6 +68,7 @@ function dse_studio_admin_init()
             ['dse-studio-home', 'dse_menu_home', 'dse_studio', 1],
             ['dse-studio-calendar', 'dse_menu_calendar', 'dse_studio/calendar', 2],
             ['dse-studio-media', 'dse_menu_media', 'dse_studio/media', 2],
+            ['dse-studio-library', 'dse_menu_library', 'dse_studio/library', 2],
             ['dse-studio-publish', 'dse_menu_publish', 'dse_studio/publishing', 2],
             ['dse-studio-alerts', 'dse_menu_alerts', 'dse_studio/alerts', 3],
             ['dse-studio-renewals', 'dse_menu_renewals', 'dse_studio/renewals', 3],

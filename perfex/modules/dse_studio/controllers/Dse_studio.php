@@ -570,6 +570,11 @@ class Dse_studio extends AdminController
                         set_alert('success', 'الموضوع اتحفظ');
                         $back .= '#item-' . $id;
                         break;
+                    case 'from_library':
+                        $id = $m->copy_from_library((int) $this->input->post('item_id'), $plan['id'], (string) $this->input->post('publish_date'));
+                        set_alert('success', 'الموضوع اتنسخ من المكتبة — راجع السكربت وظبّطه للعميل');
+                        $back .= '#item-' . $id;
+                        break;
                     case 'delete':
                         $m->delete_content_item((int) $this->input->post('id'));
                         set_alert('success', 'الموضوع اتمسح');
@@ -587,6 +592,7 @@ class Dse_studio extends AdminController
             'title' => 'كالندر ' . $client['company'], 'client' => $client, 'month' => $month, 'plan' => $plan, 'items' => $items,
             'summary' => $plan ? $m->content_summary($plan, $items) : null, 'slots' => $m->publish_slots($clientid),
             'clients' => $m->content_overview($month), 'open' => (int) $this->input->get('item'),
+            'library' => $client['specialty'] ? array_values(array_filter($m->content_library($client['specialty'], '', '', 30), function ($r) use ($clientid) { return (int) $r['clientid'] !== (int) $clientid; })) : [],
         ]);
     }
 
@@ -656,6 +662,32 @@ class Dse_studio extends AdminController
                 ? 'اتسجل إنه متجدول ' . dse_day(str_replace('T', ' ', $at)) . ' الساعة ' . dse_time(str_replace('T', ' ', $at)) . ' — والعميل اتبعتله الميعاد واللينك'
                 : 'اتسجل إنه نزل ورسالة اللينك والتقييم راحت لجروب العميل';
         }, $back, null, true);
+    }
+
+    /** تخصص العميل (دكتور أسنان / نسا وتوليد / … / أخرى) */
+    public function specialty($clientid)
+    {
+        $m = $this->dse_studio_model;
+        $this->act('create', function () use ($m, $clientid) {
+            $m->set_specialty($clientid, $this->post('specialty', ''), $this->post('specialty_other', ''));
+        }, admin_url('dse_studio/client/' . (int) $clientid), 'التخصص اتحفظ');
+    }
+
+    /** مكتبة المواضيع والسكربتات اللي عملت viral — بالتخصص */
+    public function library()
+    {
+        if (!$this->can_media()) {
+            access_denied(DSE_STUDIO_MODULE_NAME);
+        }
+        $sp   = (string) $this->input->get('specialty');
+        $sp   = $sp === 'none' || isset(dse_specialties()[$sp]) ? $sp : '';
+        $type = (string) $this->input->get('type');
+        $type = isset(dse_post_types()[$type]) ? $type : '';
+        $q    = mb_substr((string) $this->input->get('q'), 0, 100);
+        $this->load->view('library', [
+            'title' => _l('dse_menu_library'), 'specialty' => $sp, 'type' => $type, 'q' => $q,
+            'rows' => $this->dse_studio_model->content_library($sp, $type, $q), 'counts' => $this->dse_studio_model->library_counts(),
+        ]);
     }
 
     public function wa($clientid, $action)
