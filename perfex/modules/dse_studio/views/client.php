@@ -117,6 +117,36 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                 <?php } ?>
               </div>
 
+              <?php $insts = $pkg_installments[$p['id']] ?? []; $ist = ['paid' => ['✅ اتدفع', 'success'], 'partial' => ['جزء اتدفع', 'info'], 'due' => ['💵 النهارده', 'warning'], 'overdue' => ['متأخر', 'danger'], 'upcoming' => ['لسه', 'default']]; ?>
+              <?php if ($insts || ($can_pkg && $p['status'] !== 'cancelled' && empty($p['historic']) && $p['price'] - $paidv > 0.5)) { ?>
+                <div class="small mtop5"><b>📅 مواعيد الأقساط<?= $insts ? ' (' . count($insts) . ')' : ''; ?>:</b>
+                  <?php foreach ($insts as $x) { $sx = $ist[$x['state']]; ?>
+                    <div><?= dse_day($x['due_date']); ?> — <b><?= dse_money($x['amount']); ?></b>
+                      <span class="label label-<?= $sx[1]; ?>"><?= $sx[0]; ?><?= $x['state'] === 'overdue' ? ' ' . (-(int) $x['days']) . ' يوم' : ''; ?></span>
+                      <?= $x['state'] === 'partial' || ($x['state'] !== 'paid' && $x['unpaid'] < (float) $x['amount'] - 0.5) ? '<span class="text-muted">فاضل ' . dse_money($x['unpaid']) . '</span>' : ''; ?>
+                      <?= $x['note'] ? '<span class="text-muted">· ' . html_escape($x['note']) . '</span>' : ''; ?>
+                      <?php if ($can_pkg) { ?><?= form_open(admin_url('dse_studio/installments/' . $p['id'] . '/delete'), ['class' => 'inline-block', 'onsubmit' => "return confirm('تشيل ميعاد القسط ده؟')"]); ?><input type="hidden" name="id" value="<?= (int) $x['id']; ?>"><button class="btn btn-link btn-xs text-danger">✕</button><?= form_close(); ?><?php } ?>
+                    </div>
+                  <?php } ?>
+                  <?php if ($can_pkg && $p['status'] !== 'cancelled' && empty($p['historic'])) { ?>
+                    <details class="dse-box dse-box-sm"><summary>➕ حط ميعاد قسط (هيجيلكم تنبيه يومها)</summary>
+                      <?= form_open(admin_url('dse_studio/installments/' . $p['id'] . '/add'), ['class' => 'form-inline']); ?>
+                        <input type="date" name="due_date" class="form-control input-sm" required>
+                        <input type="number" name="amount" min="1" step="0.01" class="form-control input-sm" placeholder="المبلغ" style="width:110px" value="<?= max(0, round($p['price'] - $paidv)); ?>" required>
+                        <input name="note" class="form-control input-sm" placeholder="ملاحظة" style="width:130px">
+                        <button class="btn btn-primary btn-xs">احفظ</button>
+                      <?= form_close(); ?>
+                      <?= form_open(admin_url('dse_studio/installments/' . $p['id'] . '/split'), ['class' => 'form-inline mtop5']); ?>
+                        <span>أو قسّم الباقي (<?= dse_money(max(0, $p['price'] - $paidv)); ?>) على</span>
+                        <select name="count" class="form-control input-sm"><?php for ($n = 2; $n <= 12; $n++) { ?><option value="<?= $n; ?>"><?= $n; ?> أقساط شهرية</option><?php } ?></select>
+                        <span>أولها</span> <input type="date" name="first_date" value="<?= date('Y-m-d', strtotime('+1 month')); ?>" class="form-control input-sm" required>
+                        <button class="btn btn-default btn-xs" onclick="return confirm('الأقساط اللي لسه متدفعتش هتتشال وتتعمل من جديد')">قسّم</button>
+                      <?= form_close(); ?>
+                    </details>
+                  <?php } ?>
+                </div>
+              <?php } ?>
+
               <?php if ($pkg_events[$p['id']]) { ?>
                 <div class="small mtop5">
                   <?php foreach ($pkg_events[$p['id']] as $e) {
@@ -513,13 +543,14 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
               <div class="row">
                 <div class="col-xs-4"><select name="type" class="form-control"><?php foreach (dse_post_types() as $t => $pt) { ?><option value="<?= $t; ?>"><?= $pt['label']; ?></option><?php } ?></select></div>
                 <div class="col-xs-8"><input name="post_url" class="form-control" dir="ltr" placeholder="https://instagram.com/p/..." required></div>
+                <div class="col-xs-12 mtop5"><label class="small">ميعاد النزول (فاضي = نزل دلوقتي)</label><input type="datetime-local" name="publish_at" class="form-control" min="<?= date('Y-m-d\TH:i'); ?>"></div>
               </div>
               <p class="text-muted small mtop5">العميل بتوصله رسالة فيها لينك البوست ولينك التقييم والرصيد الباقي. التصميم بيتخصم من الرصيد.</p>
               <button class="btn btn-primary btn-sm">سجّل إنه نزل</button>
             <?= form_close(); ?>
           <?php } ?>
           <?php foreach ($posts as $p) { ?>
-            <div class="small"><?= ['design' => '🎨', 'youtube' => '📺', 'podcast' => '🎙'][$p['type']] ?? '🎬'; ?> <a href="<?= html_escape($p['post_url']); ?>" target="_blank" dir="ltr"><?= html_escape(mb_substr($p['post_url'], 0, 50)); ?></a> <span class="text-muted"><?= dse_day($p['published_at']); ?></span></div>
+            <div class="small"><?= !empty($p['scheduled']) && strtotime($p['published_at']) > time() ? '🗓 ' : ''; ?><?= ['design' => '🎨', 'youtube' => '📺', 'podcast' => '🎙'][$p['type']] ?? '🎬'; ?> <a href="<?= html_escape($p['post_url']); ?>" target="_blank" dir="ltr"><?= html_escape(mb_substr($p['post_url'], 0, 50)); ?></a> <span class="text-muted"><?= dse_day($p['published_at']); ?></span></div>
           <?php } ?>
         </div></div>
       </div>

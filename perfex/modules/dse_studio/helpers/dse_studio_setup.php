@@ -127,7 +127,8 @@ function dse_studio_schema()
                 '`title` VARCHAR(200) NULL',
                 '`post_url` VARCHAR(500) NOT NULL',
                 '`published_by` INT NULL',
-                '`published_at` DATETIME NOT NULL',
+                '`published_at` DATETIME NOT NULL',     // وقت النزول الفعلي (أو الميعاد اللي اتجدول عليه)
+                '`scheduled` TINYINT NOT NULL DEFAULT 0', // 1 = متجدول (Schedule) ولسه هينزل
             ],
             'indexes' => ['idx_dse_posts_client' => '(`clientid`)'],
         ],
@@ -247,6 +248,19 @@ function dse_studio_schema()
             ],
             'indexes' => ['idx_dse_package_services_pkg' => '(`package_id`)'],
         ],
+        'dse_package_installments' => [ // مواعيد الأقساط المتفق عليها
+            'cols' => [
+                '{pk}',
+                '`package_id` INT NOT NULL',
+                '`clientid` INT NOT NULL',
+                '`due_date` DATE NOT NULL',
+                '`amount` DECIMAL(12,2) NOT NULL',
+                '`note` VARCHAR(255) NULL',
+                '`created_by` INT NULL',
+                '`created_at` DATETIME NOT NULL',
+            ],
+            'indexes' => ['idx_dse_installments_pkg' => '(`package_id`, `due_date`)'],
+        ],
         'dse_alerts' => [
             'cols' => [
                 '{pk}',
@@ -317,7 +331,7 @@ function dse_studio_default_options()
 
 if (!defined('DSE_STUDIO_SCHEMA_VERSION')) {
 /** نسخة الجداول — زوّدها مع أي جدول جديد */
-    define('DSE_STUDIO_SCHEMA_VERSION', '12');
+    define('DSE_STUDIO_SCHEMA_VERSION', '13');
 }
 
 if (!function_exists('dse_studio_ensure_schema')) {

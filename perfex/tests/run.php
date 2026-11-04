@@ -988,6 +988,65 @@ test('العملات: إيرادات بالجنيه والدولار واليو�
     $m->fixed_time = null;
     update_option('dse_fx_rates', '');
 });
+
+test('البوست المتجدول: الرسالة بتروح دلوقتي وفيها "هينزل … الساعة …" · بيتحسب على يوم نزوله · الماضي = نزل دلوقتي', function () use ($m, $db) {
+    $save = $m->fixed_time;
+    $m->fixed_time = strtotime('2026-11-05 17:30:00'); // الخميس 5:30 م — الموظفين بيمشوا 6
+    $db->insert('tblclients', ['company' => 'جدولة']); $c = $db->insert_id();
+    $pk = $m->create_package($c, 'G', 4000, '2026-11-01', 30, ['reel' => 8, 'design' => 4]); $m->record_payment($pk, 4000);
+    $m->save_client_wa($c, ['wa_group_jid' => '120363000000000666@g.us']);
+    throws(function () use ($m, $c) { $m->publish_post($c, 'reel', 'https://ig/p/1', null, '2027-03-01T20:00'); }, 'بعيد قوي');
+    $id = $m->publish_post($c, 'reel', 'https://ig/p/1', null, '2026-11-05T20:00');
+    $p = q('SELECT * FROM tbldse_posts WHERE id = ?', [$id])[0];
+    ok($p['published_at'] === '2026-11-05 20:00:00' && (int) $p['scheduled'] === 1);
+    $o = q("SELECT body FROM tbldse_wa_outbox WHERE dedupe_key = ?", ['published:' . $id])[0]['body'];
+    ok(strpos($o, 'الريل بتاعك جاهز ومتجدول 🎬') === 0 && strpos($o, '🗓 هينزل الخميس 05/11 الساعة 8:00 م') !== false && strpos($o, 'https://ig/p/1') !== false, $o);
+    $id2 = $m->publish_post($c, 'design', 'https://ig/p/2', null, '');
+    $o2 = q("SELECT body FROM tbldse_wa_outbox WHERE dedupe_key = ?", ['published:' . $id2])[0]['body'];
+    ok(strpos($o2, 'التصميم بتاعك نزل 🎨') === 0 && strpos($o2, 'هينزل') === false && (int) q('SELECT scheduled FROM tbldse_posts WHERE id = ?', [$id2])[0]['scheduled'] === 0, $o2);
+    $id3 = $m->publish_post($c, 'reel', 'https://ig/p/3', null, '2026-11-05T10:00'); // وقت فات ← نزل دلوقتي
+    ok(q('SELECT published_at, scheduled FROM tbldse_posts WHERE id = ?', [$id3])[0] === ['published_at' => '2026-11-05 17:30:00', 'scheduled' => 0]);
+    // رسالة متعدّلة من غير {scheduled}: الميعاد مايضيعش
+    update_option('dse_wa_tpl_published', "{headline}\n{post_url}");
+    ok(strpos(dse_wa_text('published', ['type' => 'reel', 'post_url' => 'u', 'scheduled_at' => '2026-11-05 20:00:00']), "🗓 هينزل الخميس 05/11 الساعة 8:00 م") !== false);
+    update_option('dse_wa_tpl_published', '');
+    $db->query("UPDATE tbldse_packages SET status = 'cancelled' WHERE clientid = ?", [$c]);
+    $m->fixed_time = $save;
+});
+test('مواعيد الأقساط: الدفعات بتغطي الأقدم الأول · النهارده / متأخر / اتدفع · تقسيم الباقي شهري · تنبيه يوم الاستحقاق وبعد أسبوع (لإنجي ومريم)', function () use ($m, $db) {
+    $save = $m->fixed_time;
+    $m->fixed_time = strtotime('2026-11-01 10:00:00');
+    $db->insert('tblclients', ['company' => 'أقساط مواعيد']); $c = $db->insert_id();
+    $pk = $m->create_package($c, 'G', 12000, '2026-11-01', 90, ['reel' => 8]);
+    $m->record_payment($pk, 3000, '2026-11-01');
+    throws(function () use ($m, $pk) { $m->add_installment($pk, '2026-12-01', 0); }, 'مبلغ القسط');
+    ok($m->split_installments($pk, 3, '2026-12-01') === 3);
+    $l = $m->package_installments($pk);
+    ok(array_column($l, 'due_date') === ['2026-12-01', '2027-01-01', '2027-02-01'] && array_sum(array_column($l, 'amount')) == 9000 && $l[0]['state'] === 'upcoming', json_encode($l, JSON_UNESCAPED_UNICODE));
+    // يوم أول قسط ← تنبيه "النهارده ميعاد قسط" مرة واحدة
+    $m->fixed_time = strtotime('2026-12-01 09:00:00');
+    $a = $m->check_installments();
+    ok(count($a) === 1 && $m->package_installments($pk)[0]['state'] === 'due', json_encode($a));
+    $al = q('SELECT * FROM tbldse_alerts WHERE id = ?', [$a[0]])[0];
+    ok($al['alert_key'] === 'installment_due' && strpos($al['message'], 'النهارده ميعاد قسط') !== false && strpos($al['message'], '3,000') !== false, $al['message']);
+    ok(!$m->check_installments(), 'مرة واحدة');
+    // دفع جزء (1000) ← لسه 2000 فاضلين · بعد أسبوع ← تنبيه عاجل
+    $m->fixed_time = strtotime('2026-12-03 09:00:00');
+    $m->record_payment($pk, 1000, '2026-12-03');
+    $m->fixed_time = strtotime('2026-12-08 09:00:00');
+    $l = $m->package_installments($pk);
+    ok($l[0]['state'] === 'overdue' && $l[0]['unpaid'] == 2000 && $l[0]['days'] === -7, json_encode($l[0]));
+    $a = $m->check_installments();
+    ok(count($a) === 1 && q('SELECT priority FROM tbldse_alerts WHERE id = ?', [$a[0]])[0]['priority'] === 'urgent' && strpos(q('SELECT message FROM tbldse_alerts WHERE id = ?', [$a[0]])[0]['message'], 'متأخر 7 يوم') !== false);
+    // دفع الباقي ← القسط اتدفع ومفيش تنبيهات
+    $m->record_payment($pk, 2000, '2026-12-08');
+    ok($m->package_installments($pk)[0]['state'] === 'paid' && $m->package_installments($pk)[1]['state'] === 'upcoming');
+    $m->delete_installment($m->package_installments($pk)[2]['id']);
+    ok(count($m->package_installments($pk)) === 2);
+    $GLOBALS['inst_client'] = $c;
+    $db->query("UPDATE tbldse_packages SET status = 'cancelled' WHERE clientid = ?", [$c]);
+    $m->fixed_time = $save;
+});
 echo "\nالتنبيهات:\n";
 test('العميل بقاله فترة مابيصوّرش → تنبيه مرة واحدة، urgent لو مفيش نشر', function () use ($m, $client, $db) {
     ok(count($m->check_inactive_clients()) === 0, 'لسه بادئ');
@@ -1104,8 +1163,10 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
         'pkg_events' => $sone(function ($p) use ($m) { return $m->package_events($p['id']); }), 'pkg_paid' => $sone(function ($p) use ($m) { return $m->package_paid_amount($p); }),
         'pkg_busy' => $sone(function ($p) use ($m) { return $m->package_has_activity($p['id']); }), 'pkg_payments' => $sone(function ($p) use ($m) { return $m->package_payments($p['id']); }),
         'pkg_services' => $sone(function ($p) use ($m) { return $m->package_services($p['id']); }),
+        'pkg_installments' => $sone(function ($p) use ($m) { return $m->package_installments($p['id']); }),
         'free_invoices' => [], 'pay_modes' => $m->payment_modes(), 'data_counts' => $m->client_data_counts($sc), 'slots' => [], 'runways' => []]);
     file_put_contents(sys_get_temp_dir() . '/dse_client_services.html', $sh);
+    ok(strpos($sh, 'حط ميعاد قسط') !== false && strpos($sh, 'أقساط شهرية') !== false && strpos($sh, 'name="publish_at"') !== false, 'الأقساط وميعاد النزول في صفحة العميل');
     ok(strpos($sh, 'ميزانية 10,000') !== false && strpos($sh, 'أتعاب 2,500') !== false && strpos($sh, 'فيسبوك + إنستجرام') !== false && strpos($sh, 'ضيف خدمة (إعلانات ممولة') !== false && strpos($sh, 'name="svc[ads][ad_budget]"') !== false && strpos($sh, '➕ خدمة') !== false, 'الخدمات في صفحة العميل');
     [$mc, $mcl, $mp] = $GLOBALS['media'];
     $mi = $m->content_items($mp['id']);
@@ -1120,6 +1181,7 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
     file_put_contents(sys_get_temp_dir() . '/dse_renewals.html', $rn);
     render('outbox', ['outbox' => $m->outbox(), 'enabled' => false]);
     $pub = render('publishing', ['clients' => $m->clients_for_publishing(), 'recent' => $m->recent_posts(), 'selected' => 1, 'due' => [['clientid' => 1, 'company' => 'مطعم الشيف', 'type' => 'reel', 'done' => false], ['clientid' => 2, 'company' => 'x', 'type' => 'design', 'done' => true]]]);
+    ok(strpos($pub, 'name="publish_at"') !== false && strpos($pub, 'هينزل الخميس') !== false, 'ميعاد النزول في صفحة النشر');
     ok(strpos($pub, 'لازم ينزل النهارده') !== false && strpos($pub, '⏳ لسه') !== false && strpos($pub, '✅ نزل') !== false, 'مواعيد النهارده');
     ok(strpos($pub, 'وصل الجروب') !== false || strpos($pub, 'مستني') !== false, 'حالة الرسالة');
     ok(strpos($pub, '⚠️ مفيش جروب') !== false, 'العملاء من غير جروب متعلّمين');

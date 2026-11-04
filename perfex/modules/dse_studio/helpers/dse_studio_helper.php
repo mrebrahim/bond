@@ -132,7 +132,7 @@ function dse_wa_defaults()
         // ---- أوتوماتيك (3 بس) ----
         'script_sent'      => "سكربت جديد للمراجعة 📝\n*{title}*\n\n{body}\n\nرد بـ \"موافق\" أو ابعتلنا التعديلات",
         'session_booked'   => "{headline} ✅\n📅 {date} الساعة {time}\n📍 {studio}\n🎬 {count} · {outfits}",
-        'published'        => "{headline}\n{post_url}\n\nرأيك في 10 ثواني: {feedback_url}\n\nفاضلك {balance} لحد {end_date}",
+        'published'        => "{headline}\n🗓 {scheduled}\n{post_url}\n\nرأيك في 10 ثواني: {feedback_url}\n\nفاضلك {balance} لحد {end_date}",
     ];
 }
 
@@ -146,7 +146,7 @@ function dse_wa_vars($key)
         'script_sent'    => ['title' => 'عنوان السكربت', 'body' => 'نص السكربت', 'client_name' => 'اسم العميل'],
         'session_booked' => ['headline' => '"تم حجز ميعاد التصوير" أو "ميعاد التصوير اتغيّر"', 'date' => 'اليوم والتاريخ', 'time' => 'الساعة',
             'studio' => 'الاستوديو', 'count' => 'العدد (3 ريل)', 'outfits' => '"هات 2 لبس" (فاضي لو مفيش)', 'client_name' => 'اسم العميل'],
-        'published'      => ['headline' => '"الريل بتاعك نزل 🎬" / "التصميم بتاعك نزل 🎨" / "الفيديو بتاعك نزل على اليوتيوب 📺" / "حلقة البودكاست بتاعتك نزلت 🎙"', 'post_url' => 'لينك البوست', 'feedback_url' => 'لينك التقييم',
+        'published'      => ['scheduled' => '"هينزل الخميس 05/11 الساعة 8:00 م" (لو متجدول — فاضي لو نزل)', 'headline' => '"الريل بتاعك نزل 🎬" / "التصميم بتاعك نزل 🎨" / "الفيديو بتاعك نزل على اليوتيوب 📺" / "حلقة البودكاست بتاعتك نزلت 🎙"', 'post_url' => 'لينك البوست', 'feedback_url' => 'لينك التقييم',
             'balance' => 'الرصيد الباقي', 'end_date' => 'آخر يوم في الباقة', 'client_name' => 'اسم العميل'],
     ];
     return $map[$key] ?? ['client_name' => 'اسم العميل'];
@@ -178,7 +178,14 @@ function dse_wa_render($tpl, array $vars)
 function dse_wa_text($key, array $p)
 {
     $tpl = dse_wa_template($key);
-    return $tpl === null ? null : dse_wa_render($tpl, dse_wa_values($key, $p));
+    if ($tpl === null) {
+        return null;
+    }
+    $v = dse_wa_values($key, $p);
+    if (($v['scheduled'] ?? '') !== '' && strpos($tpl, '{scheduled}') === false) {
+        $v['headline'] .= "\n🗓 " . $v['scheduled']; // رسالة متعدّلة من غير {scheduled} ← الميعاد مايضيعش
+    }
+    return dse_wa_render($tpl, $v);
 }
 
 /** قيم المتغيرات من بيانات الرسالة */
@@ -197,6 +204,11 @@ function dse_wa_values($key, array $p)
     }
     if ($key === 'published') {
         $v['headline'] = ['design' => 'التصميم بتاعك نزل 🎨', 'youtube' => 'الفيديو بتاعك نزل على اليوتيوب 📺', 'podcast' => 'حلقة البودكاست بتاعتك نزلت 🎙'][$s('type')] ?? 'الريل بتاعك نزل 🎬';
+        $v['scheduled'] = '';
+        if ($s('scheduled_at') !== '') { // اتجدول ← "هينزل" بدل "نزل" + الميعاد
+            $v['headline']  = ['design' => 'التصميم بتاعك جاهز ومتجدول 🎨', 'youtube' => 'الفيديو بتاعك جاهز ومتجدول على اليوتيوب 📺', 'podcast' => 'حلقة البودكاست بتاعتك جاهزة ومتجدولة 🎙'][$s('type')] ?? 'الريل بتاعك جاهز ومتجدول 🎬';
+            $v['scheduled'] = 'هينزل ' . dse_day($s('scheduled_at')) . ' الساعة ' . dse_time($s('scheduled_at'));
+        }
         $v['end_date'] = $s('end_date') !== '' && $s('balance') !== '' ? dse_day($s('end_date')) : '';
     }
     return $v;

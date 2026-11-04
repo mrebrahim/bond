@@ -99,7 +99,7 @@ class Dse_studio extends AdminController
         $data['posts']    = $this->dse_studio_model->client_posts($id);
         $data['outbox']   = $this->dse_studio_model->outbox(20, $id);
         $data['invoices'] = $this->db->query('SELECT id, prefix, number, total, status, date FROM ' . db_prefix() . 'invoices WHERE clientid = ? ORDER BY id DESC LIMIT 30', [(int) $id])->result_array();
-        $data['balances'] = $data['pkg_invoices'] = $data['pkg_events'] = $data['pkg_paid'] = $data['pkg_busy'] = $data['pkg_payments'] = $data['pkg_services'] = [];
+        $data['balances'] = $data['pkg_invoices'] = $data['pkg_events'] = $data['pkg_paid'] = $data['pkg_busy'] = $data['pkg_payments'] = $data['pkg_services'] = $data['pkg_installments'] = [];
         $data['pay_modes'] = $this->dse_studio_model->payment_modes();
         $data['data_counts'] = $this->dse_studio_model->client_data_counts($id);
         $data['slots']  = $this->dse_studio_model->publish_slots($id);
@@ -113,6 +113,7 @@ class Dse_studio extends AdminController
             $data['pkg_busy'][$p['id']]     = $this->dse_studio_model->package_has_activity($p['id']);
             $data['pkg_payments'][$p['id']] = $this->dse_studio_model->package_payments($p['id']);
             $data['pkg_services'][$p['id']] = $this->dse_studio_model->package_services($p['id']);
+            $data['pkg_installments'][$p['id']] = $this->dse_studio_model->package_installments($p['id']);
             $linked = array_merge($linked, array_column($data['pkg_invoices'][$p['id']], 'invoice_id'));
         }
         // الفواتير اللي لسه مش متربطة بباقة
@@ -331,6 +332,25 @@ class Dse_studio extends AdminController
             $m->update_service($service_id, ['status' => $this->post('status'), 'note' => $this->post('note')]);
             return 'اتحفظ';
         }, admin_url('dse_studio/client/' . ($p ? $p['clientid'] : '')));
+    }
+
+    /** مواعيد الأقساط: add (تاريخ + مبلغ) · split (قسّم الباقي على N شهري) · delete */
+    public function installments($package_id, $action = 'add')
+    {
+        $m = $this->dse_studio_model;
+        $p = $m->package($package_id);
+        $this->act('edit', function () use ($m, $package_id, $action) {
+            if ($action === 'split') {
+                $n = $m->split_installments($package_id, $this->post('count'), $this->post('first_date'));
+                return 'الباقي اتقسّم على ' . $n . ' أقساط — هيجيلكم تنبيه يوم كل قسط';
+            }
+            if ($action === 'delete') {
+                $m->delete_installment((int) $this->post('id'));
+                return 'القسط اتشال';
+            }
+            $m->add_installment($package_id, $this->post('due_date'), $this->post('amount'), $this->post('note'));
+            return 'ميعاد القسط اتحفظ — هيجيلكم تنبيه يومها';
+        }, admin_url('dse_studio/client/' . $p['clientid']));
     }
 
     public function unlink_invoice($package_id, $invoice_id)
@@ -620,8 +640,11 @@ class Dse_studio extends AdminController
             if (!$clientid) {
                 throw new Exception('اختار العميل');
             }
-            $m->publish_post($clientid, $this->post('type', 'reel'), $this->post('post_url'), $this->post('title'));
-            return 'اتسجل إنه نزل ورسالة اللينك والتقييم راحت لجروب العميل';
+            $at = $this->post('publish_at');
+            $m->publish_post($clientid, $this->post('type', 'reel'), $this->post('post_url'), $this->post('title'), $at);
+            return $at && strtotime(str_replace('T', ' ', $at)) > time() + 60
+                ? 'اتسجل إنه متجدول ' . dse_day(str_replace('T', ' ', $at)) . ' الساعة ' . dse_time(str_replace('T', ' ', $at)) . ' — والعميل اتبعتله الميعاد واللينك'
+                : 'اتسجل إنه نزل ورسالة اللينك والتقييم راحت لجروب العميل';
         }, $back, null, true);
     }
 

@@ -5,7 +5,7 @@ defined('BASEPATH') or exit('No direct script access allowed');
 /*
 Module Name: Digital Solution — الاستوديو والباقات
 Description: رصيد الباقات، حجز الاستوديو، السكربتات والنشر، جروبات واتساب العملاء (Evolution API)، وتنبيه العميل اللي مابيصوّرش.
-Version: 1.8.1
+Version: 1.9.0
 Requires at least: 3.0.*
 Author: Digital Solution
 */
@@ -114,7 +114,8 @@ function dse_studio_cron()
     try {
         $CI->dse_studio_model->sync_all_packages();
         $new = array_merge($CI->dse_studio_model->check_inactive_clients(), $CI->dse_studio_model->check_all_payments(), $CI->dse_studio_model->check_renewals(),
-            $CI->dse_studio_model->check_content_runway(), $CI->dse_studio_model->check_packages_ending());
+            $CI->dse_studio_model->check_content_runway(), $CI->dse_studio_model->check_packages_ending(),
+            $CI->dse_studio_model->check_installments());
         if ($new) {
             dse_studio_notify_staff($new);
         }
@@ -138,6 +139,7 @@ function dse_studio_notify_staff(array $alert_ids)
         'no_content'      => 'عميل محتاج ييجي يصوّر',
         'package_ending'  => 'باقة هتخلص قريب',
         'renewal_due'     => 'باقة خلصت ومجددش',
+        'installment_due' => 'ميعاد قسط',
     ];
 
     foreach (array_unique($alert_ids) as $aid) {
@@ -145,7 +147,7 @@ function dse_studio_notify_staff(array $alert_ids)
         if (!$a) {
             continue;
         }
-        $opt   = $a['alert_key'] === 'payment_due' ? 'dse_payment_notify_staff_ids'
+        $opt   = in_array($a['alert_key'], ['payment_due', 'installment_due'], true) ? 'dse_payment_notify_staff_ids'
             : (in_array($a['alert_key'], ['client_inactive', 'no_content', 'package_ending', 'renewal_due'], true) ? 'dse_content_notify_staff_ids' : 'dse_notify_staff_ids');
         $ids   = array_filter(array_map('intval', preg_split('/[\s,;]+/', (string) get_option($opt))));
         $where = $ids ? 'staffid IN (' . implode(',', $ids) . ')' : 'admin = 1';

@@ -618,8 +618,10 @@ class Dse_studio_model extends App_Model
         foreach (['dse_package_items', 'dse_package_invoices', 'dse_package_events', 'dse_sessions', 'dse_usage'] as $t) {
             $this->db->query('DELETE FROM ' . $this->tbl($t) . ' WHERE package_id = ?', [$p['id']]);
         }
-        if ($this->db->table_exists($this->tbl('dse_package_services'))) {
-            $this->db->query('DELETE FROM ' . $this->tbl('dse_package_services') . ' WHERE package_id = ?', [$p['id']]);
+        foreach (['dse_package_services', 'dse_package_installments'] as $t) {
+            if ($this->db->table_exists($this->tbl($t))) {
+                $this->db->query('DELETE FROM ' . $this->tbl($t) . ' WHERE package_id = ?', [$p['id']]);
+            }
         }
         $this->db->query('DELETE FROM ' . $this->tbl('dse_packages') . ' WHERE id = ?', [$p['id']]);
         return $p['clientid'];
@@ -654,7 +656,7 @@ class Dse_studio_model extends App_Model
                 $this->db->query('DELETE FROM ' . $this->tbl($t) . ' WHERE package_id = ?', [(int) $id]);
             }
         }
-        foreach (['dse_package_services', 'dse_content_items', 'dse_content_plans', 'dse_publish_slots'] as $t) {
+        foreach (['dse_package_services', 'dse_package_installments', 'dse_content_items', 'dse_content_plans', 'dse_publish_slots'] as $t) {
             if ($this->db->table_exists($this->tbl($t))) {
                 $this->db->query('DELETE FROM ' . $this->tbl($t) . ' WHERE clientid = ?', [(int) $clientid]);
             }
@@ -1117,9 +1119,29 @@ class Dse_studio_model extends App_Model
     }
 
     /** البوست نزل: رسالة للعميل فيها اللينك ولينك التقييم والرصيد — والتصميم بيتخصم */
-    public function publish_post($clientid, $type, $post_url, $title = null)
+    /**
+     * سجّل بوست نزل — أو اتجدول (Schedule) لميعاد: $publish_at فاضي = نزل دلوقتي.
+     * الرسالة بتروح للعميل دلوقتي وفيها الميعاد ("🗓 هينزل الخميس 05/11 الساعة 8:00 م")، والبوست بيتحسب على يوم نزوله.
+     */
+    public function publish_post($clientid, $type, $post_url, $title = null, $publish_at = null)
     {
         $this->client($clientid);
+        $this->ensure_renewal_columns();
+        $when = $this->now();
+        $sched = false;
+        if (trim((string) $publish_at) !== '') {
+            $ts = strtotime(str_replace('T', ' ', (string) $publish_at));
+            if (!$ts) {
+                throw new Exception('ميعاد النزول غلط');
+            }
+            if ($ts > $this->t() + 60) {
+                if ($ts > $this->t() + 60 * 86400) {
+                    throw new Exception('ميعاد النزول بعيد قوي (أكتر من شهرين)');
+                }
+                $when  = date('Y-m-d H:i:00', $ts);
+                $sched = true;
+            }
+        }
         $post_url = trim((string) $post_url);
         if (!preg_match('~^https?://~i', $post_url)) {
             throw new Exception('حط لينك البوست (https://...)');
@@ -1139,7 +1161,7 @@ class Dse_studio_model extends App_Model
         }
         $this->db->insert($this->tbl('dse_posts'), [
             'clientid' => (int) $clientid, 'package_id' => $pkg ? (int) $pkg['id'] : null, 'type' => $type,
-            'title' => $title, 'post_url' => $post_url, 'published_by' => $this->staff_id(), 'published_at' => $this->now(),
+            'title' => $title, 'post_url' => $post_url, 'published_by' => $this->staff_id(), 'published_at' => $when, 'scheduled' => $sched ? 1 : 0,
         ]);
         $id = (int) $this->db->insert_id();
         if ($type === 'design') {
@@ -1151,6 +1173,7 @@ class Dse_studio_model extends App_Model
         $this->queue_wa($clientid, 'published', 'published:' . $id, [
             'type' => $type, 'post_url' => $post_url, 'feedback_url' => $feedback,
             'balance' => $pkg ? $this->balance_text($pkg['id']) : '', 'end_date' => $pkg ? $pkg['end_date'] : '',
+            'scheduled_at' => $sched ? $when : '',
         ]);
         if ($pkg) {
             $this->check_payment_due($pkg['id']);
@@ -1978,6 +2001,143 @@ class Dse_studio_model extends App_Model
     }
 
     // =================================================================
+    // مواعيد الأقساط + تنبيه يوم الاستحقاق
+    // =================================================================
+    /**
+     * أقساط الباقة بحالتها. المدفوع بيغطي الأقساط بالترتيب (الأقدم الأول):
+     * paid ✅ · partial (اتدفع جزء) · due (النهارده) · overdue (فات) · upcoming (لسه)
+     */
+    public function package_installments($package_id)
+    {
+        $this->ensure_renewal_columns();
+        if (!$this->db->table_exists($this->tbl('dse_package_installments'))) {
+            return [];
+        }
+        $p    = $this->package($package_id);
+        $list = $this->rows('SELECT * FROM ' . $this->tbl('dse_package_installments') . ' WHERE package_id = ? ORDER BY due_date, id', [(int) $package_id]);
+        // اللي متدفعش = سعر الباقة − المدفوع؛ بيتوزع على آخر الأقساط (الأحدث) — يعني الأقدم بيتغطى الأول
+        $owed = max(0, (float) $p['price'] - $this->package_paid_amount($p));
+        for ($i = count($list) - 1; $i >= 0; $i--) {
+            $unpaid = min((float) $list[$i]['amount'], $owed);
+            $owed  -= $unpaid;
+            $list[$i]['unpaid'] = round($unpaid, 2);
+        }
+        foreach ($list as &$x) {
+            $days      = (int) round((strtotime($x['due_date']) - strtotime($this->today())) / 86400);
+            $x['days'] = $days;
+            if ($x['unpaid'] <= 0.5) {
+                $x['state'] = 'paid';
+            } elseif ($days < 0) {
+                $x['state'] = 'overdue';
+            } elseif ($days === 0) {
+                $x['state'] = 'due';
+            } else {
+                $x['state'] = $x['unpaid'] < (float) $x['amount'] - 0.5 ? 'partial' : 'upcoming';
+            }
+        }
+        unset($x);
+        return $list;
+    }
+
+    public function add_installment($package_id, $due_date, $amount, $note = null)
+    {
+        $this->ensure_renewal_columns();
+        $p = $this->package($package_id);
+        if ($p['status'] === 'cancelled') {
+            throw new Exception('الباقة دي اتلغت');
+        }
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $due_date)) {
+            throw new Exception('اختار تاريخ القسط');
+        }
+        $amount = round((float) $amount, 2);
+        if ($amount <= 0) {
+            throw new Exception('اكتب مبلغ القسط');
+        }
+        $this->db->insert($this->tbl('dse_package_installments'), [
+            'package_id' => $p['id'], 'clientid' => $p['clientid'], 'due_date' => $due_date, 'amount' => $amount,
+            'note' => trim((string) $note) ?: null, 'created_by' => $this->staff_id(), 'created_at' => $this->now(),
+        ]);
+        return (int) $this->db->insert_id();
+    }
+
+    /** قسّم الباقي على N أقساط شهرية من تاريخ — بيمسح الأقساط اللي لسه متدفعتش ويعمل الجديدة */
+    public function split_installments($package_id, $count, $first_date)
+    {
+        $p     = $this->package($package_id);
+        $count = (int) $count;
+        if ($count < 1 || $count > 24) {
+            throw new Exception('عدد الأقساط من 1 لـ 24');
+        }
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $first_date)) {
+            throw new Exception('اختار تاريخ أول قسط');
+        }
+        $left = round((float) $p['price'] - $this->package_paid_amount($p), 2);
+        if ($left <= 0.5) {
+            throw new Exception('الباقة خالصة — مفيش باقي يتقسّط');
+        }
+        $this->ensure_renewal_columns();
+        foreach ($this->package_installments($p['id']) as $x) {
+            if ($x['state'] !== 'paid') {
+                $this->db->query('DELETE FROM ' . $this->tbl('dse_package_installments') . ' WHERE id = ?', [(int) $x['id']]);
+            }
+        }
+        $each = floor($left / $count);
+        for ($i = 0; $i < $count; $i++) {
+            $amt = $i === $count - 1 ? $left - $each * ($count - 1) : $each; // الفكة على آخر قسط
+            $this->add_installment($p['id'], date('Y-m-d', strtotime($first_date . ' +' . $i . ' month')), $amt, 'قسط ' . ($i + 1) . ' من ' . $count);
+        }
+        return $count;
+    }
+
+    public function delete_installment($id)
+    {
+        $x = $this->row('SELECT * FROM ' . $this->tbl('dse_package_installments') . ' WHERE id = ?', [(int) $id]);
+        if (!$x) {
+            throw new Exception('القسط مش موجود');
+        }
+        $this->db->query('DELETE FROM ' . $this->tbl('dse_package_installments') . ' WHERE id = ?', [(int) $id]);
+        return $x;
+    }
+
+    /**
+     * الـ cron (يومي): تنبيه (CRM + إيميل لإنجي ومريم) يوم ميعاد القسط لو لسه متدفعش،
+     * وتنبيه تاني عاجل لو عدّى أسبوع ومتدفعش. كل قسط مرة واحدة لكل نوع تنبيه.
+     */
+    public function check_installments()
+    {
+        $this->ensure_renewal_columns();
+        if (!$this->db->table_exists($this->tbl('dse_package_installments'))) {
+            return [];
+        }
+        $new = [];
+        foreach ($this->rows('SELECT DISTINCT i.package_id FROM ' . $this->tbl('dse_package_installments') . ' i JOIN ' . $this->tbl('dse_packages') . " p ON p.id = i.package_id WHERE p.status <> 'cancelled' AND i.due_date <= ?", [$this->today()]) as $r) {
+            $p = $this->package($r['package_id']);
+            $c = $this->client($p['clientid']);
+            foreach ($this->package_installments($p['id']) as $x) {
+                if (!in_array($x['state'], ['due', 'overdue'], true)) {
+                    continue;
+                }
+                $late = -$x['days'];
+                $msg  = $c['company'] . ' — ' . ($late ? 'قسط متأخر ' . $late . ' يوم' : 'النهارده ميعاد قسط') . ' 💵' . "\n"
+                    . 'المبلغ: ' . dse_money($x['unpaid']) . ($x['unpaid'] < (float) $x['amount'] - 0.5 ? ' (من ' . dse_money($x['amount']) . ')' : '')
+                    . ' · ميعاده ' . dse_day($x['due_date']) . ' · باقة "' . $p['name'] . '"' . ($x['note'] ? ' — ' . $x['note'] : '') . "\n"
+                    . 'كلّم العميل، وأول ما يدفع سجّل الدفعة من صفحته.';
+                $id = $this->add_alert($p['clientid'], 'installment_due', 'inst:' . $x['id'] . ':due', $msg);
+                if ($id) {
+                    $new[] = $id;
+                }
+                if ($late >= 7) {
+                    $id = $this->add_alert($p['clientid'], 'installment_due', 'inst:' . $x['id'] . ':late7', $msg, 'urgent');
+                    if ($id) {
+                        $new[] = $id;
+                    }
+                }
+            }
+        }
+        return $new;
+    }
+
+    // =================================================================
     // خدمات الباقة: إعلانات ممولة + برمجة
     // =================================================================
     public function package_services($package_id)
@@ -2712,9 +2872,9 @@ class Dse_studio_model extends App_Model
     private function ensure_renewal_columns()
     {
         if (!self::$renewal_cols_checked && function_exists('dse_studio_add_missing_columns') && function_exists('get_instance')) {
-            dse_studio_add_missing_columns(['dse_clients' => ['renewal_status', 'renewal_note', 'renewal_updated_at', 'wa_link_error'], 'dse_packages' => ['historic', 'grace_days']]);
+            dse_studio_add_missing_columns(['dse_clients' => ['renewal_status', 'renewal_note', 'renewal_updated_at', 'wa_link_error'], 'dse_packages' => ['historic', 'grace_days'], 'dse_posts' => ['scheduled']]);
             $CI = &get_instance();
-            foreach (['dse_publish_slots', 'dse_content_plans', 'dse_content_items', 'dse_package_services'] as $t) { // جداول اتضافت بعد كده
+            foreach (['dse_publish_slots', 'dse_content_plans', 'dse_content_items', 'dse_package_services', 'dse_package_installments'] as $t) { // جداول اتضافت بعد كده
                 if (is_object($CI) && isset($CI->db) && !$CI->db->table_exists($this->tbl($t))) {
                     foreach (dse_studio_create_sql($t, dse_studio_schema()[$t], db_prefix(), ($CI->db->dbdriver ?? 'mysqli') === 'sqlite' ? 'sqlite' : 'mysql', 'utf8mb4') as $sql) {
                         $CI->db->query($sql);

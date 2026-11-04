@@ -30,6 +30,11 @@
               <input name="post_url" class="form-control" dir="ltr" placeholder="https://www.instagram.com/p/..." required>
             </div>
             <div class="form-group">
+              <label>ميعاد النزول <span class="text-muted small">(فاضي = نزل دلوقتي · لو عامل Schedule حط الميعاد)</span></label>
+              <input type="datetime-local" name="publish_at" class="form-control" min="<?= date('Y-m-d\TH:i'); ?>">
+              <p class="small text-muted" style="margin:4px 0 0">العميل بتوصله الرسالة دلوقتي وفيها: "🗓 هينزل الخميس 05/11 الساعة 8:00 م" + اللينك.</p>
+            </div>
+            <div class="form-group">
               <label>عنوان (اختياري)</label>
               <input name="title" class="form-control">
             </div>
@@ -63,7 +68,7 @@
                 <td><?= ['design' => '🎨', 'youtube' => '📺', 'podcast' => '🎙'][$p['type']] ?? '🎬'; ?></td>
                 <td><b><?= html_escape($p['company']); ?></b><?= $p['title'] ? '<div class="small text-muted">' . html_escape($p['title']) . '</div>' : ''; ?></td>
                 <td><a href="<?= html_escape($p['post_url']); ?>" target="_blank" dir="ltr">اللينك</a></td>
-                <td class="small"><?= dse_day($p['published_at']) . ' ' . dse_time($p['published_at']); ?></td>
+                <td class="small"><?= !empty($p['scheduled']) && strtotime($p['published_at']) > time() ? '🗓 متجدول ' : ''; ?><?= dse_day($p['published_at']) . ' ' . dse_time($p['published_at']); ?></td>
                 <td>
                   <?php $st = $p['wa_status']; ?>
                   <span class="label label-<?= ['sent' => 'success', 'queued' => 'info', 'sending' => 'info', 'failed' => 'danger'][$st] ?? 'warning'; ?>">
