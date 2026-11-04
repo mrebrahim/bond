@@ -104,6 +104,7 @@ $evo->transport = function ($method, $url, $body) use (&$sent) {
 };
 
 $m = new Dse_studio_model();
+$GLOBALS['dbx'] = $db;
 $m->db  = $db;
 $m->evo = $evo;
 $m->fixed_time = strtotime('2026-11-02 10:00:00'); // الاتنين
@@ -1288,6 +1289,10 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
     ok(strpos($rn, 'عيادة د. سامي') !== false && strpos($rn, 'ابعت طلب التجديد') !== false && strpos($rn, 'آخر طلب') !== false && strpos($rn, 'قديمة') !== false, 'صف التجديد');
     file_put_contents(sys_get_temp_dir() . '/dse_renewals.html', $rn);
     render('outbox', ['outbox' => $m->outbox(), 'enabled' => false]);
+    $ob = array_map(function ($o) use ($m) { $o['reason'] = $m->queue_reason($o); return $o; }, $m->outbox());
+    $ov = render('outbox', ['outbox' => array_merge($ob, [['clientid' => 1, 'company' => 'x', 'body' => 'y', 'status' => 'queued', 'manual' => 0, 'error' => null, 'created_at' => '2026-11-02 10:00:00', 'id' => 0, 'reason' => 'جروب العميل لسه مااتربطش']]),
+        'enabled' => true, 'health' => ['down' => true, 'since' => '2026-11-02 09:00:00', 'error' => 'حالة الرقم في Evolution: close', 'gap' => 30, 'queued' => 3, 'state' => 'close']]);
+    ok(strpos($ov, 'واتساب السيستم مش بيبعت') !== false && strpos($ov, '⏳ جروب العميل لسه مااتربطش') !== false, 'صفحة الرسايل بتقول ليه مستنية');
     $pub = render('publishing', ['clients' => $m->clients_for_publishing(), 'recent' => $m->recent_posts(), 'selected' => 1, 'due' => [['clientid' => 1, 'company' => 'مطعم الشيف', 'type' => 'reel', 'done' => false], ['clientid' => 2, 'company' => 'x', 'type' => 'design', 'done' => true]]]);
     ok(strpos($pub, 'name="publish_at"') !== false && strpos($pub, 'هينزل الخميس') !== false, 'ميعاد النزول في صفحة النشر');
     ok(strpos($pub, 'لازم ينزل النهارده') !== false && strpos($pub, '⏳ لسه') !== false && strpos($pub, '✅ نزل') !== false, 'مواعيد النهارده');
@@ -1363,7 +1368,10 @@ test('الرقم خرج: تنبيه urgent للأدمن مرة واحدة + ال
     $m->fixed_time = strtotime('2026-11-03 15:05:00');
     ok(count($m->wa_health_check(true)) === 1, 'تذكير بعد 6 ساعات');
     // Evolution نفسه مش بيرد
+    ok(strpos($m->queue_reason(q("SELECT * FROM tbldse_wa_outbox WHERE status = 'queued' LIMIT 1")[0]), 'واقف') !== false);
     $GLOBALS['evo_state'] = 'down';
+    $m->wa_health_check(true);
+    ok(get_option('dse_wa_down_state') === 'close', 'غلطة واحدة عابرة مبتغيّرش الحالة');
     $m->wa_health_check(true);
     ok(strpos(get_option('dse_wa_last_error'), 'Evolution مش بيرد') === 0, get_option('dse_wa_last_error'));
 });
@@ -1379,12 +1387,23 @@ test('رجع: تنبيه "رجع" + المتراكم بيتبعت رسالة و�
     ok($r['sent'] === 1 && count($sent) === $n + 1, json_encode($r));
     $m->fixed_time += 10 * 60;
     ok($m->process_outbox(10)['sent'] === 0, 'لسه مفاتش نص ساعة');
+    ok(strpos($m->queue_reason(q("SELECT * FROM tbldse_wa_outbox WHERE status = 'queued' LIMIT 1")[0]), 'واحدة كل 30') !== false);
+    // بوست جديد نزل دلوقتي: رسالته بتتبعت على طول ومبتستناش ورا المتراكم
+    $nid = $m->queue_wa(1, 'welcome', 'fresh-after-up', ['client_name' => 'جديد'], true);
+    $r = $m->process_outbox(10);
+    ok($r['sent'] === 1 && q('SELECT status FROM tbldse_wa_outbox WHERE id = ?', [$nid])[0]['status'] === 'sent', json_encode($r));
+    // رسالة مستنية جروب لسه مااتربطش مبتعلّقش الإرسال بالراحة للأبد
+    $GLOBALS['dbx']->query("INSERT INTO tbldse_wa_outbox (clientid, msg_key, dedupe_key, destination, body, status, created_at) VALUES (1, 'x', 'pend-old', 'pending', 'x', 'queued', '2026-11-01 00:00:00')");
     $m->fixed_time += 21 * 60;
+    ok($m->process_outbox(10)['sent'] === 0, 'نص الساعة بتتحسب من آخر رسالة اتبعتت (حتى الجديدة)');
+    $m->fixed_time += 10 * 60;
     ok($m->process_outbox(10)['sent'] === 1, 'بعد نص ساعة');
-    ok($m->wa_health()['down'] === false && $m->wa_health()['queued'] === 1);
+    ok($m->wa_health()['down'] === false && $m->wa_health()['queued'] === 2, 'واحدة متراكمة + واحدة مستنية ربط الجروب');
     $m->fixed_time += 31 * 60;
     $m->process_outbox(10);
-    ok($m->wa_health() === null && get_option('dse_wa_paced_before') === '', 'خلص المتراكم ← رجوع للطبيعي');
+    ok(get_option('dse_wa_paced_before') === '', 'الرسالة اللي مستنية ربط الجروب مبتعلّقش الإرسال بالراحة');
+    $GLOBALS['dbx']->query("DELETE FROM tbldse_wa_outbox WHERE dedupe_key = 'pend-old'");
+    ok($m->wa_health() === null);
 });
 test('الرقم متصل بس آخر 3 رسايل فشلت = وقعة · ولما رسالة تتبعت يرجع', function () use ($m, $client, $db) {
     $m->fixed_time += 3600;

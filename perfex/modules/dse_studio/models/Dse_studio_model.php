@@ -1422,22 +1422,16 @@ class Dse_studio_model extends App_Model
         if ($this->opt('dse_wa_enabled', '0') !== '1' || !$this->evo || !$this->evo->configured()) {
             return $res;
         }
-        // الواتساب واقع (الرقم خرج): منبعتش خالص — الرسايل تفضل مستنية بدل ما تفشل
-        $down  = (string) $this->opt('dse_wa_down_since', '');
-        if ($down !== '' && !in_array($this->opt('dse_wa_down_state', ''), ['open', 'failing'], true)) {
+        // الرقم خرج فعلًا (Evolution قال close / connecting): منبعتش خالص — الرسايل تفضل مستنية بدل ما تفشل
+        if ($this->wa_hard_down()) {
             $res['waiting'] = (int) $this->row('SELECT COUNT(*) AS n FROM ' . $this->tbl('dse_wa_outbox') . " WHERE status = 'queued'")['n'];
             return $res;
         }
-        // بعد ما يرجع، أو الرقم متصل والرسايل بتفشل (بنجرّب واحدة): رسالة واحدة كل نص ساعة على الأقل عشان الرقم ميتحظرش
-        if ($down !== '' || $this->opt('dse_wa_paced_before', '') !== '') {
-            $gap  = max(1, (int) $this->opt('dse_wa_gap_minutes', 30));
-            $last = $this->row('SELECT MAX(sent_at) AS t FROM ' . $this->tbl('dse_wa_outbox') . " WHERE status IN ('sent','sending','failed') AND sent_at IS NOT NULL");
-            if ($last && $last['t'] && strtotime($last['t']) > $this->t() - $gap * 60) {
-                $res['waiting'] = (int) $this->row('SELECT COUNT(*) AS n FROM ' . $this->tbl('dse_wa_outbox') . " WHERE status = 'queued'")['n'];
-                return $res;
-            }
-            $limit = 1;
-        }
+        // الرسايل المتراكمة وقت الوقعة (أو وإحنا بنجرّب والرسايل بتفشل): واحدة كل نص ساعة عشان الرقم ميتحظرش.
+        // الرسايل الجديدة (بوست نزل / حجز …) بتتبعت على طول عادي.
+        $pb     = (string) $this->opt('dse_wa_paced_before', '');
+        $probe  = (string) $this->opt('dse_wa_down_since', '') !== '';
+        $gap_ok = $this->wa_gap_ok();
         $cap   = (int) $this->opt('dse_wa_daily_cap', 6);
         $since = date('Y-m-d H:i:s', $this->t() - 86400);
         $queue = $this->rows('SELECT * FROM ' . $this->tbl('dse_wa_outbox') . " WHERE status = 'queued' ORDER BY manual DESC, id LIMIT " . (int) ($limit * 3));
@@ -1445,6 +1439,11 @@ class Dse_studio_model extends App_Model
         foreach ($queue as $m) {
             if ($done >= $limit) {
                 break;
+            }
+            $slow = $probe || ($pb !== '' && $m['created_at'] <= $pb);
+            if ($slow && !$gap_ok) {
+                $res['waiting']++;
+                continue;
             }
             if ($m['destination'] === 'pending') {
                 $jid = $this->resolve_group($m['clientid']);
@@ -1472,6 +1471,9 @@ class Dse_studio_model extends App_Model
                 continue;
             }
             $done++;
+            if ($slow) {
+                $gap_ok = false; // واحدة بس من المتراكم في المرة
+            }
             try {
                 $this->evo->send_text($m['destination'], $m['body']);
                 $this->db->update($this->tbl('dse_wa_outbox'), ['status' => 'sent'], ['id' => $m['id']]);
@@ -1481,11 +1483,61 @@ class Dse_studio_model extends App_Model
                 $res['failed']++;
             }
         }
-        $pb = (string) $this->opt('dse_wa_paced_before', '');
-        if ($pb !== '' && !$this->row('SELECT id FROM ' . $this->tbl('dse_wa_outbox') . " WHERE status = 'queued' AND created_at <= ? LIMIT 1", [$pb])) {
+        if ($pb !== '' && !$this->row('SELECT id FROM ' . $this->tbl('dse_wa_outbox') . " WHERE status = 'queued' AND destination <> 'pending' AND created_at <= ? LIMIT 1", [$pb])) {
             update_option('dse_wa_paced_before', ''); // الرسايل اللي اتراكمت وقت الوقعة خلصت ← رجوع للطبيعي
         }
         return $res;
+    }
+
+    /** الرقم خرج فعلًا: Evolution قال إنه مش متصل، أو مش بيرد مرتين ورا بعض */
+    public function wa_hard_down()
+    {
+        return (string) $this->opt('dse_wa_down_since', '') !== '' && in_array($this->opt('dse_wa_down_state', ''), ['close', 'connecting', 'refused', 'error'], true);
+    }
+
+    /** فات نص ساعة (أو اللي في الإعدادات) من آخر رسالة اتبعتت؟ */
+    private function wa_gap_ok()
+    {
+        $gap  = max(1, (int) $this->opt('dse_wa_gap_minutes', 30));
+        $last = $this->row('SELECT MAX(sent_at) AS t FROM ' . $this->tbl('dse_wa_outbox') . " WHERE status IN ('sent','sending','failed') AND sent_at IS NOT NULL");
+        return !($last && $last['t'] && strtotime($last['t']) > $this->t() - $gap * 60);
+    }
+
+    /** ليه الرسالة دي لسه مستنية؟ (لصفحة الرسايل) */
+    public function queue_reason(array $m)
+    {
+        if ($m['status'] !== 'queued') {
+            return '';
+        }
+        if ($this->opt('dse_wa_enabled', '0') !== '1') {
+            return 'الإرسال مقفول من الإعدادات';
+        }
+        if ($this->wa_hard_down()) {
+            return 'واتساب السيستم واقف — هتتبعت لما يرجع';
+        }
+        if ($m['destination'] === 'pending') {
+            return 'جروب العميل لسه مااتربطش (رقم السيستم مش في الجروب)';
+        }
+        $pb = (string) $this->opt('dse_wa_paced_before', '');
+        if ((string) $this->opt('dse_wa_down_since', '') !== '' || ($pb !== '' && $m['created_at'] <= $pb)) {
+            return 'متراكمة من وقت ما الواتساب وقف — بتتبعت واحدة كل ' . max(1, (int) $this->opt('dse_wa_gap_minutes', 30)) . ' دقيقة';
+        }
+        if (!$m['manual']) {
+            $n = $this->row('SELECT COUNT(*) AS n FROM ' . $this->tbl('dse_wa_outbox') . " WHERE destination = ? AND manual = 0 AND status IN ('sent','sending') AND sent_at >= ?",
+                [$m['destination'], date('Y-m-d H:i:s', $this->t() - 86400)]);
+            if ((int) $n['n'] >= (int) $this->opt('dse_wa_daily_cap', 6)) {
+                return 'العميل وصل لأقصى عدد رسايل أوتوماتيك في اليوم (' . (int) $this->opt('dse_wa_daily_cap', 6) . ') — هتتبعت بكرة';
+            }
+        }
+        return 'هتتبعت مع الـ cron الجاي (لو فضلت كتير يبقى الـ cron بتاع Perfex مش شغال)';
+    }
+
+    /** زرار "رجّع الإرسال طبيعي": يلغي حالة الوقعة والإرسال بالراحة */
+    public function wa_reset_health()
+    {
+        foreach (['dse_wa_down_since', 'dse_wa_down_state', 'dse_wa_last_error', 'dse_wa_paced_before', 'dse_wa_check_at', 'dse_wa_err_count'] as $k) {
+            update_option($k, '');
+        }
     }
 
     /**
@@ -1508,11 +1560,22 @@ class Dse_studio_model extends App_Model
         update_option('dse_wa_check_at', (string) $now);
         $inst = (string) $this->opt('dse_evo_instance', '');
         try {
-            $state = (string) $this->evo->state();
+            $state = strtolower(trim((string) $this->evo->state()));
+            $state = in_array($state, ['open', 'connected'], true) ? 'open' : ($state === '' ? 'unknown' : $state);
             $err   = $state === 'open' ? '' : 'حالة الرقم في Evolution: ' . $state;
+            update_option('dse_wa_err_count', '0');
         } catch (Exception $e) {
+            // غلطة واحدة ممكن تبقى عابرة (النت / Evolution بيعمل restart) — مرتين ورا بعض (20 دقيقة) يبقى واقف
+            $n = (int) $this->opt('dse_wa_err_count', 0) + 1;
+            update_option('dse_wa_err_count', (string) $n);
+            if ($n < 2) {
+                return [];
+            }
             $state = 'error';
             $err   = 'Evolution مش بيرد: ' . mb_substr($e->getMessage(), 0, 200);
+        }
+        if (!in_array($state, ['open', 'close', 'connecting', 'refused', 'error'], true)) {
+            $state = 'open'; // حالة مش معروفة: منوقفش الإرسال عليها — فحص الرسايل الفاشلة تحت هو اللي بيحكم
         }
         if ($state === 'open') {
             $tries = $this->rows('SELECT status, error FROM ' . $this->tbl('dse_wa_outbox') . " WHERE status IN ('sent','failed') AND sent_at >= ? ORDER BY sent_at DESC, id DESC LIMIT 3",

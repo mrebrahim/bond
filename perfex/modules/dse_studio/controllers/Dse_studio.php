@@ -184,8 +184,39 @@ class Dse_studio extends AdminController
         $this->need('view');
         $data['title']   = _l('dse_menu_outbox');
         $data['outbox']  = $this->dse_studio_model->outbox(200);
+        foreach ($data['outbox'] as &$o) {
+            $o['reason'] = $this->dse_studio_model->queue_reason($o);
+        }
+        unset($o);
         $data['enabled'] = get_option('dse_wa_enabled') === '1';
+        $data['health']  = $this->dse_studio_model->wa_health();
         $this->load->view('outbox', $data);
+    }
+
+    /** الأدمن: شيك على الواتساب دلوقتي وابعت اللي مستني · أو رجّع الإرسال طبيعي */
+    public function wa_now($what = 'send')
+    {
+        if (!is_admin()) {
+            access_denied(DSE_STUDIO_MODULE_NAME);
+        }
+        $m = $this->dse_studio_model;
+        try {
+            if ($what === 'reset') {
+                $m->wa_reset_health();
+            }
+            $new = $m->wa_health_check(true);
+            if ($new) {
+                dse_studio_notify_staff($new);
+            }
+            $m->resolve_pending_groups(5);
+            $r = $m->process_outbox(10);
+            $h = $m->wa_health();
+            set_alert($h && $h['down'] ? 'warning' : 'success', 'اتبعت ' . $r['sent'] . ' · فشل ' . $r['failed'] . ' · مستني ' . $r['waiting']
+                . ($h && $h['down'] ? ' — الواتساب لسه واقف: ' . $h['error'] : ''));
+        } catch (Exception $e) {
+            set_alert('danger', $e->getMessage());
+        }
+        redirect(admin_url('dse_studio/outbox'));
     }
 
     public function settings()
