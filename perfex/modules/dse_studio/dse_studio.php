@@ -5,7 +5,7 @@ defined('BASEPATH') or exit('No direct script access allowed');
 /*
 Module Name: Digital Solution — الاستوديو والباقات
 Description: رصيد الباقات، حجز الاستوديو، السكربتات والنشر، جروبات واتساب العملاء (Evolution API)، وتنبيه العميل اللي مابيصوّرش.
-Version: 1.9.1
+Version: 1.9.2
 Requires at least: 3.0.*
 Author: Digital Solution
 */
@@ -21,6 +21,7 @@ register_language_files(DSE_STUDIO_MODULE_NAME, [DSE_STUDIO_MODULE_NAME]);
 register_cron_task('dse_studio_cron');
 
 hooks()->add_action('admin_init', 'dse_studio_admin_init');
+hooks()->add_action('app_admin_footer', 'dse_studio_date_inputs');
 
 function dse_studio_activation_hook()
 {
@@ -175,3 +176,67 @@ function dse_studio_notify_staff(array $alert_ids)
         }
     }
 }
+
+/**
+ * خانات التاريخ يوم/شهر/سنة (مصر) في صفحات الموديول: input[type=date|datetime-local] بتاع المتصفح بيتعرض
+ * بلغة الكروم (أمريكي = شهر/يوم/سنة). بنبدله بالـ datetimepicker بتاع Perfex بصيغة d/m/Y والأسبوع بيبدأ السبت،
+ * والقيمة اللي بتتبعت للسيرفر فاضلة YYYY-MM-DD (خانة مخفية) — يعني مفيش تغيير في الكود اللي بيستقبل.
+ */
+function dse_studio_date_inputs()
+{
+    $uri = $_SERVER['REQUEST_URI'] ?? '';
+    if (strpos($uri, '/dse_studio') === false) {
+        return;
+    }
+    echo <<<'JS'
+<script>
+(function () {
+  var $ = window.jQuery;
+  if (!$ || !$.fn.datetimepicker) { return; } // من غير الـ plugin: الخانة بتفضل زي ما هي
+  try { $.datetimepicker.setLocale('ar'); } catch (e) {}
+  var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+  var toIso = function (d, time) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + (time ? 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()) : ''); };
+  var toShow = function (iso, time) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(iso || '');
+    return m ? m[3] + '/' + m[2] + '/' + m[1] + (time && m[4] ? ' ' + m[4] + ':' + m[5] : '') : '';
+  };
+  var parseShow = function (v, time) {
+    var m = /^\s*(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})(?:\s+(\d{1,2}):(\d{2}))?\s*$/.exec(v || '');
+    if (!m) { return null; }
+    var d = new Date(+m[3], +m[2] - 1, +m[1], m[4] ? +m[4] : 0, m[5] ? +m[5] : 0);
+    return d.getDate() === +m[1] ? d : null;
+  };
+  var bounds = function (v) { return v ? v.slice(0, 10).replace(/-/g, '/') : false; };
+  var upgrade = function () {
+    $('input[type=date],input[type=datetime-local]').not('[data-dse-date]').each(function () {
+      var real = this, time = real.type === 'datetime-local';
+      var vis = $('<input type="text" autocomplete="off" dir="ltr">').attr('class', real.className)
+        .attr('placeholder', time ? 'يوم/شهر/سنة  ساعة:دقيقة' : 'يوم/شهر/سنة').val(toShow(real.value, time)).css('text-align', 'right');
+      if (real.required) { vis.prop('required', true); real.required = false; }
+      real.setAttribute('data-dse-date', '1');
+      $(real).before(vis);
+      real.type = 'hidden';
+      var sync = function () {
+        var d = parseShow(vis.val(), time);
+        real.value = d ? toIso(d, time) : '';
+        $(real).trigger('change');
+      };
+      vis.datetimepicker({
+        format: time ? 'd/m/Y H:i' : 'd/m/Y', formatDate: 'Y/m/d', timepicker: time, datepicker: true, step: 15,
+        dayOfWeekStart: 6, scrollInput: false, closeOnDateSelect: !time,
+        i18n: { ar: { // مصري + الأيام من الأحد (الـ plugin بيبدأ عدّ الأيام من الأحد)
+          months: ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'],
+          dayOfWeekShort: ['ح', 'ن', 'ث', 'ر', 'خ', 'ج', 'س'],
+          dayOfWeek: ['الأحد', 'الاتنين', 'التلات', 'الأربع', 'الخميس', 'الجمعة', 'السبت'] } },
+        minDate: bounds(real.getAttribute('min')), maxDate: bounds(real.getAttribute('max')),
+        onChangeDateTime: function (dp) { real.value = dp ? toIso(dp, time) : ''; $(real).trigger('change'); }
+      });
+      vis.on('change blur', sync);
+    });
+  };
+  $(upgrade);
+})();
+</script>
+JS;
+}
+
