@@ -18,8 +18,8 @@ $total = array_sum($counts);
   <div class="panel_s"><div class="panel-body">
     <div style="display:flex;flex-wrap:wrap;gap:6px">
       <a class="btn btn-sm <?= $specialty === '' ? 'btn-primary' : 'btn-default'; ?>" href="<?= $url(['specialty' => '']); ?>">الكل (<?= (int) $total; ?>)</a>
-      <?php foreach ($sps as $k => $l) { if (empty($counts[$k]) && $specialty !== $k) { continue; } ?>
-        <a class="btn btn-sm <?= $specialty === $k ? 'btn-primary' : 'btn-default'; ?>" href="<?= $url(['specialty' => $k]); ?>"><?= html_escape($l); ?> (<?= (int) ($counts[$k] ?? 0); ?>)</a>
+      <?php foreach ($sps as $k => $l) { $n = (int) ($counts[$k] ?? 0); ?>
+        <a class="btn btn-sm <?= $specialty === $k ? 'btn-primary' : 'btn-default'; ?>" style="<?= $n || $specialty === $k ? '' : 'opacity:.55'; ?>" href="<?= $url(['specialty' => $k]); ?>"><?= html_escape($l); ?> (<?= $n; ?>)</a>
       <?php } ?>
       <?php if (!empty($counts['none'])) { ?><a class="btn btn-sm <?= $specialty === 'none' ? 'btn-primary' : 'btn-default'; ?>" href="<?= $url(['specialty' => 'none']); ?>">من غير تخصص (<?= (int) $counts['none']; ?>)</a><?php } ?>
     </div>
@@ -33,7 +33,7 @@ $total = array_sum($counts);
   </div></div>
 
   <?php if (!$rows) { ?>
-    <div class="panel_s"><div class="panel-body text-muted">مفيش مواضيع viral هنا لسه. من كالندر العميل افتح الموضوع اللي كسّر واختار "عمل Viral؟ ← 🔥 أيوه".</div></div>
+    <div class="panel_s"><div class="panel-body text-muted">مفيش مواضيع viral<?= $specialty !== '' && $specialty !== 'none' ? ' لـ ' . html_escape($sps[$specialty]) : ''; ?> لسه. من كالندر العميل افتح الموضوع اللي كسّر واختار "عمل Viral؟ ← 🔥 أيوه".</div></div>
   <?php } ?>
   <?php foreach ($rows as $r) { ?>
     <div class="panel_s"><div class="panel-body">

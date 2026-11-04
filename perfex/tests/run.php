@@ -1278,7 +1278,7 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
     ok(strpos($mpv, '🔥 Viral · 250,000') !== false, 'علامة الـ viral');
     $lv = render('library', ['specialty' => 'dentist', 'type' => '', 'q' => '', 'rows' => $m->content_library('dentist'), 'counts' => $m->library_counts()]);
     file_put_contents(sys_get_temp_dir() . '/dse_library.html', $lv);
-    ok(strpos($lv, 'دكتور أسنان (1)') !== false && strpos($lv, '250,000 مشاهدة') !== false && strpos($lv, 'انسخ السكربت') !== false, 'صفحة المكتبة');
+    ok(strpos($lv, 'دكتور أسنان (1)') !== false && strpos($lv, 'دكتور نسا وتوليد (0)') !== false && strpos($lv, 'مستشفى (0)') !== false && strpos($lv, '250,000 مشاهدة') !== false && strpos($lv, 'انسخ السكربت') !== false, 'صفحة المكتبة');
     file_put_contents(sys_get_temp_dir() . '/dse_media.html', $mv);
     ok(strpos($mv, 'عيادة د. منى') !== false && strpos($mv, 'افتح الكالندر') !== false, 'صفحة الميديا');
     ok(strpos($mpv, 'هدف الشهر') !== false && strpos($mpv, 'وصلنا 80%') !== false && strpos($mpv, 'مانوال السكربت') !== false && strpos($mpv, '3 غلطات في تنضيف السنان') !== false && strpos($mpv, 'املا الشهر من مواعيد التنزيل') !== false && substr_count($mpv, 'class="panel_s dse-item"') === 13 && strpos($mpv, 'action="/admin/dse_studio/media_plan/' . $mc . '?month=2026-11"') !== false, 'كالندر العميل');
