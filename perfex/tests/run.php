@@ -1047,6 +1047,39 @@ test('مواعيد الأقساط: الدفعات بتغطي الأقدم الأ
     $db->query("UPDATE tbldse_packages SET status = 'cancelled' WHERE clientid = ?", [$c]);
     $m->fixed_time = $save;
 });
+
+test('ليه العملاء بيمشوا: الإلغاء ومش هيجدد بسبب إجباري · "اتعملت بالغلط" مش خسارة · الرجوع بيشيل الحالة · التقرير بالسبب والفلوس وهنعمل إيه', function () use ($m, $db) {
+    $save = $m->fixed_time;
+    $m->fixed_time = strtotime('2026-11-04 10:00:00');
+    $db->query('DELETE FROM tbldse_churn');
+    $mk = function ($name, $price) use ($m, $db) { $db->insert('tblclients', ['company' => $name]); $c = $db->insert_id(); return [$c, $m->create_package($c, 'G', $price, '2026-11-01', 30, ['reel' => 4])]; };
+    [$a, $pa] = $mk('مشي سعر', 6000);
+    [$b, $pb] = $mk('مشي نتيجة', 8000);
+    [$c, $pc] = $mk('غلط', 3000);
+    [$d, $pd] = $mk('مش هيجدد', 5000);
+    throws(function () use ($m, $pa) { $m->cancel_package($pa, '', '', true); }, 'اختار سبب الإلغاء');
+    throws(function () use ($m, $pa) { $m->cancel_package($pa, 'other', '', true); }, 'اكتب السبب');
+    $m->cancel_package($pa, 'price', 'لقى أرخص', true);
+    $m->cancel_package($pb, 'no_results', 'مفيش حجوزات', true);
+    $m->cancel_package($pc, 'mistake', '', true);
+    ok(count(q('SELECT id FROM tbldse_churn')) === 2, 'الغلط مش خسارة');
+    // رجّعها (اتلغت بالغلط) ← الحالة بتتشال
+    $m->restore_package($pb);
+    ok(count(q('SELECT id FROM tbldse_churn')) === 1);
+    $m->cancel_package($pb, 'no_results', 'مفيش حجوزات', true);
+    // مش هيجدد: السبب إجباري ومتسجلش مرتين
+    throws(function () use ($m, $d) { $m->set_renewal_status($d, 'lost', '', '', true); }, 'اختار ليه مش هيجدد');
+    $m->set_renewal_status($d, 'lost', 'هيوقف شهرين', 'pause', true);
+    $m->set_renewal_status($d, 'lost', 'هيوقف شهرين', 'pause', true);
+    ok(count(q("SELECT id FROM tbldse_churn WHERE kind = 'not_renewed'")) === 1);
+    $m->set_renewal_status($d, 'later'); // الحالة اتغيرت ← مبيمسحش التاريخ
+    $r = $m->churn_report();
+    ok($r['total'] === 3 && $r['value'] == 19000 && $r['by'][0]['reason'] === 'no_results' && $r['by'][0]['value'] == 8000 && strpos($r['by'][0]['fix'], 'تقرير') !== false, json_encode($r['by'], JSON_UNESCAPED_UNICODE));
+    ok($r['recent'][0]['company'] !== '' && in_array('لقى أرخص', array_column($r['recent'], 'note'), true));
+    $GLOBALS['churn'] = $r;
+    $db->query("UPDATE tbldse_packages SET status = 'cancelled' WHERE clientid IN (?, ?, ?, ?)", [$a, $b, $c, $d]);
+    $m->fixed_time = $save;
+});
 echo "\nالتنبيهات:\n";
 test('العميل بقاله فترة مابيصوّرش → تنبيه مرة واحدة، urgent لو مفيش نشر', function () use ($m, $client, $db) {
     ok(count($m->check_inactive_clients()) === 0, 'لسه بادئ');
@@ -1176,7 +1209,9 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
     file_put_contents(sys_get_temp_dir() . '/dse_media.html', $mv);
     ok(strpos($mv, 'عيادة د. منى') !== false && strpos($mv, 'افتح الكالندر') !== false, 'صفحة الميديا');
     ok(strpos($mpv, 'هدف الشهر') !== false && strpos($mpv, 'وصلنا 80%') !== false && strpos($mpv, 'مانوال السكربت') !== false && strpos($mpv, '3 غلطات في تنضيف السنان') !== false && strpos($mpv, 'املا الشهر من مواعيد التنزيل') !== false && substr_count($mpv, 'class="panel_s dse-item"') === 13 && strpos($mpv, 'action="/admin/dse_studio/media_plan/' . $mc . '?month=2026-11"') !== false, 'كالندر العميل');
-    $rn = render('renewals', ['rows' => $m->renewals(''), 'status' => '']);
+    $cv = render('renewals', ['rows' => [], 'status' => 'churn', 'churn' => $GLOBALS['churn']]);
+    ok(strpos($cv, 'ليه العملاء بيمشوا') !== false && strpos($cv, 'هنعمل إيه') !== false && strpos($cv, 'لقى أرخص') !== false && strpos($cv, '🔺') !== false, 'تقرير ليه بيمشوا');
+    $rn = render('renewals', ['rows' => $m->renewals(''), 'status' => '', 'churn' => null]);
     ok(strpos($rn, 'عيادة د. سامي') !== false && strpos($rn, 'ابعت طلب التجديد') !== false && strpos($rn, 'آخر طلب') !== false && strpos($rn, 'قديمة') !== false, 'صف التجديد');
     file_put_contents(sys_get_temp_dir() . '/dse_renewals.html', $rn);
     render('outbox', ['outbox' => $m->outbox(), 'enabled' => false]);

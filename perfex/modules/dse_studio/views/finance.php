@@ -137,6 +137,13 @@ $ren   = $f['renewals'];
       </div></div>
 
       <div class="panel_s"><div class="panel-body">
+        <h5 class="bold" style="margin-top:0">📉 ليه العملاء بيمشوا (12 شهر)</h5>
+        <?php if (empty($f['churn']['by'])) { ?><p class="text-muted small">مفيش حالات متسجلة</p><?php } ?>
+        <?php foreach (array_slice($f['churn']['by'] ?? [], 0, 5) as $x) { ?><div class="small"><?= html_escape($x['label']); ?> — <b><?= (int) $x['count']; ?></b> (<?= (int) $x['share']; ?>%) · <?= dse_money($x['value']); ?></div><?php } ?>
+        <a class="small" href="<?= admin_url('dse_studio/renewals?status=churn'); ?>">التفاصيل وهنعمل إيه ←</a>
+      </div></div>
+
+      <div class="panel_s"><div class="panel-body">
         <h5 class="bold" style="margin-top:0">🏆 أكتر العملاء دفعوا (12 شهر)</h5>
         <?php foreach ($f['top'] as $i => $t) { ?><div class="small"><?= $i + 1; ?>) <a href="<?= admin_url('dse_studio/client/' . $t['clientid']); ?>"><?= html_escape($t['company']); ?></a> — <b><?= dse_money($t['paid']); ?></b></div><?php } ?>
         <?php if (!$f['top']) { ?><p class="text-muted small">لسه مفيش مدفوعات</p><?php } ?>

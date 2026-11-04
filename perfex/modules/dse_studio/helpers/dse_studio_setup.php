@@ -261,6 +261,20 @@ function dse_studio_schema()
             ],
             'indexes' => ['idx_dse_installments_pkg' => '(`package_id`, `due_date`)'],
         ],
+        'dse_churn' => [ // العملاء اللي مشيوا / لغوا: السبب علشان نتعلم ومنخسرش غيرهم
+            'cols' => [
+                '{pk}',
+                '`clientid` INT NOT NULL',
+                '`package_id` INT NULL',
+                "`kind` VARCHAR(20) NOT NULL DEFAULT 'cancel'", // cancel (الغى الباقة) · not_renewed (مش هيجدد)
+                '`reason` VARCHAR(20) NOT NULL',
+                '`note` VARCHAR(255) NULL',
+                '`lost_value` DECIMAL(12,2) NOT NULL DEFAULT 0', // سعر الباقة اللي خسرناها
+                '`staff_id` INT NULL',
+                '`created_at` DATETIME NOT NULL',
+            ],
+            'indexes' => ['idx_dse_churn_client' => '(`clientid`)', 'idx_dse_churn_date' => '(`created_at`)'],
+        ],
         'dse_alerts' => [
             'cols' => [
                 '{pk}',
@@ -331,7 +345,7 @@ function dse_studio_default_options()
 
 if (!defined('DSE_STUDIO_SCHEMA_VERSION')) {
 /** نسخة الجداول — زوّدها مع أي جدول جديد */
-    define('DSE_STUDIO_SCHEMA_VERSION', '13');
+    define('DSE_STUDIO_SCHEMA_VERSION', '14');
 }
 
 if (!function_exists('dse_studio_ensure_schema')) {

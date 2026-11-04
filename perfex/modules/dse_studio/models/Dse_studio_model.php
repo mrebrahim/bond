@@ -513,13 +513,77 @@ class Dse_studio_model extends App_Model
         return $this->sync_package_status($p['id']);
     }
 
-    public function cancel_package($package_id)
+    /** الغي الباقة — $require_reason من الشاشة: لازم سبب (علشان نعرف ليه العملاء بيمشوا) */
+    public function cancel_package($package_id, $reason = null, $note = null, $require_reason = false)
     {
         $p = $this->package($package_id);
+        if ($require_reason && !isset(dse_churn_reasons()[(string) $reason])) {
+            throw new Exception('اختار سبب الإلغاء — علشان نعرف ليه العملاء بيمشوا ونصلّحه');
+        }
+        if ((string) $reason === 'other' && trim((string) $note) === '') {
+            throw new Exception('اكتب السبب في الملاحظة');
+        }
         if ($this->row('SELECT id FROM ' . $this->tbl('dse_sessions') . " WHERE package_id = ? AND status = 'booked' LIMIT 1", [$p['id']])) {
             throw new Exception('فيه جلسات محجوزة على الباقة — الغيها الأول');
         }
         $this->db->update($this->tbl('dse_packages'), ['status' => 'cancelled'], ['id' => $p['id']]);
+        if ($reason && $reason !== 'mistake' && isset(dse_churn_reasons()[$reason])) {
+            $this->log_churn($p['clientid'], 'cancel', $reason, $note, $p['id'], (float) $p['price']);
+        }
+    }
+
+    /** سجّل خسارة عميل (من الإلغاء أو "مش هيجدد") */
+    private function log_churn($clientid, $kind, $reason, $note, $package_id = null, $value = 0.0)
+    {
+        $this->ensure_renewal_columns();
+        $this->db->insert($this->tbl('dse_churn'), [
+            'clientid' => (int) $clientid, 'package_id' => $package_id ? (int) $package_id : null, 'kind' => $kind, 'reason' => $reason,
+            'note' => trim((string) $note) !== '' ? mb_substr(trim($note), 0, 255) : null, 'lost_value' => round((float) $value, 2),
+            'staff_id' => $this->staff_id(), 'created_at' => $this->now(),
+        ]);
+        return (int) $this->db->insert_id();
+    }
+
+    /**
+     * ليه العملاء بيمشوا: بالسبب (العدد · الفلوس اللي خسرناها · هنعمل إيه) + آخر الحالات.
+     * $from/$to فاضيين = آخر 12 شهر
+     */
+    public function churn_report($from = null, $to = null)
+    {
+        $this->ensure_renewal_columns();
+        $to   = $to ?: $this->today();
+        $from = $from ?: date('Y-m-d', strtotime($to . ' -12 months'));
+        $rows = $this->db->table_exists($this->tbl('dse_churn'))
+            ? $this->rows('SELECT * FROM ' . $this->tbl('dse_churn') . ' WHERE created_at >= ? AND created_at <= ? ORDER BY created_at DESC', [$from . ' 00:00:00', $to . ' 23:59:59'])
+            : [];
+        $by = [];
+        foreach ($rows as $r) {
+            $k = $r['reason'];
+            $by[$k] = $by[$k] ?? ['reason' => $k, 'label' => dse_churn_reasons()[$k][0] ?? $k, 'fix' => dse_churn_reasons()[$k][1] ?? '', 'count' => 0, 'value' => 0.0, 'clients' => []];
+            $by[$k]['count']++;
+            $by[$k]['value'] += (float) $r['lost_value'];
+            $by[$k]['clients'][(int) $r['clientid']] = 1;
+        }
+        usort($by, function ($a, $b) { return [$b['count'], $b['value']] <=> [$a['count'], $a['value']]; });
+        $total = count($rows);
+        foreach ($by as &$x) {
+            $x['share']   = $total ? (int) round(100 * $x['count'] / $total) : 0;
+            $x['clients'] = count($x['clients']);
+        }
+        unset($x);
+        $recent = array_map(function ($r) {
+            return $r + ['company' => $this->client($r['clientid'])['company'], 'label' => dse_churn_reasons()[$r['reason']][0] ?? $r['reason'], 'staff' => $this->staff_name_safe($r['staff_id'])];
+        }, array_slice($rows, 0, 30));
+        return ['from' => $from, 'to' => $to, 'total' => $total, 'value' => array_sum(array_column($rows, 'lost_value')), 'by' => $by, 'recent' => $recent];
+    }
+
+    private function staff_name_safe($id)
+    {
+        if (!$id) {
+            return '';
+        }
+        $s = $this->row('SELECT firstname, lastname FROM ' . $this->tbl('staff') . ' WHERE staffid = ?', [(int) $id]);
+        return $s ? trim($s['firstname'] . ' ' . $s['lastname']) : '';
     }
 
     /** اتلغت بالغلط ← ترجع (مستنية الدفع لحد ما الفواتير تفعّلها تاني) */
@@ -530,6 +594,9 @@ class Dse_studio_model extends App_Model
             throw new Exception('الباقة دي مش ملغية');
         }
         $this->db->update($this->tbl('dse_packages'), ['status' => $p['activated_at'] ? 'active' : 'pending'], ['id' => $p['id']]);
+        if ($this->db->table_exists($this->tbl('dse_churn'))) { // اتلغت بالغلط ← مش خسارة
+            $this->db->query('DELETE FROM ' . $this->tbl('dse_churn') . " WHERE package_id = ? AND kind = 'cancel'", [$p['id']]);
+        }
         return $this->sync_package_status($p['id']);
     }
 
@@ -656,7 +723,7 @@ class Dse_studio_model extends App_Model
                 $this->db->query('DELETE FROM ' . $this->tbl($t) . ' WHERE package_id = ?', [(int) $id]);
             }
         }
-        foreach (['dse_package_services', 'dse_package_installments', 'dse_content_items', 'dse_content_plans', 'dse_publish_slots'] as $t) {
+        foreach (['dse_package_services', 'dse_package_installments', 'dse_content_items', 'dse_content_plans', 'dse_publish_slots', 'dse_churn'] as $t) {
             if ($this->db->table_exists($this->tbl($t))) {
                 $this->db->query('DELETE FROM ' . $this->tbl($t) . ' WHERE clientid = ?', [(int) $clientid]);
             }
@@ -1995,7 +2062,7 @@ class Dse_studio_model extends App_Model
             'booked' => $booked, 'renewals' => $ren, 'active' => $active,
             'churn_6m' => $churn6 !== null ? (int) round(100 * $churn6) : null, 'renewal_6m' => $dec6 ? (int) round(100 * $r6['renewed'] / $dec6) : null,
             'arpa' => $arpa, 'ltv' => $churn6 ? $arpa / $churn6 : null,
-            'receivables' => $this->receivables(), 'trend' => $trend, 'top' => $this->top_clients($yf, $to),
+            'receivables' => $this->receivables(), 'trend' => $trend, 'top' => $this->top_clients($yf, $to), 'churn' => $this->churn_report($yf, $to),
             'ytd_cash' => array_sum(array_column($trend, 'cash')), 'ytd_expenses' => array_sum(array_column($trend, 'expenses')),
         ];
     }
@@ -2874,7 +2941,7 @@ class Dse_studio_model extends App_Model
         if (!self::$renewal_cols_checked && function_exists('dse_studio_add_missing_columns') && function_exists('get_instance')) {
             dse_studio_add_missing_columns(['dse_clients' => ['renewal_status', 'renewal_note', 'renewal_updated_at', 'wa_link_error'], 'dse_packages' => ['historic', 'grace_days'], 'dse_posts' => ['scheduled']]);
             $CI = &get_instance();
-            foreach (['dse_publish_slots', 'dse_content_plans', 'dse_content_items', 'dse_package_services', 'dse_package_installments'] as $t) { // جداول اتضافت بعد كده
+            foreach (['dse_publish_slots', 'dse_content_plans', 'dse_content_items', 'dse_package_services', 'dse_package_installments', 'dse_churn'] as $t) { // جداول اتضافت بعد كده
                 if (is_object($CI) && isset($CI->db) && !$CI->db->table_exists($this->tbl($t))) {
                     foreach (dse_studio_create_sql($t, dse_studio_schema()[$t], db_prefix(), ($CI->db->dbdriver ?? 'mysqli') === 'sqlite' ? 'sqlite' : 'mysql', 'utf8mb4') as $sql) {
                         $CI->db->query($sql);
@@ -2927,13 +2994,26 @@ class Dse_studio_model extends App_Model
         return $out;
     }
 
-    public function set_renewal_status($clientid, $status, $note = null)
+    public function set_renewal_status($clientid, $status, $note = null, $reason = null, $require_reason = false)
     {
         $this->ensure_renewal_columns();
         if (!in_array($status, ['', 'contacted', 'later', 'lost'], true)) {
             throw new Exception('حالة غلط');
         }
         $this->client($clientid);
+        if ($status === 'lost') {
+            if ($require_reason && (!isset(dse_churn_reasons()[(string) $reason]) || $reason === 'mistake')) {
+                throw new Exception('اختار ليه مش هيجدد — علشان نتعلم ومنخسرش غيره');
+            }
+            if ((string) $reason === 'other' && trim((string) $note) === '') {
+                throw new Exception('اكتب السبب في الملاحظة');
+            }
+            $prev = $this->row('SELECT renewal_status FROM ' . $this->tbl('dse_clients') . ' WHERE clientid = ?', [(int) $clientid]);
+            if ($reason && ($prev['renewal_status'] ?? '') !== 'lost') {
+                $last = $this->last_packages()[(int) $clientid] ?? null;
+                $this->log_churn($clientid, 'not_renewed', $reason, $note, $last['id'] ?? null, $last ? (float) $last['price'] : 0);
+            }
+        }
         $row = ['renewal_status' => $status ?: null, 'renewal_note' => trim((string) $note) !== '' ? mb_substr(trim($note), 0, 255) : null, 'renewal_updated_at' => $this->now()];
         if ($this->row('SELECT clientid FROM ' . $this->tbl('dse_clients') . ' WHERE clientid = ?', [(int) $clientid])) {
             $this->db->update($this->tbl('dse_clients'), $row, ['clientid' => (int) $clientid]);

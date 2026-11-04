@@ -128,14 +128,19 @@ class Dse_studio extends AdminController
         $this->need('view');
         $status = in_array($this->input->get('status'), ['', 'open', 'contacted', 'later', 'lost'], true) ? (string) $this->input->get('status') : 'open';
         $status = $this->input->get('status') === null ? 'open' : $status;
-        $this->load->view('renewals', ['title' => _l('dse_menu_renewals'), 'rows' => $this->dse_studio_model->renewals($status), 'status' => $status]);
+        if ($this->input->get('status') === 'churn') {
+            $status = 'churn';
+        }
+        $this->load->view('renewals', ['title' => _l('dse_menu_renewals'), 'status' => $status,
+            'rows' => $status === 'churn' ? [] : $this->dse_studio_model->renewals($status),
+            'churn' => $status === 'churn' ? $this->dse_studio_model->churn_report() : null]);
     }
 
     public function renewal_status($clientid)
     {
         $m = $this->dse_studio_model;
         $this->act('view', function () use ($m, $clientid) {
-            $m->set_renewal_status($clientid, (string) $this->post('status', ''), $this->post('note'));
+            $m->set_renewal_status($clientid, (string) $this->post('status', ''), $this->post('note'), $this->post('reason'), true);
             return 'اتحفظ';
         }, admin_url('dse_studio/renewals' . ($this->input->get('back') ? '?status=' . urlencode($this->input->get('back')) : '')));
     }
@@ -387,7 +392,10 @@ class Dse_studio extends AdminController
     {
         $m = $this->dse_studio_model;
         $p = $m->package($package_id);
-        $this->act('delete', function () use ($m, $package_id) { $m->cancel_package($package_id); return 'الباقة اتلغت'; },
+        $this->act('delete', function () use ($m, $package_id) {
+            $m->cancel_package($package_id, $this->post('reason'), $this->post('reason_note'), true);
+            return 'الباقة اتلغت — والسبب اتسجل في "ليه العملاء بيمشوا"';
+        },
             $this->input->get('back') === 'home' ? admin_url('dse_studio') : admin_url('dse_studio/client/' . $p['clientid']));
     }
 

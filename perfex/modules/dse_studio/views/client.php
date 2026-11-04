@@ -237,7 +237,13 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                       <?= form_open(admin_url('dse_studio/activate_package/' . $p['id']), ['class' => 'inline-block', 'onsubmit' => "return confirm('تفعّل الباقة من غير فاتورة مدفوعة؟')"]); ?><button class="btn btn-success btn-xs">فعّل يدوي</button><?= form_close(); ?>
                     <?php } ?>
                     <?php if (staff_can('delete', DSE_STUDIO_MODULE_NAME)) { ?>
-                      <?= form_open(admin_url('dse_studio/cancel_package/' . $p['id']), ['class' => 'inline-block', 'onsubmit' => "return confirm('تلغي الباقة؟ (تقدر ترجّعها بعدين)')"]); ?><button class="btn btn-link btn-xs text-danger">الغي الباقة</button><?= form_close(); ?>
+                      <details class="dse-box dse-box-sm inline-block"><summary class="text-danger">الغي الباقة</summary>
+                        <?= form_open(admin_url('dse_studio/cancel_package/' . $p['id']), ['class' => 'form-inline', 'onsubmit' => "return confirm('تلغي الباقة؟ (تقدر ترجّعها بعدين)')"]); ?>
+                          <?= dse_churn_select('reason'); ?>
+                          <input name="reason_note" class="form-control input-sm" placeholder="قال إيه بالظبط؟" style="min-width:180px">
+                          <button class="btn btn-danger btn-xs">الغي</button>
+                        <?= form_close(); ?>
+                      </details>
                     <?php } ?>
                   </div>
                 </div>

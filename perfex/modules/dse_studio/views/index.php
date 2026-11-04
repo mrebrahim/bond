@@ -90,9 +90,10 @@
                     <?php } else { ?>
                       <span class="small text-muted" title="مينفعش تتمسح علشان عليها شغل — الغيها بدل كده">🔒 عليها: <?= html_escape($p['activity']); ?></span>
                     <?php } ?>
-                    <?= form_open(admin_url('dse_studio/cancel_package/' . $p['id'] . '?back=home'), ['style' => 'display:inline', 'onsubmit' => "return confirm('تلغي باقة " . html_escape(addslashes($p['company'])) . "؟ (تقدر ترجّعها من صفحة العميل)')"]); ?>
-                      <button class="btn btn-default btn-xs">الغي</button>
-                    <?= form_close(); ?>
+                    <details style="display:inline-block"><summary class="btn btn-default btn-xs">الغي</summary>
+                    <?= form_open(admin_url('dse_studio/cancel_package/' . $p['id'] . '?back=home'), ['class' => 'form-inline', 'onsubmit' => "return confirm('تلغي باقة " . html_escape(addslashes($p['company'])) . "؟')"]); ?>
+                      <?= dse_churn_select('reason'); ?> <input name="reason_note" class="form-control input-sm" placeholder="ملاحظة" style="width:120px"> <button class="btn btn-danger btn-xs">الغي</button>
+                    <?= form_close(); ?></details>
                   <?php } ?>
                 </td>
               </tr>
