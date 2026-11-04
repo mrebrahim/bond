@@ -445,8 +445,10 @@ class Dse_studio extends AdminController
     {
         $m = $this->dse_studio_model;
         $this->session_action($id, 'create', function () use ($m, $id) {
-            $m->reschedule_session($id, $this->post('start_at'), $this->post('studio_id'), $this->post('photographer_id', 0));
-        }, 'الميعاد اتغيّر');
+            $r = $m->reschedule_session($id, $this->post('start_at'), $this->post('studio_id'), $this->post('photographer_id', 0),
+                $this->post('qty'), $this->post('deduct', 0), $this->post('reason'));
+            return 'الميعاد اتغيّر' . ($r['deducted'] > 0 ? ' واتخصم ' . dse_num($r['deducted']) . ' من رصيده' : ' من غير خصم') . ' · الجلسة ' . dse_num($r['qty']);
+        }, '');
     }
 
     public function complete($id)

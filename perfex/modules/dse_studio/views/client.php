@@ -416,10 +416,21 @@ $inv_name = function ($i) { return function_exists('format_invoice_number') ? fo
                     <input type="number" name="actual_qty" min="0.5" step="0.5" value="<?= dse_num($s['qty']); ?>" class="form-control input-sm" style="width:70px" required>
                     <button class="btn btn-success btn-xs">اتصورت</button>
                   <?= form_close(); ?>
-                  <?= form_open(admin_url('dse_studio/reschedule/' . $s['id']), ['class' => 'form-inline']); ?>
-                    <input type="datetime-local" name="start_at" class="form-control input-sm" required>
-                    <button class="btn btn-default btn-xs">غيّر الميعاد</button>
-                  <?= form_close(); ?>
+                  <?php $ri = $s['resched'] ?? ['late' => false, 'suggest' => 0, 'avail' => (float) $s['qty'], 'hours' => 24]; $u = dse_unit($s['type']); ?>
+                  <details class="dse-box dse-box-sm" style="flex-basis:100%">
+                    <summary>🔁 اعتذر / غيّر الميعاد</summary>
+                    <?= form_open(admin_url('dse_studio/reschedule/' . $s['id'])); ?>
+                      <?php if ($ri['late']) { ?><div class="text-warning small mbot5">⚠️ اعتذار متأخر (قبل الميعاد بأقل من <?= dse_num($ri['hours']); ?> ساعة) — المقترح يتخصم <?= dse_num($ri['suggest']) . ' ' . $u; ?>، وانت اللي تقرر.</div><?php } ?>
+                      <div class="row">
+                        <div class="col-xs-12 col-sm-6 form-group"><label class="small">الميعاد الجديد</label><input type="datetime-local" name="start_at" class="form-control input-sm" required></div>
+                        <div class="col-xs-6 col-sm-3 form-group"><label class="small">عدد <?= $u; ?> في الجلسة</label><input type="number" name="qty" min="0.5" step="0.5" max="<?= dse_num($ri['avail']); ?>" value="<?= dse_num($s['qty']); ?>" class="form-control input-sm" required></div>
+                        <div class="col-xs-6 col-sm-3 form-group"><label class="small">يتخصم من رصيده</label><input type="number" name="deduct" min="0" step="0.5" max="<?= dse_num($ri['avail']); ?>" value="<?= dse_num($ri['suggest']); ?>" class="form-control input-sm"></div>
+                      </div>
+                      <input name="reason" class="form-control input-sm mbot5" placeholder="السبب (اعتذر عشان…)">
+                      <div class="small text-muted mbot5">متاح لـ <?= $u; ?> مع الجلسة دي: <?= dse_num($ri['avail']); ?> — الجلسة + الخصم لازم ميعدّوش الرقم ده. 0 خصم = الرصيد زي ما هو.</div>
+                      <button class="btn btn-primary btn-xs">احفظ الميعاد الجديد</button>
+                    <?= form_close(); ?>
+                  </details>
                   <?= form_open(admin_url('dse_studio/no_show/' . $s['id']), ['class' => 'form-inline', 'onsubmit' => "return confirm('العميل مجاش؟ هيتخصم من رصيده')"]); ?>
                     <button class="btn btn-warning btn-xs">مجاش</button>
                   <?= form_close(); ?>

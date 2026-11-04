@@ -322,7 +322,7 @@ function dse_studio_default_options()
         'dse_evo_instance'         => '010',
         'dse_wa_daily_cap'         => '6',
         'dse_wa_gap_minutes'       => '30',  // بعد ما الواتساب يرجع: أقل وقت بين كل رسالة والتانية
-        'dse_wa_alert_staff_ids'   => '',    // مين يوصله "الواتساب وقف" — فاضي = كل الأدمنز
+        'dse_wa_alert_staff_ids'   => '1',   // مين يوصله "الواتساب وقف" (1 = إبراهيم) — فاضي = كل الأدمنز
         'dse_wa_team_numbers'      => '201050858834,201284816199,201224186293,201276530062',
         'dse_minutes_per_reel'     => '20',
         'dse_minutes_per_podcast'  => '120',   // حلقة البودكاست أقصاها ساعتين في الاستوديو
@@ -347,7 +347,7 @@ function dse_studio_default_options()
 
 if (!defined('DSE_STUDIO_SCHEMA_VERSION')) {
 /** نسخة الجداول — زوّدها مع أي جدول جديد */
-    define('DSE_STUDIO_SCHEMA_VERSION', '15');
+    define('DSE_STUDIO_SCHEMA_VERSION', '16');
 }
 
 if (!function_exists('dse_studio_ensure_schema')) {
@@ -377,6 +377,12 @@ function dse_studio_ensure_schema()
          WHERE p.invoice_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ' . db_prefix() . 'dse_package_invoices x WHERE x.invoice_id = p.invoice_id)');
     foreach (dse_studio_default_options() as $name => $value) {
         add_option($name, $value, 0); // مبيغيّرش اللي متسجل
+    }
+    if (get_option('dse_wa_alert_default_set') !== '1') { // 1.9.4: تنبيه الواتساب لإبراهيم بس (حتى لو 1.9.3 اتسطبت بالخانة فاضية)
+        if (trim((string) get_option('dse_wa_alert_staff_ids')) === '') {
+            update_option('dse_wa_alert_staff_ids', '1');
+        }
+        update_option('dse_wa_alert_default_set', '1');
     }
     update_option('dse_schema_version', DSE_STUDIO_SCHEMA_VERSION);
 }

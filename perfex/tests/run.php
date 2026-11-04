@@ -227,6 +227,25 @@ test('تغيير الميعاد: رسالة "اتغيّر" مرة واحدة و�
     ok($m->session($s1)['end_at'] === '2026-11-05 16:20:00');
     $m->cancel_session($other);
 });
+test('العميل اعتذر متأخر: ميعاد جديد + عدد الريلز اتغيّر + خصم يدوي (الموظف بيقرر) · أكتر من الرصيد بيترفض', function () use ($m, $client, $studio2, $pkg, $db) {
+    $id = $m->book_session($client, $studio2, '2026-11-02 20:00', 'reel', 2);
+    ok($m->balance($pkg)['reel']['remaining'] == 4);
+    $ri = $m->reschedule_info($m->session($id));
+    ok($ri['late'] && $ri['suggest'] == 1 && $ri['avail'] == 6, json_encode($ri));
+    throws(function () use ($m, $id) { $m->reschedule_session($id, '2026-11-07 12:00', null, null, 5, 2); }, 'الرصيد مش مكفي');
+    $r = $m->reschedule_session($id, '2026-11-07 12:00', null, null, 3, 1, 'عنده ظرف');
+    $s = $m->session($id);
+    ok($r['late'] && $r['deducted'] == 1 && $s['qty'] == 3 && $s['end_at'] === '2026-11-07 13:00:00' && (int) $s['outfits'] === 1, json_encode($s, JSON_UNESCAPED_UNICODE));
+    ok(strpos($s['notes'], 'اعتذار متأخر') !== false && strpos($s['notes'], 'عنده ظرف') !== false && strpos($s['notes'], '2 ← 3') !== false && strpos($s['notes'], 'اتخصم 1') !== false, $s['notes']);
+    $b = $m->balance($pkg)['reel'];
+    ok($b['used'] == 1 && $b['reserved'] == 7 && $b['remaining'] == 2, json_encode($b));
+    // من غير خصم: الرصيد زي ما هو
+    $m->reschedule_session($id, '2026-11-08 12:00', null, null, 3, 0);
+    ok($m->balance($pkg)['reel']['used'] == 1);
+    $m->cancel_session($id);
+    $db->query('DELETE FROM tbldse_usage WHERE session_id = ?', [$id]);
+    ok($m->balance($pkg)['reel']['remaining'] == 6);
+});
 test('خلصت الجلسة: بيخصم اللي اتصور فعلًا ويرجّع الباقي للرصيد', function () use ($m, $pkg, $s1) {
     throws(function () use ($m, $s1) { $m->complete_session($s1, 20); }, 'أكتر من رصيد');
     $m->complete_session($s1, 3);
@@ -1141,6 +1160,13 @@ test('كل الصفحات بتترسم من غير أخطاء', function () use 
         'sessions' => $m->client_sessions($client), 'scripts' => $m->client_scripts($client), 'posts' => $m->client_posts($client),
         'outbox' => $m->outbox(20, $client), 'invoices' => [['id' => 1, 'prefix' => 'INV-', 'number' => 5, 'total' => 15000, 'status' => 2, 'date' => '2026-11-01']],
         'balances' => $balances, 'pkg_invoices' => $pi, 'pkg_events' => $pe, 'pkg_paid' => $pp, 'pkg_busy' => $pb, 'free_invoices' => []]);
+    // جلسة محجوزة: فورم الاعتذار / تغيير الميعاد بالعدد والخصم
+    $bk = $m->book_session($client, $m->studios()[0]['id'], '2026-11-02 21:00', 'reel', 1);
+    $hb = render('client', $sum + ['studios' => $m->studios(), 'staff' => [], 'sessions' => $m->client_sessions($client), 'scripts' => [], 'posts' => [], 'outbox' => [],
+        'invoices' => [], 'balances' => $balances, 'pkg_invoices' => $pi, 'pkg_events' => $pe, 'pkg_paid' => $pp, 'pkg_busy' => $pb, 'free_invoices' => []]);
+    ok(strpos($hb, 'اعتذر / غيّر الميعاد') !== false && strpos($hb, 'name="deduct"') !== false && strpos($hb, 'اعتذار متأخر') !== false, 'فورم التأجيل');
+    $m->cancel_session($bk);
+    $db->query('DELETE FROM tbldse_usage WHERE session_id = ?', [$bk]);
     // صفحة عميل اترقّى
     $up = q("SELECT clientid FROM tbldse_packages WHERE name = 'Basic'")[0]['clientid'];
     $db->query("UPDATE tbldse_packages SET status = 'active' WHERE name = 'Basic'");

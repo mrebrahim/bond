@@ -873,7 +873,14 @@ class Dse_studio_model extends App_Model
         ]);
     }
 
-    public function reschedule_session($id, $start_at, $studio_id = null, $photographer_id = null)
+    /**
+     * تغيير ميعاد جلسة (العميل اعتذر وهييجي يوم تاني).
+     *  $qty    = عدد الريلز/الوحدات في الميعاد الجديد (null = زي ما هو) — المدة واللبسات بتتحسب تاني والرصيد بيتشيك
+     *  $deduct = يتخصم كام من رصيده كعقوبة الاعتذار (0 = مفيش). لو الاعتذار متأخر ومتكتبش، مبيتخصمش لوحده — الموظف بيقرر
+     *  $reason = السبب (بيتكتب في ملاحظات الجلسة)
+     * بيرجع ['late' => bool, 'deducted' => float, 'qty' => float]
+     */
+    public function reschedule_session($id, $start_at, $studio_id = null, $photographer_id = null, $qty = null, $deduct = 0, $reason = null)
     {
         $s = $this->session($id);
         if ($s['status'] !== 'booked') {
@@ -887,18 +894,57 @@ class Dse_studio_model extends App_Model
         if (date('Y-m-d', $ts) > $this->effective_end($pkg)) {
             throw new Exception('الباقة بتخلص ' . dse_day($this->effective_end($pkg)) . ($this->effective_end($pkg) > $pkg['end_date'] ? ' (بفترة السماح)' : '') . ' — الميعاد بعدها');
         }
+        $old_qty = (float) $s['qty'];
+        $qty     = ($qty === null || $qty === '') ? $old_qty : (float) $qty;
+        $deduct  = max(0, (float) $deduct);
+        if ($qty <= 0) {
+            throw new Exception('عدد ' . dse_unit($s['type']) . ' في الجلسة لازم يبقى أكبر من صفر');
+        }
+        $bal   = $this->balance($s['package_id']);
+        $avail = ($bal[$s['type']]['remaining'] ?? 0) + $old_qty; // الجلسة نفسها محجوزة من الرصيد
+        if ($qty + $deduct > $avail + 0.0001) {
+            throw new Exception('الرصيد مش مكفي: فاضل ' . dse_num($avail) . ' ' . dse_unit($s['type']) . ' (مع الجلسة دي)'
+                . ($deduct > 0 ? ' — والجلسة ' . dse_num($qty) . ' + الخصم ' . dse_num($deduct) : '') . '. قلّل العدد');
+        }
         $studio_id       = $studio_id ?: $s['studio_id'];
         $photographer_id = $photographer_id === null ? $s['photographer_id'] : ($photographer_id ?: null);
         $start           = date('Y-m-d H:i:s', $ts);
-        $end             = date('Y-m-d H:i:s', $ts + (strtotime($s['end_at']) - strtotime($s['start_at'])));
+        $minutes         = $qty == $old_qty ? (strtotime($s['end_at']) - strtotime($s['start_at'])) / 60 : $this->session_minutes($s['type'], $qty);
+        $end             = date('Y-m-d H:i:s', $ts + 60 * (int) $minutes);
         $this->assert_free($studio_id, $photographer_id, $start, $end, $s['id']);
+        $late  = strtotime($s['start_at']) - $this->t() < 3600 * (float) $this->opt('dse_late_cancel_hours', 24);
+        $moved = $start !== $s['start_at'];
+        $note  = [];
+        if ($moved) {
+            $note[] = 'اتأجلت من ' . dse_day($s['start_at']) . ' ' . dse_time($s['start_at']) . ($late ? ' (اعتذار متأخر)' : '') . ($reason ? ' — ' . trim($reason) : '');
+        } elseif ($reason) {
+            $note[] = trim($reason);
+        }
+        if ($qty != $old_qty) {
+            $note[] = 'العدد اتغيّر ' . dse_num($old_qty) . ' ← ' . dse_num($qty);
+        }
+        if ($deduct > 0) {
+            $note[] = 'اتخصم ' . dse_num($deduct) . ' ' . dse_unit($s['type']) . ' عشان الاعتذار';
+        }
         $this->db->update($this->tbl('dse_sessions'), [
-            'start_at' => $start, 'end_at' => $end, 'studio_id' => (int) $studio_id,
+            'start_at' => $start, 'end_at' => $end, 'studio_id' => (int) $studio_id, 'qty' => $qty, 'outfits' => $this->session_outfits($s['type'], $qty),
             'photographer_id' => $photographer_id ? (int) $photographer_id : null, 'updated_at' => $this->now(),
+            'notes' => $note ? trim(($s['notes'] ? $s['notes'] . "\n" : '') . implode(' · ', $note)) : $s['notes'],
         ], ['id' => $s['id']]);
-        if ($start !== $s['start_at']) {
+        $this->add_usage($s['package_id'], $s['type'], $deduct, 'late_cancel', $s['id'], null, 'اعتذار وتأجيل' . ($reason ? ': ' . mb_substr(trim($reason), 0, 200) : ''));
+        if ($moved || $qty != $old_qty) {
             $this->queue_session_message($s['id'], true);
         }
+        return ['late' => $late, 'deducted' => $deduct, 'qty' => $qty];
+    }
+
+    /** للفورم: الاعتذار متأخر؟ والخصم المقترح كام؟ والمتاح كام (مع الجلسة دي) */
+    public function reschedule_info($s)
+    {
+        $bal  = $this->balance($s['package_id']);
+        $late = strtotime($s['start_at']) - $this->t() < 3600 * (float) $this->opt('dse_late_cancel_hours', 24);
+        return ['late' => $late, 'suggest' => $late ? $this->penalty($s, (float) $s['qty']) : 0,
+            'avail' => ($bal[$s['type']]['remaining'] ?? 0) + (float) $s['qty'], 'hours' => (float) $this->opt('dse_late_cancel_hours', 24)];
     }
 
     private function add_usage($package_id, $type, $qty, $reason, $session_id = null, $post_id = null, $note = null)
@@ -1092,11 +1138,17 @@ class Dse_studio_model extends App_Model
 
     public function client_sessions($clientid, $limit = 30)
     {
-        return $this->rows(
+        $rows = $this->rows(
             'SELECT s.*, st.name AS studio FROM ' . $this->tbl('dse_sessions') . ' s JOIN ' . $this->tbl('dse_studios') . ' st ON st.id = s.studio_id
               WHERE s.clientid = ? ORDER BY s.start_at DESC LIMIT ' . (int) $limit,
             [(int) $clientid]
         );
+        foreach ($rows as &$r) {
+            if ($r['status'] === 'booked') {
+                $r['resched'] = $this->reschedule_info($r); // لفورم الاعتذار / تغيير الميعاد
+            }
+        }
+        return $rows;
     }
 
     // =================================================================
